@@ -2,14 +2,21 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { ConnectionStore } from './connectionStore';
 import {
+  DatabaseGroupKind,
+  DatabaseGroupNodeRef,
   DbObjectKind,
   DbObjectNodeRef,
+  FilterControlNodeRef,
   ConnectionNodeRef,
   DatabaseNodeRef,
+  ExtensionNodeRef,
   ObjectGroupNodeRef,
   PlaceholderNodeRef,
   PostgresConnection,
   SchemaNodeRef,
+  TableSectionKind,
+  TableSectionItemNodeRef,
+  TableSectionNodeRef,
   TreeNodeRef,
 } from './models';
 import { PostgresService } from './postgresService';
@@ -19,6 +26,8 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
   public readonly onDidChangeTreeData = this.onDidChangeTreeDataEmitter.event;
 
   private readonly versions = new Map<string, string>();
+  private tableNameFilter = '';
+  private showFilterLabel = true;
 
   public constructor(
     private readonly store: ConnectionStore,
@@ -34,22 +43,50 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
     this.versions.delete(connectionId);
   }
 
+  public setTableNameFilter(filter: string): void {
+    this.tableNameFilter = filter.trim().toLowerCase();
+    this.refresh();
+  }
+
+  public getTableNameFilter(): string {
+    return this.tableNameFilter;
+  }
+
+  public setShowFilterLabel(show: boolean): void {
+    this.showFilterLabel = show;
+    this.refresh();
+  }
+
   public async getChildren(element?: TreeNodeRef): Promise<TreeNodeRef[]> {
     if (!element) {
       const connections = await this.store.listConnections();
+      const rootNodes: TreeNodeRef[] = [];
+
+      if (this.showFilterLabel && this.tableNameFilter.trim()) {
+        rootNodes.push({
+          type: 'filterControl',
+          value: this.tableNameFilter,
+        } satisfies FilterControlNodeRef);
+      }
+
       if (connections.length === 0) {
-        return [
+        rootNodes.push(
           {
             type: 'placeholder',
             message: 'Sem conexões.',
-          } satisfies PlaceholderNodeRef,
-        ];
+          } satisfies PlaceholderNodeRef
+        );
+
+        return rootNodes;
       }
 
-      return connections.map((connection) => ({
-        type: 'connection',
-        connection,
-      })) satisfies ConnectionNodeRef[];
+      return [
+        ...rootNodes,
+        ...(connections.map((connection) => ({
+          type: 'connection',
+          connection,
+        })) satisfies ConnectionNodeRef[]),
+      ];
     }
 
     try {
@@ -72,22 +109,58 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
       }
 
       if (element.type === 'database') {
-        const schemas = await this.postgresService.listSchemas(element.connection, element.databaseName);
-        if (schemas.length === 0) {
+        return [
+          {
+            type: 'databaseGroup',
+            connection: element.connection,
+            databaseName: element.databaseName,
+            kind: 'schemas',
+          },
+          {
+            type: 'databaseGroup',
+            connection: element.connection,
+            databaseName: element.databaseName,
+            kind: 'extensions',
+          },
+        ] satisfies DatabaseGroupNodeRef[];
+      }
+
+      if (element.type === 'databaseGroup') {
+        if (element.kind === 'schemas') {
+          const schemas = await this.postgresService.listSchemas(element.connection, element.databaseName);
+          if (schemas.length === 0) {
+            return [
+              {
+                type: 'placeholder',
+                message: 'Sem schemas.',
+              } satisfies PlaceholderNodeRef,
+            ];
+          }
+
+          return schemas.map((schemaName) => ({
+            type: 'schema',
+            connection: element.connection,
+            databaseName: element.databaseName,
+            schemaName,
+          })) satisfies SchemaNodeRef[];
+        }
+
+        const extensions = await this.postgresService.listExtensions(element.connection, element.databaseName);
+        if (extensions.length === 0) {
           return [
             {
               type: 'placeholder',
-              message: 'Sem schemas.',
+              message: 'Sem extensions.',
             } satisfies PlaceholderNodeRef,
           ];
         }
 
-        return schemas.map((schemaName) => ({
-          type: 'schema',
+        return extensions.map((extensionName) => ({
+          type: 'extension',
           connection: element.connection,
           databaseName: element.databaseName,
-          schemaName,
-        })) satisfies SchemaNodeRef[];
+          extensionName,
+        })) satisfies ExtensionNodeRef[];
       }
 
       if (element.type === 'schema') {
@@ -143,6 +216,10 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
 
       if (element.type === 'objectGroup') {
         const objectNames = await this.listGroupObjects(element);
+        const filteredObjectNames =
+          element.kind === 'table' && this.tableNameFilter
+            ? objectNames.filter((name) => name.toLowerCase().includes(this.tableNameFilter))
+            : objectNames;
         const tableCounts =
           element.kind === 'table'
             ? await this.postgresService.listTableEstimatedCounts(
@@ -153,16 +230,19 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
             : [];
         const tableCountByName = new Map(tableCounts.map((item) => [item.tableName, item.count]));
 
-        if (objectNames.length === 0) {
+        if (filteredObjectNames.length === 0) {
           return [
             {
               type: 'placeholder',
-              message: 'Sem itens.',
+              message:
+                element.kind === 'table' && this.tableNameFilter
+                  ? 'Sem tabelas para o filtro atual.'
+                  : 'Sem itens.',
             } satisfies PlaceholderNodeRef,
           ];
         }
 
-        return objectNames.map((objectName) => ({
+        return filteredObjectNames.map((objectName) => ({
           type: 'dbObject',
           connection: element.connection,
           databaseName: element.databaseName,
@@ -171,6 +251,68 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
           objectName,
           count: element.kind === 'table' ? (tableCountByName.get(objectName) ?? 0) : undefined,
         })) satisfies DbObjectNodeRef[];
+      }
+
+      if (element.type === 'dbObject' && element.kind === 'table') {
+        return this.tableSections(element);
+      }
+
+      if (element.type === 'tableSection' && element.section === 'columns') {
+        const columns = await this.postgresService.listTableColumnsDetailed(
+          element.connection,
+          element.databaseName,
+          element.schemaName,
+          element.tableName
+        );
+
+        if (columns.length === 0) {
+          return [
+            {
+              type: 'placeholder',
+              message: 'Sem colunas.',
+            } satisfies PlaceholderNodeRef,
+          ];
+        }
+
+        return columns.map((column) => ({
+          type: 'tableSectionItem',
+          connection: element.connection,
+          databaseName: element.databaseName,
+          schemaName: element.schemaName,
+          tableName: element.tableName,
+          section: element.section,
+          itemKind: 'column',
+          itemName: column.name,
+        })) satisfies TableSectionItemNodeRef[];
+      }
+
+      if (element.type === 'tableSection' && element.section === 'constraints') {
+        const constraints = await this.postgresService.listTableConstraints(
+          element.connection,
+          element.databaseName,
+          element.schemaName,
+          element.tableName
+        );
+
+        if (constraints.length === 0) {
+          return [
+            {
+              type: 'placeholder',
+              message: 'Sem restrições.',
+            } satisfies PlaceholderNodeRef,
+          ];
+        }
+
+        return constraints.map((constraint) => ({
+          type: 'tableSectionItem',
+          connection: element.connection,
+          databaseName: element.databaseName,
+          schemaName: element.schemaName,
+          tableName: element.tableName,
+          section: element.section,
+          itemKind: 'constraint',
+          itemName: constraint.name,
+        })) satisfies TableSectionItemNodeRef[];
       }
 
       return [];
@@ -189,6 +331,20 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
     if (element.type === 'placeholder') {
       const item = new vscode.TreeItem(element.message, vscode.TreeItemCollapsibleState.None);
       item.contextValue = 'placeholder';
+      return item;
+    }
+
+    if (element.type === 'filterControl') {
+      const activeFilter = element.value.trim();
+      const item = new vscode.TreeItem(
+        activeFilter ? `${activeFilter}` : 'Filtrar tabelas...',
+        vscode.TreeItemCollapsibleState.None
+      );
+      item.contextValue = 'filterControl';
+      item.tooltip = activeFilter
+        ? `Filtro global de tabelas ativo: ${activeFilter}\n(Duplo clique ou F2 para editar)`
+        : 'Filtro global de tabelas\n(Duplo clique ou F2 para editar)';
+      item.iconPath = new vscode.ThemeIcon('search');
       return item;
     }
 
@@ -224,6 +380,17 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
       return item;
     }
 
+    if (element.type === 'databaseGroup') {
+      const label = element.kind === 'schemas' ? 'Schemas' : 'Extensions';
+      const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.Collapsed);
+      item.contextValue = `databaseGroup:${element.kind}`;
+      item.iconPath =
+        element.kind === 'schemas'
+          ? new vscode.ThemeIcon('symbol-namespace')
+          : new vscode.ThemeIcon('extensions');
+      return item;
+    }
+
     if (element.type === 'schema') {
       const item = new vscode.TreeItem(element.schemaName, vscode.TreeItemCollapsibleState.Collapsed);
       item.contextValue = 'schema';
@@ -242,7 +409,48 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
       return item;
     }
 
-    const objectItem = new vscode.TreeItem(element.objectName, vscode.TreeItemCollapsibleState.None);
+    if (element.type === 'extension') {
+      const item = new vscode.TreeItem(element.extensionName, vscode.TreeItemCollapsibleState.None);
+      item.contextValue = 'extension';
+      item.iconPath = new vscode.ThemeIcon('extensions');
+      return item;
+    }
+
+    if (element.type === 'tableSection') {
+      const canExpand = element.section === 'columns' || element.section === 'constraints';
+      const item = new vscode.TreeItem(
+        this.tableSectionLabel(element.section),
+        canExpand && element.count > 0
+          ? vscode.TreeItemCollapsibleState.Collapsed
+          : vscode.TreeItemCollapsibleState.None
+      );
+      item.contextValue = `tableSection:${element.section}`;
+      item.iconPath = this.tableSectionIcon(element.section);
+      item.description = `${element.count}`;
+      return item;
+    }
+
+    if (element.type === 'tableSectionItem') {
+      const item = new vscode.TreeItem(element.itemName, vscode.TreeItemCollapsibleState.None);
+      item.contextValue = `tableSectionItem:${element.itemKind}`;
+      item.iconPath = element.itemKind === 'column'
+        ? new vscode.ThemeIcon('symbol-field')
+        : new vscode.ThemeIcon('shield');
+      item.command = {
+        command:
+          element.itemKind === 'column'
+            ? 'dbadmin.openColumnDetails'
+            : 'dbadmin.openConstraintDetails',
+        title: 'Abrir detalhes',
+        arguments: [element],
+      };
+      return item;
+    }
+
+    const objectItem = new vscode.TreeItem(
+      element.objectName,
+      element.kind === 'table' ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None
+    );
     objectItem.contextValue = `dbObject:${element.kind}`;
     objectItem.iconPath = this.objectIcon(element.kind);
     if (element.kind === 'table' && typeof element.count === 'number') {
@@ -259,6 +467,10 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
   }
 
   public getParent(element: TreeNodeRef): TreeNodeRef | undefined {
+    if (element.type === 'filterControl') {
+      return undefined;
+    }
+
     if (element.type === 'connection') {
       return undefined;
     }
@@ -270,12 +482,21 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
       } satisfies ConnectionNodeRef;
     }
 
-    if (element.type === 'schema') {
+    if (element.type === 'databaseGroup') {
       return {
         type: 'database',
         connection: element.connection,
         databaseName: element.databaseName,
       } satisfies DatabaseNodeRef;
+    }
+
+    if (element.type === 'schema') {
+      return {
+        type: 'databaseGroup',
+        connection: element.connection,
+        databaseName: element.databaseName,
+        kind: 'schemas',
+      } satisfies DatabaseGroupNodeRef;
     }
 
     if (element.type === 'objectGroup') {
@@ -296,6 +517,38 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
         kind: element.kind,
         count: element.count ?? 0,
       } satisfies ObjectGroupNodeRef;
+    }
+
+    if (element.type === 'extension') {
+      return {
+        type: 'databaseGroup',
+        connection: element.connection,
+        databaseName: element.databaseName,
+        kind: 'extensions',
+      } satisfies DatabaseGroupNodeRef;
+    }
+
+    if (element.type === 'tableSection') {
+      return {
+        type: 'dbObject',
+        connection: element.connection,
+        databaseName: element.databaseName,
+        schemaName: element.schemaName,
+        kind: 'table',
+        objectName: element.tableName,
+      } satisfies DbObjectNodeRef;
+    }
+
+    if (element.type === 'tableSectionItem') {
+      return {
+        type: 'tableSection',
+        connection: element.connection,
+        databaseName: element.databaseName,
+        schemaName: element.schemaName,
+        tableName: element.tableName,
+        section: element.section,
+        count: 0,
+      } satisfies TableSectionNodeRef;
     }
 
     return undefined;
@@ -353,6 +606,72 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
     }
 
     return new vscode.ThemeIcon('symbol-event');
+  }
+
+  private tableSectionLabel(section: TableSectionKind): string {
+    if (section === 'columns') {
+      return 'Colunas';
+    }
+    if (section === 'constraints') {
+      return 'Restrições';
+    }
+    if (section === 'indexes') {
+      return 'Índices';
+    }
+    if (section === 'rls') {
+      return 'RLS';
+    }
+    if (section === 'rules') {
+      return 'Regras';
+    }
+    return 'Triggers';
+  }
+
+  private tableSectionIcon(section: TableSectionKind): vscode.ThemeIcon {
+    if (section === 'columns') {
+      return new vscode.ThemeIcon('symbol-field');
+    }
+    if (section === 'constraints') {
+      return new vscode.ThemeIcon('shield');
+    }
+    if (section === 'indexes') {
+      return new vscode.ThemeIcon('list-tree');
+    }
+    if (section === 'rls') {
+      return new vscode.ThemeIcon('lock');
+    }
+    if (section === 'rules') {
+      return new vscode.ThemeIcon('symbol-operator');
+    }
+    return new vscode.ThemeIcon('symbol-event');
+  }
+
+  private async tableSections(table: DbObjectNodeRef): Promise<TableSectionNodeRef[]> {
+    const counts = await this.postgresService.getTableSectionCounts(
+      table.connection,
+      table.databaseName,
+      table.schemaName,
+      table.objectName
+    );
+
+    const sections: Array<{ section: TableSectionKind; count: number }> = [
+      { section: 'columns', count: counts.columns },
+      { section: 'constraints', count: counts.constraints },
+      { section: 'indexes', count: counts.indexes },
+      { section: 'rls', count: counts.rls },
+      { section: 'rules', count: counts.rules },
+      { section: 'triggers', count: counts.triggers },
+    ];
+
+    return sections.map(({ section, count }) => ({
+      type: 'tableSection',
+      connection: table.connection,
+      databaseName: table.databaseName,
+      schemaName: table.schemaName,
+      tableName: table.objectName,
+      section,
+      count,
+    }));
   }
 
   private async loadVersion(connection: PostgresConnection): Promise<void> {

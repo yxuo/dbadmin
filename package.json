@@ -13,10 +13,36 @@
   "activationEvents": [
     "onStartupFinished",
     "onView:databaseExplorer",
+    "onView:databaseExplorerFilter",
     "*"
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "configuration": {
+      "title": "DBAdmin",
+      "properties": {
+        "dbadmin.showQueryEditor": {
+          "type": "boolean",
+          "default": true,
+          "description": "Mostrar o editor de query na visualização de tabela."
+        },
+        "dbadmin.persistColumnLayout": {
+          "type": "boolean",
+          "default": false,
+          "description": "Persistir ocultação, ordem e largura de colunas mesmo fora da restauração automática de abas."
+        },
+        "dbadmin.pgAdminBinPath": {
+          "type": "string",
+          "default": "",
+          "description": "Caminho para o diretório dos binários do pgAdmin (pg_dump, pg_restore). Deixe vazio para detectar automaticamente."
+        },
+        "dbadmin.showFilterLabel": {
+          "type": "boolean",
+          "default": true,
+          "description": "Mostrar o label do filtro no topo do DBAdmin quando houver filtro ativo."
+        }
+      }
+    },
     "viewsContainers": {
       "activitybar": [
         {
@@ -28,6 +54,11 @@
     },
     "views": {
       "dbadmin": [
+        {
+          "id": "databaseExplorerFilter",
+          "name": "Filtro de tabelas",
+          "type": "webview"
+        },
         {
           "id": "databaseExplorer",
           "name": "DBAdmin",
@@ -75,24 +106,82 @@
         "command": "dbadmin.openTableInNewTab",
         "title": "Abrir em nova aba",
         "icon": "$(list-tree)"
+      },
+      {
+        "command": "dbadmin.createDatabase",
+        "title": "Criar banco de dados",
+        "icon": "$(add)"
+      },
+      {
+        "command": "dbadmin.renameDatabase",
+        "title": "Renomear banco de dados",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "dbadmin.dropDatabase",
+        "title": "Excluir banco de dados",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "dbadmin.backupSchema",
+        "title": "Backup do schema",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "dbadmin.restoreSchema",
+        "title": "Restaurar schema",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "dbadmin.openColumnDetails",
+        "title": "Abrir detalhes da coluna"
+      },
+      {
+        "command": "dbadmin.openConstraintDetails",
+        "title": "Abrir detalhes da restrição"
+      },
+      {
+        "command": "dbadmin.openColumnDetailsInNewTab",
+        "title": "Abrir coluna em nova aba",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "dbadmin.openConstraintDetailsInNewTab",
+        "title": "Abrir restrição em nova aba",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "dbadmin.editTableFilter",
+        "title": "Editar filtro de tabelas",
+        "icon": "$(search)"
+      },
+      {
+        "command": "dbadmin.clearTableFilter",
+        "title": "Limpar filtro de tabelas",
+        "icon": "$(close)"
       }
     ],
     "menus": {
       "view/title": [
         {
-          "command": "dbadmin.createConnection",
-          "when": "view == databaseExplorer",
-          "group": "navigation"
+            "command": "dbadmin.openSettings",
+            "when": "view == databaseExplorer",
+            "group": "navigation"
         },
         {
-          "command": "dbadmin.refresh",
+          "command": "dbadmin.createConnection",
           "when": "view == databaseExplorer",
           "group": "navigation@1"
         },
         {
-          "command": "dbadmin.openSettings",
+          "command": "dbadmin.refresh",
           "when": "view == databaseExplorer",
           "group": "navigation@2"
+        },
+        {
+          "command": "dbadmin.editTableFilter",
+          "when": "view == databaseExplorer",
+          "group": "navigation@3"
         }
       ],
       "view/item/context": [
@@ -115,6 +204,51 @@
           "command": "dbadmin.openTableInNewTab",
           "when": "view == databaseExplorer && viewItem == dbObject:table",
           "group": "navigation"
+        },
+        {
+          "command": "dbadmin.createDatabase",
+          "when": "view == databaseExplorer && viewItem == connection",
+          "group": "inline@2"
+        },
+        {
+          "command": "dbadmin.createDatabase",
+          "when": "view == databaseExplorer && viewItem == connection",
+          "group": "navigation"
+        },
+        {
+          "command": "dbadmin.renameDatabase",
+          "when": "view == databaseExplorer && viewItem == database",
+          "group": "navigation"
+        },
+        {
+          "command": "dbadmin.dropDatabase",
+          "when": "view == databaseExplorer && viewItem == database",
+          "group": "navigation@1"
+        },
+        {
+          "command": "dbadmin.backupSchema",
+          "when": "view == databaseExplorer && viewItem == schema",
+          "group": "navigation"
+        },
+        {
+          "command": "dbadmin.restoreSchema",
+          "when": "view == databaseExplorer && viewItem == schema",
+          "group": "navigation@1"
+        },
+        {
+          "command": "dbadmin.openColumnDetailsInNewTab",
+          "when": "view == databaseExplorer && viewItem == tableSectionItem:column",
+          "group": "inline"
+        },
+        {
+          "command": "dbadmin.openConstraintDetailsInNewTab",
+          "when": "view == databaseExplorer && viewItem == tableSectionItem:constraint",
+          "group": "inline"
+        },
+        {
+          "command": "dbadmin.clearTableFilter",
+          "when": "view == databaseExplorer && viewItem == filterControl",
+          "group": "inline"
         }
       ]
     }

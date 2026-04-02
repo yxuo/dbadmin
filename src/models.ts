@@ -24,17 +24,38 @@ export interface ConnectionsFile {
 
 export type DbObjectKind = 'table' | 'view' | 'function' | 'procedure' | 'trigger';
 
+export type DatabaseGroupKind = 'schemas' | 'extensions';
+
+export type TableSectionKind =
+  | 'columns'
+  | 'constraints'
+  | 'indexes'
+  | 'rls'
+  | 'rules'
+  | 'triggers';
+
+export type TableSectionItemKind = 'column' | 'constraint';
+
 export type NodeType =
+  | 'filterControl'
   | 'connection'
   | 'database'
+  | 'databaseGroup'
   | 'schema'
   | 'objectGroup'
   | 'dbObject'
+  | 'extension'
+  | 'tableSection'
   | 'placeholder';
 
 export interface ConnectionNodeRef {
   type: 'connection';
   connection: PostgresConnection;
+}
+
+export interface FilterControlNodeRef {
+  type: 'filterControl';
+  value: string;
 }
 
 export interface DatabaseNodeRef {
@@ -48,6 +69,13 @@ export interface SchemaNodeRef {
   connection: PostgresConnection;
   databaseName: string;
   schemaName: string;
+}
+
+export interface DatabaseGroupNodeRef {
+  type: 'databaseGroup';
+  connection: PostgresConnection;
+  databaseName: string;
+  kind: DatabaseGroupKind;
 }
 
 export interface ObjectGroupNodeRef {
@@ -69,15 +97,48 @@ export interface DbObjectNodeRef {
   count?: number;
 }
 
+export interface ExtensionNodeRef {
+  type: 'extension';
+  connection: PostgresConnection;
+  databaseName: string;
+  extensionName: string;
+}
+
+export interface TableSectionNodeRef {
+  type: 'tableSection';
+  connection: PostgresConnection;
+  databaseName: string;
+  schemaName: string;
+  tableName: string;
+  section: TableSectionKind;
+  count: number;
+}
+
+export interface TableSectionItemNodeRef {
+  type: 'tableSectionItem';
+  connection: PostgresConnection;
+  databaseName: string;
+  schemaName: string;
+  tableName: string;
+  section: TableSectionKind;
+  itemKind: TableSectionItemKind;
+  itemName: string;
+}
+
 export interface PlaceholderNodeRef {
   type: 'placeholder';
   message: string;
 }
 
 export type TreeNodeRef =
+  | FilterControlNodeRef
   | ConnectionNodeRef
   | DatabaseNodeRef
+  | DatabaseGroupNodeRef
   | SchemaNodeRef
   | ObjectGroupNodeRef
   | DbObjectNodeRef
+  | ExtensionNodeRef
+  | TableSectionNodeRef
+  | TableSectionItemNodeRef
   | PlaceholderNodeRef;
