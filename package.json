@@ -10,6 +10,11 @@
   "categories": [
     "Other"
   ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:databaseExplorer",
+    "*"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "viewsContainers": {

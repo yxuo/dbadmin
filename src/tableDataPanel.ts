@@ -22,7 +22,8 @@ type WebviewMessage =
   | { type: 'ready' }
   | { type: 'reload'; state: TableState }
   | { type: 'save'; state: TableState; payload: TableSavePayload }
-  | { type: 'openInNewTab' };
+  | { type: 'openInNewTab' }
+  | { type: 'showInExplorer' };
 
 const GLOBAL_REUSED_KEY = '__global__';
 
@@ -118,6 +119,11 @@ export class TableDataPanelManager {
 
       if (message.type === 'openInNewTab') {
         await this.openTable({ node: currentNode, newTab: true });
+        return;
+      }
+
+      if (message.type === 'showInExplorer') {
+        await vscode.commands.executeCommand('dbadmin.showInExplorer', currentNode);
       }
     });
 
@@ -271,6 +277,7 @@ export class TableDataPanelManager {
     .header-menu-wrap { position: relative; }
     .header-menu { position: absolute; top: calc(100% + 4px); right: 0; display: none; border: 1px solid var(--vscode-panel-border); background: var(--vscode-editorWidget-background); border-radius: 6px; z-index: 40; min-width: 180px; }
     .header-menu.open { display: block; }
+    .header-menu-backdrop { position: fixed; inset: 0; z-index: 39; display: none; }
     .header-menu button { width: 100%; border: 0; border-radius: 6px; text-align: left; background: transparent; color: var(--vscode-foreground); display: flex; align-items: center; gap: 8px; padding: 0 10px; }
     .header-menu button:hover { background: var(--vscode-list-hoverBackground); }
     .query-container { padding: 0 4px; flex: 0 0 auto; margin-bottom: -2px; position: relative; }
@@ -296,6 +303,7 @@ export class TableDataPanelManager {
     .mode-select { position: relative; display: inline-flex; }
     .mode-dropdown { position: absolute; top: calc(100% + 4px); left: 0; display: none; border: 1px solid var(--vscode-panel-border); background: var(--vscode-editorWidget-background); border-radius: 6px; z-index: 20; min-width: 170px; }
     .mode-dropdown.open { display: block; }
+    .mode-dropdown-backdrop { position: fixed; inset: 0; z-index: 19; display: none; }
     .mode-dropdown button { width: 100%; border: 0; border-bottom: 1px solid var(--vscode-panel-border); border-radius: 0; text-align: left; background: transparent; color: var(--vscode-foreground); display: flex; align-items: center; gap: 8px; padding: 0 10px; }
     .mode-dropdown button:last-child { border-bottom: 0; }
     .mode-dropdown button:hover { background: var(--vscode-list-hoverBackground); }
@@ -306,7 +314,8 @@ export class TableDataPanelManager {
     th { position: sticky; top: 0; background: var(--vscode-sideBar-background); z-index: 2; min-width: 170px; }
     .th-title { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 0px 5px; }
     .th-name { font-weight: 600; font-size: 12px; }
-    .th-icons { cursor: pointer; user-select: none; }
+    .th-icons { cursor: pointer; user-select: none; padding: 0px 6px; border-radius: 4px; }
+    .th-icons:hover { background: var(--vscode-list-hoverBackground); }
     .th-filter { width: 100%; box-sizing: border-box; border: 1px solid transparent; background: transparent; color: var(--vscode-descriptionForeground); border-radius: 4px; padding: 4px; font-size: 11px; }
     .th-filter:focus { border-color: var(--vscode-focusBorder); background: var(--vscode-input-background); color: var(--vscode-input-foreground); }
     .cell-input { width: 100%; box-sizing: border-box; border: 1px solid transparent; background: transparent; color: var(--vscode-foreground); border-radius: 4px; padding: 4px; }
@@ -349,7 +358,14 @@ export class TableDataPanelManager {
       <div class="header-menu-wrap">
         <button id="headerMenuBtn" class="secondary btn-icon" title="Menu">☰</button>
         <div id="headerMenu" class="header-menu">
-          <button id="openNewTab" title="Abrir em nova guia">
+          <button id="showInExplorer" title="Mostrar no explorador">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M2.5 3.5h4v4h-4zM9.5 3.5h4v4h-4zM2.5 8.5h4v4h-4z" stroke="currentColor" stroke-width="1.2"/>
+              <path d="M6.5 5.5h3M8.5 5.5v3M6.5 10.5h3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+            </svg>
+            <span>Mostrar no explorador</span>
+          </button>
+          <button id="openNewTab" title="Abrir em nova aba">
             <span>⧉</span>
             <span>Abrir em nova guia</span>
           </button>
@@ -398,6 +414,9 @@ export class TableDataPanelManager {
     </div>
   </div>
 
+  <div class="mode-dropdown-backdrop" id="modeBackdrop"></div>
+  <div class="header-menu-backdrop" id="headerMenuBackdrop"></div>
+
   <div class="menu-backdrop" id="menuBackdrop"></div>
   <div class="menu" id="cellMenu">
     <div class="menu-submenu-wrap">
@@ -434,8 +453,10 @@ export class TableDataPanelManager {
     const tableWrapEl = document.querySelector('.table-wrap');
     const modeBtn = document.getElementById('modeBtn');
     const modeDropdown = document.getElementById('modeDropdown');
+    const modeBackdrop = document.getElementById('modeBackdrop');
     const headerMenuBtn = document.getElementById('headerMenuBtn');
     const headerMenu = document.getElementById('headerMenu');
+    const headerMenuBackdrop = document.getElementById('headerMenuBackdrop');
     const saveBtn = document.getElementById('save');
 
     const SVG_LOCAL = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 3h12l-4.5 5.5V13h-3V8.5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>';
@@ -476,6 +497,69 @@ export class TableDataPanelManager {
     let removedCtids = new Set();
     let activeCell = null;
     let queryResizeState = null;
+    let pendingFocus = null;
+
+    function rememberSearchFocus() {
+      const searchInput = document.getElementById('search');
+      if (!searchInput) {
+        return;
+      }
+      pendingFocus = {
+        type: 'search',
+        selectionStart: searchInput.selectionStart,
+        selectionEnd: searchInput.selectionEnd,
+      };
+    }
+
+    function rememberColumnFocus(columnName, element) {
+      pendingFocus = {
+        type: 'column',
+        columnName,
+        selectionStart: element.selectionStart,
+        selectionEnd: element.selectionEnd,
+      };
+    }
+
+    function restorePendingFocus() {
+      if (!pendingFocus) {
+        return;
+      }
+
+      const snapshot = pendingFocus;
+      pendingFocus = null;
+
+      if (snapshot.type === 'search') {
+        const searchInput = document.getElementById('search');
+        if (!searchInput) {
+          return;
+        }
+        searchInput.focus();
+        if (
+          typeof snapshot.selectionStart === 'number' &&
+          typeof snapshot.selectionEnd === 'number' &&
+          typeof searchInput.setSelectionRange === 'function'
+        ) {
+          searchInput.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd);
+        }
+        return;
+      }
+
+      if (snapshot.type === 'column') {
+        const filters = Array.from(document.querySelectorAll('.th-filter'));
+        const target = filters.find((input) => input.getAttribute('data-col-name') === snapshot.columnName);
+        if (!target) {
+          return;
+        }
+        target.focus();
+        if (
+          typeof snapshot.selectionStart === 'number' &&
+          typeof snapshot.selectionEnd === 'number' &&
+          typeof target.setSelectionRange === 'function'
+        ) {
+          target.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd);
+        }
+      }
+    }
 
     function hasChanges() {
       const hasInserted = insertedRows.some((row) => !row.__dbadmin_removed);
@@ -499,6 +583,16 @@ export class TableDataPanelManager {
     function closeContextMenu() {
       cellMenu.style.display = 'none';
       menuBackdrop.style.display = 'none';
+    }
+
+    function closeHeaderMenu() {
+      headerMenu.classList.remove('open');
+      headerMenuBackdrop.style.display = 'none';
+    }
+
+    function closeModeDropdown() {
+      modeDropdown.classList.remove('open');
+      modeBackdrop.style.display = 'none';
     }
 
     function showContextMenu(clientX, clientY) {
@@ -588,8 +682,23 @@ export class TableDataPanelManager {
 
         const filterInput = document.createElement('input');
         filterInput.className = 'th-filter';
+        filterInput.setAttribute('data-col-name', col.name);
         filterInput.placeholder = col.dataType;
         filterInput.value = state.columnFilters[col.name] || '';
+        filterInput.addEventListener('input', () => {
+          const value = filterInput.value.trim();
+          if (value) {
+            state.columnFilters[col.name] = value;
+          } else {
+            delete state.columnFilters[col.name];
+          }
+
+          if (state.searchMode === 'local') {
+            rememberColumnFocus(col.name, filterInput);
+            render();
+            restorePendingFocus();
+          }
+        });
         filterInput.addEventListener('keydown', (event) => {
           if (event.key !== 'Enter') {
             return;
@@ -601,7 +710,14 @@ export class TableDataPanelManager {
             delete state.columnFilters[col.name];
           }
           state.page = 1;
-          vscode.postMessage({ type: 'reload', state: currentState() });
+          rememberColumnFocus(col.name, filterInput);
+
+          if (state.searchMode === 'query') {
+            vscode.postMessage({ type: 'reload', state: currentState() });
+          } else {
+            render();
+            restorePendingFocus();
+          }
         });
 
         th.appendChild(title);
@@ -689,12 +805,32 @@ export class TableDataPanelManager {
     }
 
     function applyLocalFilter(rawRows) {
-      if (state.searchMode !== 'local' || !state.searchText.trim()) {
+      if (state.searchMode !== 'local') {
         return rawRows;
       }
 
-      const text = state.searchText.toLowerCase();
-      return rawRows.filter((row) => columns.some((col) => String(row[col.name] ?? '').toLowerCase().includes(text)));
+      const text = state.searchText.trim().toLowerCase();
+      const columnFilters = Object.entries(state.columnFilters)
+        .map(([columnName, value]) => [columnName, String(value || '').trim().toLowerCase()])
+        .filter(([, value]) => value.length > 0);
+
+      return rawRows.filter((row) => {
+        const matchesGlobal =
+          text.length === 0 ||
+          columns.some((col) => String(row[col.name] ?? '').toLowerCase().includes(text));
+
+        if (!matchesGlobal) {
+          return false;
+        }
+
+        if (columnFilters.length === 0) {
+          return true;
+        }
+
+        return columnFilters.every(([columnName, filterValue]) =>
+          String(row[columnName] ?? '').toLowerCase().includes(filterValue)
+        );
+      });
     }
 
     function save() {
@@ -739,6 +875,7 @@ export class TableDataPanelManager {
 
       state.searchText = event.target.value;
       if (state.searchMode === 'query') {
+        rememberSearchFocus();
         state.page = 1;
         vscode.postMessage({ type: 'reload', state: currentState() });
       } else {
@@ -750,7 +887,7 @@ export class TableDataPanelManager {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         state.searchMode = btn.getAttribute('data-mode');
-        modeDropdown.classList.remove('open');
+        closeModeDropdown();
         updateModeIcon();
         state.page = 1;
         if (state.searchMode === 'query') {
@@ -763,17 +900,39 @@ export class TableDataPanelManager {
 
     modeBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      modeDropdown.classList.toggle('open');
+      const willOpen = !modeDropdown.classList.contains('open');
+      if (willOpen) {
+        modeDropdown.classList.add('open');
+        modeBackdrop.style.display = 'block';
+      } else {
+        closeModeDropdown();
+      }
+    });
+
+    modeBackdrop.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeModeDropdown();
     });
 
     document.addEventListener('click', () => {
-      modeDropdown.classList.remove('open');
-      headerMenu.classList.remove('open');
+      closeModeDropdown();
+      closeHeaderMenu();
     });
 
     headerMenuBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      headerMenu.classList.toggle('open');
+      const willOpen = !headerMenu.classList.contains('open');
+      if (willOpen) {
+        headerMenu.classList.add('open');
+        headerMenuBackdrop.style.display = 'block';
+      } else {
+        closeHeaderMenu();
+      }
+    });
+
+    headerMenuBackdrop.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeHeaderMenu();
     });
 
     document.getElementById('reload').addEventListener('click', () => {
@@ -817,8 +976,13 @@ export class TableDataPanelManager {
     });
 
     document.getElementById('openNewTab').addEventListener('click', () => {
-      headerMenu.classList.remove('open');
+      closeHeaderMenu();
       vscode.postMessage({ type: 'openInNewTab' });
+    });
+
+    document.getElementById('showInExplorer').addEventListener('click', () => {
+      closeHeaderMenu();
+      vscode.postMessage({ type: 'showInExplorer' });
     });
 
     queryEl.addEventListener('keydown', (event) => {
@@ -990,6 +1154,7 @@ export class TableDataPanelManager {
         syncControls();
         render();
         hideError();
+        restorePendingFocus();
       }
 
       if (message.type === 'status') {

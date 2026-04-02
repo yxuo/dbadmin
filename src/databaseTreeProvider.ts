@@ -258,6 +258,49 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
     return objectItem;
   }
 
+  public getParent(element: TreeNodeRef): TreeNodeRef | undefined {
+    if (element.type === 'connection') {
+      return undefined;
+    }
+
+    if (element.type === 'database') {
+      return {
+        type: 'connection',
+        connection: element.connection,
+      } satisfies ConnectionNodeRef;
+    }
+
+    if (element.type === 'schema') {
+      return {
+        type: 'database',
+        connection: element.connection,
+        databaseName: element.databaseName,
+      } satisfies DatabaseNodeRef;
+    }
+
+    if (element.type === 'objectGroup') {
+      return {
+        type: 'schema',
+        connection: element.connection,
+        databaseName: element.databaseName,
+        schemaName: element.schemaName,
+      } satisfies SchemaNodeRef;
+    }
+
+    if (element.type === 'dbObject') {
+      return {
+        type: 'objectGroup',
+        connection: element.connection,
+        databaseName: element.databaseName,
+        schemaName: element.schemaName,
+        kind: element.kind,
+        count: element.count ?? 0,
+      } satisfies ObjectGroupNodeRef;
+    }
+
+    return undefined;
+  }
+
   private async listGroupObjects(group: ObjectGroupNodeRef): Promise<string[]> {
     if (group.kind === 'table') {
       return this.postgresService.listTables(group.connection, group.databaseName, group.schemaName);

@@ -176,6 +176,30 @@ export function activate(context: vscode.ExtensionContext): void {
       });
     })
   );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('dbadmin.showInExplorer', async (node?: DbObjectNodeRef) => {
+      if (!node || node.type !== 'dbObject' || node.kind !== 'table') {
+        return;
+      }
+
+      try {
+        await vscode.commands.executeCommand('workbench.view.extension.dbadmin');
+      } catch {
+        // Ignore if host does not support the command.
+      }
+
+      try {
+        await treeView.reveal(node, {
+          select: true,
+          focus: true,
+          expand: 4,
+        });
+      } catch {
+        treeProvider.refresh();
+      }
+    })
+  );
 }
 
 export function deactivate(): void {}
