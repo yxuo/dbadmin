@@ -361,7 +361,7 @@ export class TableDataPanelManager {
       <textarea id="query" class="query" rows="1"></textarea>
       <div id="queryResizer" class="query-resizer" title="Redimensionar query" aria-hidden="true">
         <svg viewBox="0 0 16 16" fill="none">
-          <path d="M6 12.5h4M8 9.5h4M10 6.5h4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+          <path d="M5 6l6 6M11 6l-6 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
       </div>
     </div>
