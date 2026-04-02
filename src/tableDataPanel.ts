@@ -860,6 +860,7 @@ export class TableDataPanelManager {
 
     window.addEventListener('mouseup', endDrag);
     window.addEventListener('blur', endDrag);
+    window.addEventListener('mouseleave', endDrag);
     document.addEventListener('visibilitychange', endDrag);
     document.addEventListener('pointerleave', endDrag);
 
