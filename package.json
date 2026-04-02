@@ -1,0 +1,96 @@
+{
+  "name": "database-vscode",
+  "displayName": "Database",
+  "description": "Database manager for VS Code with PostgreSQL support.",
+  "version": "0.0.1",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "database",
+          "title": "Database",
+          "icon": "resources/icons/database.svg"
+        }
+      ]
+    },
+    "views": {
+      "database": [
+        {
+          "id": "databaseExplorer",
+          "name": "Database",
+          "icon": "resources/icons/database.svg"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "database.createConnection",
+        "title": "Create Connection",
+        "icon": "$(add)"
+      },
+      {
+        "command": "database.editConnection",
+        "title": "Edit Connection"
+      },
+      {
+        "command": "database.deleteConnection",
+        "title": "Delete Connection"
+      },
+      {
+        "command": "database.refresh",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "database.createConnection",
+          "when": "view == databaseExplorer",
+          "group": "navigation"
+        },
+        {
+          "command": "database.refresh",
+          "when": "view == databaseExplorer",
+          "group": "navigation@1"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "database.editConnection",
+          "when": "view == databaseExplorer && viewItem == connection",
+          "group": "inline"
+        },
+        {
+          "command": "database.deleteConnection",
+          "when": "view == databaseExplorer && viewItem == connection",
+          "group": "inline@1"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "echo \"No lint configured\"",
+    "test": "echo \"No tests configured\""
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.11",
+    "@types/pg": "^8.20.0",
+    "@types/vscode": "^1.95.0",
+    "typescript": "^5.6.3"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  }
+}

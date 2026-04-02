@@ -1,0 +1,172 @@
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
+import * as vscode from 'vscode';
+import { ConnectionsFile, PostgresConnection } from './models';
+
+const STORAGE_FOLDER = '.database-vscode';
+const STORAGE_FILE = 'connections.json';
+
+export class ConnectionStore {
+  public constructor(private readonly storageRoot: string) {}
+
+  public async listConnections(): Promise<PostgresConnection[]> {
+    const data = await this.readFile();
+    return data.connections;
+  }
+
+  public async createConnection(
+    input: Omit<PostgresConnection, 'id' | 'engine' | 'createdAt' | 'updatedAt'>
+  ): Promise<PostgresConnection> {
+    this.validateInput(input);
+    const data = await this.readFile();
+
+    const duplicated = data.connections.some(
+      (connection) =>
+        connection.nickname.trim().toLowerCase() === input.nickname.trim().toLowerCase()
+    );
+
+    if (duplicated) {
+      throw new Error('Ja existe uma conexao com esse apelido.');
+    }
+
+    const now = new Date().toISOString();
+    const created: PostgresConnection = {
+      ...input,
+      id: this.generateId(),
+      engine: 'postgres',
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    data.connections.push(created);
+    await this.writeFile(data);
+
+    return created;
+  }
+
+  public async updateConnection(
+    id: string,
+    patch: Omit<PostgresConnection, 'id' | 'engine' | 'createdAt' | 'updatedAt'>
+  ): Promise<PostgresConnection> {
+    this.validateInput(patch);
+    const data = await this.readFile();
+    const index = data.connections.findIndex((connection) => connection.id === id);
+
+    if (index < 0) {
+      throw new Error('Conexao nao encontrada.');
+    }
+
+    const duplicated = data.connections.some(
+      (connection) =>
+        connection.id !== id &&
+        connection.nickname.trim().toLowerCase() === patch.nickname.trim().toLowerCase()
+    );
+
+    if (duplicated) {
+      throw new Error('Ja existe uma conexao com esse apelido.');
+    }
+
+    const current = data.connections[index];
+    const updated: PostgresConnection = {
+      ...current,
+      ...patch,
+      updatedAt: new Date().toISOString(),
+    };
+
+    data.connections[index] = updated;
+    await this.writeFile(data);
+
+    return updated;
+  }
+
+  public async deleteConnection(id: string): Promise<void> {
+    const data = await this.readFile();
+    const next = data.connections.filter((connection) => connection.id !== id);
+
+    if (next.length === data.connections.length) {
+      throw new Error('Conexao nao encontrada.');
+    }
+
+    await this.writeFile({ ...data, connections: next });
+  }
+
+  private validateInput(
+    input: Omit<PostgresConnection, 'id' | 'engine' | 'createdAt' | 'updatedAt'>
+  ): void {
+    if (!input.nickname.trim()) {
+      throw new Error('Apelido e obrigatorio.');
+    }
+
+    if (!input.host.trim()) {
+      throw new Error('Host e obrigatorio.');
+    }
+
+    if (!Number.isInteger(input.port) || input.port < 1 || input.port > 65535) {
+      throw new Error('Porta invalida. Use um valor entre 1 e 65535.');
+    }
+
+    if (!input.database.trim()) {
+      throw new Error('Database e obrigatorio.');
+    }
+
+    if (!input.user.trim()) {
+      throw new Error('Usuario e obrigatorio.');
+    }
+  }
+
+  private async ensureStorageFile(): Promise<string> {
+    const storageFolder = path.join(this.storageRoot, STORAGE_FOLDER);
+    const storagePath = path.join(storageFolder, STORAGE_FILE);
+
+    await fs.mkdir(storageFolder, { recursive: true });
+
+    try {
+      await fs.access(storagePath);
+    } catch {
+      const initial: ConnectionsFile = {
+        version: 1,
+        connections: [],
+      };
+      await fs.writeFile(storagePath, JSON.stringify(initial, null, 2), 'utf8');
+    }
+
+    return storagePath;
+  }
+
+  private async readFile(): Promise<ConnectionsFile> {
+    const storagePath = await this.ensureStorageFile();
+    const raw = await fs.readFile(storagePath, 'utf8');
+
+    try {
+      const parsed = JSON.parse(raw) as Partial<ConnectionsFile>;
+      if (parsed.version !== 1 || !Array.isArray(parsed.connections)) {
+        throw new Error('Formato invalido.');
+      }
+
+      return {
+        version: 1,
+        connections: parsed.connections as PostgresConnection[],
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Erro desconhecido';
+      throw new Error(`Arquivo de conexoes corrompido: ${message}`);
+    }
+  }
+
+  private async writeFile(data: ConnectionsFile): Promise<void> {
+    const storagePath = await this.ensureStorageFile();
+    const tmpPath = `${storagePath}.tmp`;
+
+    await fs.writeFile(tmpPath, JSON.stringify(data, null, 2), 'utf8');
+    await fs.rename(tmpPath, storagePath);
+  }
+
+  private generateId(): string {
+    return `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+  }
+
+  public static getWorkspaceRoot(): string {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    return folder?.uri.fsPath ?? '';
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "TypeScript",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "npm run watch"
+    },
+    {
+      "name": "Run Extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}"
+      ],
+      "outFiles": [
+        "${workspaceFolder}/out/**/*.js"
+      ]
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Run all",
+      "configurations": [
+        "TypeScript",
+        "Run Extension"
+      ],
+      "stopAll": true
+    }
+  ]
+}
