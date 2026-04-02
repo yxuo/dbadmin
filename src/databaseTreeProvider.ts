@@ -143,6 +143,15 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
 
       if (element.type === 'objectGroup') {
         const objectNames = await this.listGroupObjects(element);
+        const tableCounts =
+          element.kind === 'table'
+            ? await this.postgresService.listTableEstimatedCounts(
+                element.connection,
+                element.databaseName,
+                element.schemaName
+              )
+            : [];
+        const tableCountByName = new Map(tableCounts.map((item) => [item.tableName, item.count]));
 
         if (objectNames.length === 0) {
           return [
@@ -160,6 +169,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
           schemaName: element.schemaName,
           kind: element.kind,
           objectName,
+          count: element.kind === 'table' ? (tableCountByName.get(objectName) ?? 0) : undefined,
         })) satisfies DbObjectNodeRef[];
       }
 
@@ -186,9 +196,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
       const item = new vscode.TreeItem(element.connection.nickname, vscode.TreeItemCollapsibleState.Collapsed);
       item.contextValue = 'connection';
       item.tooltip = `${element.connection.user}@${element.connection.host}:${element.connection.port}/${element.connection.database}`;
-
-      const cachedVersion = this.versions.get(element.connection.id);
-      item.description = cachedVersion ?? 'PostgreSQL';
+      item.description = `${element.connection.host}:${element.connection.port}`;
 
       item.iconPath = {
         light: vscode.Uri.file(
@@ -199,8 +207,11 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
         ),
       };
 
+      const cachedVersion = this.versions.get(element.connection.id);
       if (!cachedVersion) {
         void this.loadVersion(element.connection);
+      } else {
+        item.tooltip = `${item.tooltip}\n${cachedVersion}`;
       }
 
       return item;
@@ -234,6 +245,16 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
     const objectItem = new vscode.TreeItem(element.objectName, vscode.TreeItemCollapsibleState.None);
     objectItem.contextValue = `dbObject:${element.kind}`;
     objectItem.iconPath = this.objectIcon(element.kind);
+    if (element.kind === 'table' && typeof element.count === 'number') {
+      objectItem.description = `${element.count}`;
+    }
+    if (element.kind === 'table') {
+      objectItem.command = {
+        command: 'dbadmin.openTable',
+        title: 'Open Table',
+        arguments: [element],
+      };
+    }
     return objectItem;
   }
 
@@ -297,7 +318,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
       this.versions.set(connection.id, version);
       this.refresh();
     } catch {
-      this.versions.set(connection.id, 'Nao conectado');
+      this.versions.set(connection.id, 'Não conectado');
       this.refresh();
     }
   }

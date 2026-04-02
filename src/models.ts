@@ -12,6 +12,11 @@ export interface PostgresConnection {
   updatedAt: string;
 }
 
+export type PostgresConnectionInput = Omit<
+  PostgresConnection,
+  'id' | 'engine' | 'createdAt' | 'updatedAt'
+>;
+
 export interface ConnectionsFile {
   version: 1;
   connections: PostgresConnection[];
@@ -61,6 +66,7 @@ export interface DbObjectNodeRef {
   schemaName: string;
   kind: DbObjectKind;
   objectName: string;
+  count?: number;
 }
 
 export interface PlaceholderNodeRef {

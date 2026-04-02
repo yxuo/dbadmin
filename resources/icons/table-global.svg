@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+  <!-- outer border top -->
+  <rect x="1" y="2" width="14" height="1.2" fill="#C9A227"/>
+  <!-- outer border bottom -->
+  <rect x="1" y="12.8" width="14" height="1.2" fill="#C9A227"/>
+  <!-- outer border left -->
+  <rect x="1" y="2" width="1.2" height="12" fill="#C9A227"/>
+  <!-- outer border right -->
+  <rect x="13.8" y="2" width="1.2" height="12" fill="#C9A227"/>
+  <!-- header row separator -->
+  <rect x="1" y="5.8" width="14" height="1.2" fill="#C9A227"/>
+  <!-- col separator 1 -->
+  <rect x="5.4" y="2" width="1.0" height="12" fill="#C9A227"/>
+  <!-- col separator 2 -->
+  <rect x="10.6" y="2" width="1.0" height="12" fill="#C9A227"/>
+</svg>

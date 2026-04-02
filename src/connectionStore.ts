@@ -1,21 +1,34 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { ConnectionsFile, PostgresConnection } from './models';
+import { ConnectionsFile, PostgresConnection, PostgresConnectionInput } from './models';
 
-const STORAGE_FOLDER = '.database-vscode';
+const STORAGE_FOLDER = '.dbadmin';
 const STORAGE_FILE = 'connections.json';
 
 export class ConnectionStore {
   public constructor(private readonly storageRoot: string) {}
+
+  public getStorageRoot(): string {
+    return this.storageRoot;
+  }
+
+  public async getStorageFilePath(): Promise<string> {
+    return this.ensureStorageFile();
+  }
 
   public async listConnections(): Promise<PostgresConnection[]> {
     const data = await this.readFile();
     return data.connections;
   }
 
+  public async getConnection(id: string): Promise<PostgresConnection | undefined> {
+    const data = await this.readFile();
+    return data.connections.find((connection) => connection.id === id);
+  }
+
   public async createConnection(
-    input: Omit<PostgresConnection, 'id' | 'engine' | 'createdAt' | 'updatedAt'>
+    input: PostgresConnectionInput
   ): Promise<PostgresConnection> {
     this.validateInput(input);
     const data = await this.readFile();
@@ -26,7 +39,7 @@ export class ConnectionStore {
     );
 
     if (duplicated) {
-      throw new Error('Ja existe uma conexao com esse apelido.');
+      throw new Error('Ja existe uma conexão com esse apelido.');
     }
 
     const now = new Date().toISOString();
@@ -46,14 +59,14 @@ export class ConnectionStore {
 
   public async updateConnection(
     id: string,
-    patch: Omit<PostgresConnection, 'id' | 'engine' | 'createdAt' | 'updatedAt'>
+    patch: PostgresConnectionInput
   ): Promise<PostgresConnection> {
     this.validateInput(patch);
     const data = await this.readFile();
     const index = data.connections.findIndex((connection) => connection.id === id);
 
     if (index < 0) {
-      throw new Error('Conexao nao encontrada.');
+      throw new Error('Conexão não encontrada.');
     }
 
     const duplicated = data.connections.some(
@@ -63,7 +76,7 @@ export class ConnectionStore {
     );
 
     if (duplicated) {
-      throw new Error('Ja existe uma conexao com esse apelido.');
+      throw new Error('Ja existe uma conexão com esse apelido.');
     }
 
     const current = data.connections[index];
@@ -84,15 +97,13 @@ export class ConnectionStore {
     const next = data.connections.filter((connection) => connection.id !== id);
 
     if (next.length === data.connections.length) {
-      throw new Error('Conexao nao encontrada.');
+      throw new Error('Conexão não encontrada.');
     }
 
     await this.writeFile({ ...data, connections: next });
   }
 
-  private validateInput(
-    input: Omit<PostgresConnection, 'id' | 'engine' | 'createdAt' | 'updatedAt'>
-  ): void {
+  private validateInput(input: PostgresConnectionInput): void {
     if (!input.nickname.trim()) {
       throw new Error('Apelido e obrigatorio.');
     }

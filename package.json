@@ -1,7 +1,7 @@
 {
-  "name": "database-vscode",
-  "displayName": "Database",
-  "description": "Database manager for VS Code with PostgreSQL support.",
+  "name": "dbadmin",
+  "displayName": "DBAdmin",
+  "description": "Database manager for VS Code.",
   "version": "0.0.1",
   "publisher": "local",
   "engines": {
@@ -15,64 +15,101 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "database",
-          "title": "Database",
+          "id": "dbadmin",
+          "title": "DBAdmin",
           "icon": "resources/icons/database.svg"
         }
       ]
     },
     "views": {
-      "database": [
+      "dbadmin": [
         {
           "id": "databaseExplorer",
-          "name": "Database",
+          "name": "DBAdmin",
           "icon": "resources/icons/database.svg"
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "databaseExplorer",
+        "contents": "Sem provedor de dados."
+      }
+    ],
     "commands": [
       {
-        "command": "database.createConnection",
+        "command": "dbadmin.createConnection",
         "title": "Create Connection",
         "icon": "$(add)"
       },
       {
-        "command": "database.editConnection",
-        "title": "Edit Connection"
+        "command": "dbadmin.editConnection",
+        "title": "Edit Connection",
+        "icon": "$(edit)"
       },
       {
-        "command": "database.deleteConnection",
-        "title": "Delete Connection"
+        "command": "dbadmin.deleteConnection",
+        "title": "Delete Connection",
+        "icon": "$(trash)"
       },
       {
-        "command": "database.refresh",
+        "command": "dbadmin.refresh",
         "title": "Refresh",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "dbadmin.openSettings",
+        "title": "Configurações",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "dbadmin.openTable",
+        "title": "Abrir Tabela"
+      },
+      {
+        "command": "dbadmin.openTableInNewTab",
+        "title": "Abrir em nova aba",
+        "icon": "$(list-tree)"
       }
     ],
     "menus": {
       "view/title": [
         {
-          "command": "database.createConnection",
+          "command": "dbadmin.createConnection",
           "when": "view == databaseExplorer",
           "group": "navigation"
         },
         {
-          "command": "database.refresh",
+          "command": "dbadmin.refresh",
           "when": "view == databaseExplorer",
           "group": "navigation@1"
+        },
+        {
+          "command": "dbadmin.openSettings",
+          "when": "view == databaseExplorer",
+          "group": "navigation@2"
         }
       ],
       "view/item/context": [
         {
-          "command": "database.editConnection",
+          "command": "dbadmin.editConnection",
           "when": "view == databaseExplorer && viewItem == connection",
           "group": "inline"
         },
         {
-          "command": "database.deleteConnection",
+          "command": "dbadmin.deleteConnection",
           "when": "view == databaseExplorer && viewItem == connection",
           "group": "inline@1"
+        },
+        {
+          "command": "dbadmin.openTableInNewTab",
+          "when": "view == databaseExplorer && viewItem == dbObject:table",
+          "group": "inline"
+        },
+        {
+          "command": "dbadmin.openTableInNewTab",
+          "when": "view == databaseExplorer && viewItem == dbObject:table",
+          "group": "navigation"
         }
       ]
     }

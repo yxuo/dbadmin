@@ -1,0 +1,428 @@
+import * as vscode from 'vscode';
+import { PostgresConnection, PostgresConnectionInput } from './models';
+import { PostgresService } from './postgresService';
+
+export type ConnectionDraft = PostgresConnectionInput;
+
+type FormMode = 'create' | 'edit';
+
+type FormMessage =
+  | { type: 'ready' }
+  | { type: 'cancel' }
+  | { type: 'test'; payload: ConnectionDraft }
+  | { type: 'save'; payload: ConnectionDraft };
+
+export async function showConnectionForm(
+  context: vscode.ExtensionContext,
+  postgresService: PostgresService,
+  mode: FormMode,
+  current?: PostgresConnection
+): Promise<ConnectionDraft | undefined> {
+  const panel = vscode.window.createWebviewPanel(
+    'database.connectionForm',
+    mode === 'create' ? 'Nova conexão' : `Editar conexão: ${current?.nickname ?? ''}`,
+    {
+      preserveFocus: false,
+      viewColumn: vscode.ViewColumn.Active,
+    },
+    {
+      enableScripts: true,
+      retainContextWhenHidden: true,
+    }
+  );
+
+  const initialData: ConnectionDraft = {
+    nickname: current?.nickname ?? '',
+    host: current?.host ?? 'localhost',
+    port: current?.port ?? 5432,
+    database: current?.database ?? 'postgres',
+    user: current?.user ?? 'postgres',
+    password: current?.password ?? '',
+    ssl: current?.ssl ?? false,
+  };
+
+  panel.webview.html = getHtml(panel.webview, context.extensionUri, mode, initialData);
+
+  return new Promise<ConnectionDraft | undefined>((resolve) => {
+    let settled = false;
+
+    const finish = (value: ConnectionDraft | undefined): void => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      resolve(value);
+    };
+
+    const disposable = panel.webview.onDidReceiveMessage(async (message: FormMessage) => {
+      if (message.type === 'ready') {
+        panel.webview.postMessage({
+          type: 'hydrate',
+          payload: initialData,
+        });
+        return;
+      }
+
+      if (message.type === 'cancel') {
+        disposable.dispose();
+        finish(undefined);
+        panel.dispose();
+        return;
+      }
+
+      if (message.type === 'test') {
+        try {
+          validateDraft(message.payload);
+          const version = await postgresService.testConnection(message.payload);
+          panel.webview.postMessage({
+            type: 'testResult',
+            ok: true,
+            message: `Conexão OK. ${version}`,
+          });
+        } catch (error) {
+          panel.webview.postMessage({
+            type: 'testResult',
+            ok: false,
+            message: getErrorMessage(error),
+          });
+        }
+        return;
+      }
+
+      if (message.type === 'save') {
+        try {
+          validateDraft(message.payload);
+          disposable.dispose();
+          finish(message.payload);
+          panel.dispose();
+        } catch (error) {
+          panel.webview.postMessage({
+            type: 'saveResult',
+            ok: false,
+            message: getErrorMessage(error),
+          });
+        }
+      }
+    });
+
+    panel.onDidDispose(() => {
+      disposable.dispose();
+      finish(undefined);
+    });
+  });
+}
+
+function validateDraft(draft: ConnectionDraft): void {
+  if (!draft.nickname.trim()) {
+    throw new Error('Apelido e obrigatorio.');
+  }
+  if (!draft.host.trim()) {
+    throw new Error('Host e obrigatorio.');
+  }
+  if (!Number.isInteger(draft.port) || draft.port < 1 || draft.port > 65535) {
+    throw new Error('Porta invalida. Use um valor entre 1 e 65535.');
+  }
+  if (!draft.database.trim()) {
+    throw new Error('Database e obrigatorio.');
+  }
+  if (!draft.user.trim()) {
+    throw new Error('Usuario e obrigatorio.');
+  }
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Erro inesperado';
+}
+
+function getHtml(
+  webview: vscode.Webview,
+  extensionUri: vscode.Uri,
+  mode: FormMode,
+  initialData: ConnectionDraft
+): string {
+  const nonce = String(Date.now());
+  const title = mode === 'create' ? 'Nova conexão' : 'Editar conexão';
+  const escaped = JSON.stringify(initialData).replace(/</g, '\\u003c');
+  const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';`;
+
+  return `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="${csp}" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${title}</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+    }
+    body {
+      font-family: var(--vscode-font-family);
+      color: var(--vscode-foreground);
+      background: var(--vscode-editor-background);
+      margin: 0;
+      padding: 24px;
+    }
+    .shell {
+      max-width: 760px;
+      margin: 0 auto;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .title {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 700;
+    }
+    .subtitle {
+      margin: 6px 0 0;
+      color: var(--vscode-descriptionForeground);
+    }
+    .badge {
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--vscode-button-background) 18%, transparent);
+      color: var(--vscode-button-foreground);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .field.full {
+      grid-column: 1 / -1;
+    }
+    label {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--vscode-descriptionForeground);
+    }
+    input, select {
+      border: 1px solid var(--vscode-input-border, transparent);
+      background: var(--vscode-input-background);
+      color: var(--vscode-input-foreground);
+      border-radius: 8px;
+      padding: 10px 12px;
+      outline: none;
+    }
+    input:focus, select:focus {
+      border-color: var(--vscode-focusBorder);
+    }
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .toggle {
+      appearance: none;
+      width: 42px;
+      height: 24px;
+      border-radius: 999px;
+      background: var(--vscode-input-background);
+      position: relative;
+      border: 1px solid var(--vscode-input-border, transparent);
+      cursor: pointer;
+      padding: 0;
+    }
+    .toggle::after {
+      content: '';
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--vscode-button-foreground);
+      position: absolute;
+      left: 2px;
+      top: 2px;
+      transition: transform 0.15s ease;
+    }
+    .toggle:checked {
+      background: var(--vscode-button-background);
+    }
+    .toggle:checked::after {
+      transform: translateX(18px);
+    }
+    .actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+      margin-top: 24px;
+    }
+    button {
+      border: 1px solid var(--vscode-button-border, transparent);
+      border-radius: 8px;
+      padding: 10px 14px;
+      cursor: pointer;
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+    }
+    button.primary {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+    }
+    .status {
+      margin-top: 18px;
+      min-height: 22px;
+      color: var(--vscode-descriptionForeground);
+    }
+    .status.ok {
+      color: var(--vscode-testing-iconPassed);
+    }
+    .status.error {
+      color: var(--vscode-errorForeground);
+    }
+    @media (max-width: 720px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="header">
+      <div>
+        <h1 class="title">${title}</h1>
+        <p class="subtitle">Escolha o tipo de banco, configure a conexão, teste e salve.</p>
+      </div>
+      <div class="badge">Database</div>
+    </div>
+
+    <div class="grid">
+      <div class="field full">
+        <label for="engine">Tipo de banco</label>
+        <select id="engine">
+          <option value="postgres">PostgreSQL</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="nickname">Apelido</label>
+        <input id="nickname" />
+      </div>
+      <div class="field">
+        <label for="host">Host</label>
+        <input id="host" />
+      </div>
+      <div class="field">
+        <label for="port">Porta</label>
+        <input id="port" type="number" min="1" max="65535" />
+      </div>
+      <div class="field">
+        <label for="database">Database</label>
+        <input id="database" />
+      </div>
+      <div class="field">
+        <label for="user">Usuario</label>
+        <input id="user" />
+      </div>
+      <div class="field">
+        <label for="password">Senha</label>
+        <input id="password" type="password" />
+      </div>
+      <div class="field full">
+        <label>SSL</label>
+        <div class="row">
+          <input id="ssl" class="toggle" type="checkbox" />
+          <span>Ativar SSL</span>
+        </div>
+      </div>
+    </div>
+
+    <div id="status" class="status"></div>
+
+    <div class="actions">
+      <button id="cancel">Cancelar</button>
+      <button id="test">Testar conexão</button>
+      <button id="save" class="primary">Salvar</button>
+    </div>
+  </div>
+
+  <script nonce="${nonce}">
+    const vscode = acquireVsCodeApi();
+    const initialData = ${escaped};
+    const status = document.getElementById('status');
+    const fields = {
+      engine: document.getElementById('engine'),
+      nickname: document.getElementById('nickname'),
+      host: document.getElementById('host'),
+      port: document.getElementById('port'),
+      database: document.getElementById('database'),
+      user: document.getElementById('user'),
+      password: document.getElementById('password'),
+      ssl: document.getElementById('ssl'),
+    };
+
+    function hydrate(data) {
+      fields.engine.value = 'postgres';
+      fields.nickname.value = data.nickname || '';
+      fields.host.value = data.host || 'localhost';
+      fields.port.value = String(data.port || 5432);
+      fields.database.value = data.database || 'postgres';
+      fields.user.value = data.user || 'postgres';
+      fields.password.value = data.password || '';
+      fields.ssl.checked = !!data.ssl;
+    }
+
+    function payload() {
+      return {
+        nickname: fields.nickname.value.trim(),
+        host: fields.host.value.trim(),
+        port: Number(fields.port.value),
+        database: fields.database.value.trim(),
+        user: fields.user.value.trim(),
+        password: fields.password.value,
+        ssl: fields.ssl.checked,
+      };
+    }
+
+    function setStatus(message, kind) {
+      status.textContent = message || '';
+      status.className = 'status' + (kind ? ' ' + kind : '');
+    }
+
+    document.getElementById('cancel').addEventListener('click', () => {
+      vscode.postMessage({ type: 'cancel' });
+    });
+
+    document.getElementById('test').addEventListener('click', () => {
+      setStatus('Testando conexão...', '');
+      vscode.postMessage({ type: 'test', payload: payload() });
+    });
+
+    document.getElementById('save').addEventListener('click', () => {
+      setStatus('', '');
+      vscode.postMessage({ type: 'save', payload: payload() });
+    });
+
+    window.addEventListener('message', (event) => {
+      const message = event.data;
+      if (message.type === 'hydrate') {
+        hydrate(message.payload);
+      }
+      if (message.type === 'testResult') {
+        setStatus(message.message, message.ok ? 'ok' : 'error');
+      }
+      if (message.type === 'saveResult') {
+        setStatus(message.message, message.ok ? 'ok' : 'error');
+      }
+    });
+
+    hydrate(initialData);
+    vscode.postMessage({ type: 'ready' });
+  </script>
+</body>
+</html>`;
+}
