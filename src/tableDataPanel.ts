@@ -543,8 +543,9 @@ export class TableDataPanelManager {
     .columns-search { width: 100%; box-sizing: border-box; border: 1px solid var(--vscode-input-border, transparent); background: var(--vscode-input-background); color: var(--vscode-input-foreground); border-radius: 6px; padding: 0 8px; height: 26px; }
     .columns-search:focus { border-color: var(--vscode-focusBorder); outline: none; }
     .columns-list { list-style: none; margin: 0; padding: 6px; display: flex; flex-direction: column; gap: 4px; }
-    .columns-item { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; border: 1px solid transparent; border-radius: 6px; padding: 6px; cursor: grab; user-select: none; }
-    .columns-item.all-toggle { grid-template-columns: auto 1fr; cursor: default; border-bottom: 1px solid var(--vscode-panel-border); border-radius: 0; padding-bottom: 8px; margin-bottom: 2px; }
+    .columns-item { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; border: 1px solid transparent; border-radius: 6px; padding: 3px 6px; cursor: grab; user-select: none; }
+    .columns-item.all-toggle { grid-template-columns: auto 1fr; cursor: default; }
+    .columns-divider { height: 1px; background: var(--vscode-panel-border); margin: 2px 0 4px; border-radius: 1px; list-style: none; }
     .columns-item.no-reorder { cursor: default; }
     .columns-item.no-reorder .columns-item-handle { opacity: 0.35; }
     .columns-item:hover { background: var(--vscode-list-hoverBackground); }
@@ -954,6 +955,7 @@ export class TableDataPanelManager {
     let rowKeyToCtid = new Map(); // rowKey -> ctid|null
     let editingCellInput = null;
     let lastSelectedCell = null; // { rowKey, colName }
+    let keyboardSelectionAnchor = null; // { rowIndex, colIndex }
     // DOM element maps for lightweight selection update (avoids full re-render)
     let trElements = new Map(); // rowKey -> tr element
     let selectionTdElements = new Map(); // rowKey -> selection-col td
@@ -1307,6 +1309,11 @@ export class TableDataPanelManager {
       allItem.appendChild(allLabel);
       columnsList.appendChild(allItem);
 
+      const dividerItem = document.createElement('li');
+      dividerItem.className = 'columns-divider';
+      dividerItem.setAttribute('aria-hidden', 'true');
+      columnsList.appendChild(dividerItem);
+
       const filterText = columnsSearchText.trim().toLowerCase();
       const filteredNames = filterText
         ? columnOrder.filter((name) => name.toLowerCase().includes(filterText))
@@ -1461,6 +1468,7 @@ export class TableDataPanelManager {
     }
 
     function selectRow(rowKey, displayColumns, preserveExisting) {
+      keyboardSelectionAnchor = null;
       if (!preserveExisting) {
         selectedCells.clear();
       }
@@ -1479,6 +1487,7 @@ export class TableDataPanelManager {
     }
 
     function applyRowSelectionDragRange(currentRowIndex, displayColumns) {
+      keyboardSelectionAnchor = null;
       if (rowSelectionDragAnchorIndex === null) {
         return;
       }
@@ -1543,6 +1552,7 @@ export class TableDataPanelManager {
     }
 
     function selectSingleCellAt(rowIndex, colIndex, enterEditMode) {
+      keyboardSelectionAnchor = null;
       if (rowIndex < 0 || colIndex < 0 || rowIndex >= displayedRowKeys.length || colIndex >= displayedColNames.length) {
         return;
       }
@@ -1568,6 +1578,7 @@ export class TableDataPanelManager {
     }
 
     function moveSelectionBy(deltaRow, deltaCol) {
+      keyboardSelectionAnchor = null;
       const pos = getCellPosition(lastSelectedCell);
       if (!pos) {
         if (displayedRowKeys.length > 0 && displayedColNames.length > 0) {
@@ -1579,6 +1590,60 @@ export class TableDataPanelManager {
       const nextRow = Math.min(Math.max(pos.rowIndex + deltaRow, 0), displayedRowKeys.length - 1);
       const nextCol = Math.min(Math.max(pos.colIndex + deltaCol, 0), displayedColNames.length - 1);
       selectSingleCellAt(nextRow, nextCol, false);
+    }
+
+    function applyKeyboardRangeSelection(anchor, focus) {
+      const minR = Math.min(anchor.rowIndex, focus.rowIndex);
+      const maxR = Math.max(anchor.rowIndex, focus.rowIndex);
+      const minC = Math.min(anchor.colIndex, focus.colIndex);
+      const maxC = Math.max(anchor.colIndex, focus.colIndex);
+
+      selectedCells.clear();
+      for (let r = minR; r <= maxR; r++) {
+        const rowKey = displayedRowKeys[r];
+        if (!rowKey) {
+          continue;
+        }
+        const cellSet = new Set();
+        for (let c = minC; c <= maxC; c++) {
+          const colName = displayedColNames[c];
+          if (colName) {
+            cellSet.add(colName);
+          }
+        }
+        selectedCells.set(rowKey, cellSet);
+      }
+
+      const focusRowKey = displayedRowKeys[focus.rowIndex];
+      const focusColName = displayedColNames[focus.colIndex];
+      if (focusRowKey && focusColName) {
+        lastSelectedCell = { rowKey: focusRowKey, colName: focusColName };
+      }
+
+      renderSelectionState();
+    }
+
+    function extendSelectionBy(deltaRow, deltaCol) {
+      if (displayedRowKeys.length === 0 || displayedColNames.length === 0) {
+        return;
+      }
+
+      let pos = getCellPosition(lastSelectedCell);
+      if (!pos) {
+        selectSingleCellAt(0, 0, false);
+        pos = { rowIndex: 0, colIndex: 0 };
+      }
+
+      if (!keyboardSelectionAnchor) {
+        keyboardSelectionAnchor = { rowIndex: pos.rowIndex, colIndex: pos.colIndex };
+      }
+
+      const next = {
+        rowIndex: Math.min(Math.max(pos.rowIndex + deltaRow, 0), displayedRowKeys.length - 1),
+        colIndex: Math.min(Math.max(pos.colIndex + deltaCol, 0), displayedColNames.length - 1),
+      };
+
+      applyKeyboardRangeSelection(keyboardSelectionAnchor, next);
     }
 
     function moveEditCellByTab(backward) {
@@ -2421,14 +2486,26 @@ export class TableDataPanelManager {
         event.key === 'ArrowLeft' ||
         event.key === 'ArrowRight'
       )) {
-        if (event.key === 'ArrowUp') {
-          moveSelectionBy(-1, 0);
-        } else if (event.key === 'ArrowDown') {
-          moveSelectionBy(1, 0);
-        } else if (event.key === 'ArrowLeft') {
-          moveSelectionBy(0, -1);
-        } else if (event.key === 'ArrowRight') {
-          moveSelectionBy(0, 1);
+        if (event.shiftKey) {
+          if (event.key === 'ArrowUp') {
+            extendSelectionBy(-1, 0);
+          } else if (event.key === 'ArrowDown') {
+            extendSelectionBy(1, 0);
+          } else if (event.key === 'ArrowLeft') {
+            extendSelectionBy(0, -1);
+          } else if (event.key === 'ArrowRight') {
+            extendSelectionBy(0, 1);
+          }
+        } else {
+          if (event.key === 'ArrowUp') {
+            moveSelectionBy(-1, 0);
+          } else if (event.key === 'ArrowDown') {
+            moveSelectionBy(1, 0);
+          } else if (event.key === 'ArrowLeft') {
+            moveSelectionBy(0, -1);
+          } else if (event.key === 'ArrowRight') {
+            moveSelectionBy(0, 1);
+          }
         }
         event.preventDefault();
         return;
