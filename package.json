@@ -52,6 +52,13 @@
           "scope": "window",
           "order": 50,
           "description": "Número padrão de itens por página na visualização de tabela."
+        },
+        "dbadmin.nativePreviewMatchColumnType": {
+          "type": "boolean",
+          "default": false,
+          "scope": "window",
+          "order": 51,
+          "description": "Quando ativo, a prévia nativa usa .json para colunas JSON e .txt para as demais. Quando desativado, usa sempre .json."
         }
       }
     },
@@ -120,7 +127,7 @@
       {
         "command": "dbadmin.openTableInNewTab",
         "title": "Abrir em nova aba",
-        "icon": "$(go-to-file)"
+        "icon": "$(diff-renamed)"
       },
       {
         "command": "dbadmin.createDatabase",
@@ -158,12 +165,12 @@
       {
         "command": "dbadmin.openColumnDetailsInNewTab",
         "title": "Abrir em nova aba",
-        "icon": "$(go-to-file)"
+        "icon": "$(diff-renamed)"
       },
       {
         "command": "dbadmin.openConstraintDetailsInNewTab",
         "title": "Abrir em nova aba",
-        "icon": "$(go-to-file)"
+        "icon": "$(diff-renamed)"
       },
       {
         "command": "dbadmin.editTableFilter",
