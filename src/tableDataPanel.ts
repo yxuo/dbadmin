@@ -87,6 +87,7 @@ const HIDE_TAB_HEADER_SETTING = 'dbadmin.hideTabHeader';
 const PERSIST_LAYOUT_SETTING = 'dbadmin.persistColumnLayout';
 const DEFAULT_PAGE_SIZE_SETTING = 'dbadmin.defaultPageSize';
 const NATIVE_PREVIEW_MATCH_COLUMN_TYPE_SETTING = 'dbadmin.nativePreviewMatchColumnType';
+const DYNAMIC_DEFAULT_COLUMN_WIDTH_SETTING = 'dbadmin.dynamicDefaultColumnWidth';
 
 export class TableDataPanelManager {
   private readonly reusedPanels = new Map<string, vscode.WebviewPanel>();
@@ -365,11 +366,16 @@ export class TableDataPanelManager {
         panel.webview.postMessage({
           type: 'data',
           title: `${node.databaseName} / ${node.schemaName}.${node.objectName}`,
+          connectionName:
+            node.connection.nickname?.trim() ||
+            node.connection.database?.trim() ||
+            node.connection.host,
           databaseName: node.databaseName,
           schemaName: node.schemaName,
           result,
           state,
           showQueryEditor: this.getShowQueryEditor(),
+          dynamicDefaultColumnWidth: this.getDynamicDefaultColumnWidth(),
           layout: this.panelLayouts.get(panel),
         });
         return;
@@ -469,6 +475,12 @@ export class TableDataPanelManager {
     return vscode.workspace
       .getConfiguration()
       .get<boolean>(NATIVE_PREVIEW_MATCH_COLUMN_TYPE_SETTING, true);
+  }
+
+  private getDynamicDefaultColumnWidth(): boolean {
+    return vscode.workspace
+      .getConfiguration()
+      .get<boolean>(DYNAMIC_DEFAULT_COLUMN_WIDTH_SETTING, true);
   }
 
   public notifyQueryVisibilityChanged(): void {
@@ -967,6 +979,7 @@ export class TableDataPanelManager {
     const codiconsCssUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, 'node_modules', '@vscode', 'codicons', 'dist', 'codicon.css')
     );
+    const initialDynamicDefaultColumnWidth = this.getDynamicDefaultColumnWidth();
 
     return `<!DOCTYPE html>
 <html lang="pt-BR">
@@ -989,6 +1002,8 @@ export class TableDataPanelManager {
     .header { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; padding: 0px 4px; }
     .title { font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
     .title svg { width: 14px; height: 14px; margin-top: 4px; }
+    .title .info-fixed { flex: 0 0 auto; white-space: nowrap; }
+    .title .info-conn { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     .header-menu-wrap { position: relative; }
     .overlay-backdrop { position: fixed; inset: 0; display: none; }
     .overlay-surface { position: fixed; display: none; border: 1px solid color-mix(in srgb, var(--vscode-foreground) 11%, var(--vscode-panel-border)); background: var(--vscode-editorWidget-background); border-radius: 8px; box-shadow: 0 0 10px rgba(0, 0, 0, 0.18); }
@@ -1049,7 +1064,8 @@ export class TableDataPanelManager {
       text-overflow: ellipsis;
     }
     .search-context-placeholder svg { width: 12px; height: 12px; flex: 0 0 auto; }
-    .search-context-placeholder span { overflow: hidden; text-overflow: ellipsis; }
+    .search-context-placeholder .info-fixed { flex: 0 0 auto; white-space: nowrap; }
+    .search-context-placeholder .info-conn { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
     .input { border: 1px solid var(--vscode-input-border, transparent); background: var(--vscode-input-background); color: var(--vscode-input-foreground); border-radius: 6px; padding: 0 8px; height: 28px; box-sizing: border-box; }
     .btn-icon-fix { padding: 0px 0px 2px 0px !important; }
     button { border: 1px solid var(--vscode-button-border, transparent); background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-radius: 6px; padding: 0 10px; height: 28px; cursor: pointer; box-sizing: border-box; }
@@ -1469,6 +1485,7 @@ export class TableDataPanelManager {
     const SVG_QUERY = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><ellipse cx="8" cy="4.5" rx="5.5" ry="2" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 4.5v7c0 1.1 2.46 2 5.5 2s5.5-.9 5.5-2v-7" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 8c0 1.1 2.46 2 5.5 2s5.5-.9 5.5-2" stroke="currentColor" stroke-width="1.3"/></svg>';
     const SVG_DB = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><ellipse cx="8" cy="4" rx="5.5" ry="2" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 4v7.5C2.5 12.88 4.96 14 8 14s5.5-1.12 5.5-2.5V4" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 7.5c0 1.38 2.46 2.5 5.5 2.5s5.5-1.12 5.5-2.5" stroke="currentColor" stroke-width="1.3"/></svg>';
     const SVG_SCHEMA = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 3h12v3H2zM2 8h12v5H2z" stroke="currentColor" stroke-width="1.2"/></svg>';
+    const SVG_CONNECTION = '<svg width="14" height="14" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="currentColor" aria-hidden="true"><path d="M10.723 4H10V1.5C10 1.224 9.776 1 9.5 1C9.224 1 9 1.224 9 1.5V4H7V1.5C7 1.224 6.776 1 6.5 1C6.224 1 6 1.224 6 1.5V4H5.277C4.573 4 4 4.573 4 5.278V8C4 10.036 5.529 11.722 7.5 11.969V14.5C7.5 14.776 7.724 15 8 15C8.276 15 8.5 14.776 8.5 14.5V11.969C10.471 11.722 12 10.037 12 8V5.278C12 4.573 11.427 4 10.723 4ZM11 8C11 9.654 9.654 11 8 11C6.346 11 5 9.654 5 8V5.278C5 5.125 5.124 5 5.277 5H10.722C10.875 5 10.999 5.125 10.999 5.278V8H11Z"/></svg>';
     const SVG_SORT_NONE = '<svg width="16" height="16" viewBox="0 -3 24 24" fill="none" aria-hidden="true"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m8 15 4 4 4-4m0-6-4-4-4 4"/></svg>';
     const SVG_EXTERNAL_LINK = '<svg viewBox="0 0 1 1" fill="none" aria-hidden="true"><path d="M9.5 2.5h4v4M8 8l5.5-5.5M7 3.5h-2A1.5 1.5 0 0 0 3.5 5v6A1.5 1.5 0 0 0 5 12.5h6a1.5 1.5 0 0 0 1.5-1.5v-2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     const SVG_ZOOM_IN = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M12.0278 6.14861C12.1234 7.56649 11.6685 8.96661 10.7577 10.0575L15.0177 14.3176L14.3178 15.0275L10.0578 10.7575C8.96686 11.6682 7.56674 12.1231 6.14885 12.0275C4.73097 11.9319 3.40461 11.2931 2.44585 10.2442C1.48709 9.19523 0.969739 7.81691 1.00164 6.39617C1.03353 4.97542 1.61212 3.62162 2.61699 2.61675C3.62187 1.61188 4.97566 1.03329 6.39641 1.00139C7.81716 0.969494 9.19548 1.48684 10.2444 2.44561C11.2934 3.40437 11.9321 4.73072 12.0278 6.14861ZM6.57781 11.0375C7.77066 11.0354 8.91402 10.5608 9.75774 9.71758L9.71782 9.7376C10.145 9.32074 10.4851 8.82316 10.7186 8.27385C10.952 7.72455 11.0741 7.13437 11.0778 6.53752C11.0778 5.64751 10.8139 4.77755 10.3194 4.03752C9.82492 3.2975 9.12212 2.72065 8.29985 2.38005C7.47759 2.03946 6.57279 1.95032 5.69988 2.12395C4.82696 2.29758 4.02514 2.72618 3.3958 3.35552C2.76646 3.98485 2.33787 4.78668 2.16423 5.6596C1.9906 6.53251 2.07974 7.4373 2.42034 8.25957C2.76093 9.08184 3.33766 9.78464 4.07769 10.2791C4.81771 10.7736 5.68779 11.0375 6.57781 11.0375ZM9.01773 7.0376V6.0376H7.01773V4.0376H6.01773V6.0376H4.01773V7.0376H6.01773V9.0376H7.01773V7.0376H9.01773Z" fill="currentColor"/></svg>';
@@ -1653,8 +1670,10 @@ export class TableDataPanelManager {
     let isLoading = false;
     let showQueryEditor = ${initialShowQueryEditor ? "true" : "false"};
     let hideTabHeader = ${initialHideTabHeader ? "true" : "false"};
+    let dynamicDefaultColumnWidth = ${initialDynamicDefaultColumnWidth ? "true" : "false"};
     let currentDatabaseName = '';
     let currentSchemaName = '';
+    let currentConnectionName = '';
     let currentJsonModalPayload = {
       columnName: '',
       content: '',
@@ -1753,11 +1772,14 @@ export class TableDataPanelManager {
 
       const dbLabel = currentDatabaseName || 'Banco';
       const schemaLabel = currentSchemaName || 'Schema';
+      const connectionLabel = currentConnectionName || 'Conexão';
       searchContextPlaceholderEl.innerHTML =
         SVG_DB +
-        '<span>' + dbLabel + '</span>' +
+        '<span class="info-fixed">' + dbLabel + '</span>' +
         SVG_SCHEMA +
-        '<span>' + schemaLabel + '</span>';
+        '<span class="info-fixed">' + schemaLabel + '</span>' +
+        SVG_CONNECTION +
+        '<span class="info-conn">' + connectionLabel + '</span>';
       searchContextPlaceholderEl.style.display = 'inline-flex';
     }
 
@@ -1862,6 +1884,86 @@ export class TableDataPanelManager {
 
     function isFkColumn(column) {
       return column?.isForeignKey === true;
+    }
+
+    function isPkColumn(column) {
+      return column?.isPrimaryKey === true;
+    }
+
+    function isBigIntType(column) {
+      const dataType = String(column?.dataType || '').toLowerCase();
+      return dataType === 'bigint' || dataType === 'int8';
+    }
+
+    function isBooleanType(column) {
+      const dataType = String(column?.dataType || '').toLowerCase();
+      return dataType === 'boolean' || dataType === 'bool';
+    }
+
+    function getLongestVisibleCellLength(column, visibleRows) {
+      let longestCellLength = 0;
+      visibleRows.forEach((row) => {
+        const ctid = row?.__dbadmin_ctid;
+        const cellValue = toCellInputText(getEffectiveCellValue(row, column.name, ctid), column);
+        const cellLength = String(cellValue || '').length;
+        if (cellLength > longestCellLength) {
+          longestCellLength = cellLength;
+        }
+      });
+      return longestCellLength;
+    }
+
+    function shouldUseMinimumColumnWidth(column, longestCellLength) {
+      const isPkOrFk = isPkColumn(column) || isFkColumn(column);
+      return (isBigIntType(column) && isPkOrFk) || isBooleanType(column) || longestCellLength <= 15;
+    }
+
+    function measureTextWidth(text) {
+      if (!measureTextWidth.canvas) {
+        measureTextWidth.canvas = document.createElement('canvas');
+      }
+
+      const context = measureTextWidth.canvas.getContext('2d');
+      if (!context) {
+        return text.length * 7;
+      }
+
+      const computed = window.getComputedStyle(document.body);
+      const fontSize = computed.fontSize || '12px';
+      const fontFamily = computed.fontFamily || 'sans-serif';
+      context.font = fontSize + ' ' + fontFamily;
+      return context.measureText(String(text || '')).width;
+    }
+
+    function getMinimumColumnWidth(column, longestCellLength) {
+      let headerWidth = (String(column?.name || '').length * 5) + 24 + 30;
+      /** Ajuste fino */
+      if (headerWidth < 100) {
+        headerWidth += 10;
+      }
+
+      const cellsWidth = (longestCellLength * 5) + 12;
+      return Math.max(headerWidth, cellsWidth);
+    }
+
+    function getDefaultColumnWidth(column, visibleRows) {
+      const longestCellLength = getLongestVisibleCellLength(column, visibleRows);
+      const useMinimumWidth = dynamicDefaultColumnWidth && shouldUseMinimumColumnWidth(column, longestCellLength);
+      const resolvedWidth = useMinimumWidth ? getMinimumColumnWidth(column, longestCellLength) : 170;
+      console.log(
+        '[dbadmin][column-width-default]',
+        {
+          column: String(column?.name || ''),
+          dataType: String(column?.dataType || ''),
+          isPrimaryKey: Boolean(column?.isPrimaryKey),
+          isForeignKey: Boolean(column?.isForeignKey),
+          dynamicDefaultColumnWidth,
+          longestCellLength,
+          mode: useMinimumWidth ? 'minimum' : '170',
+          width: resolvedWidth,
+        }
+      );
+      return resolvedWidth;
     }
 
     function isPreviewableColumn(column) {
@@ -2732,6 +2834,7 @@ export class TableDataPanelManager {
 
     function render() {
       const displayColumns = getDisplayColumns();
+      const visibleRows = applyLocalFilter(rows);
 
       if (displayColumns.length === 0) {
         rowKeyToRow.clear();
@@ -2755,9 +2858,8 @@ export class TableDataPanelManager {
       selectTh.textContent = '';
       selectTh.style.cursor = 'pointer';
       selectTh.addEventListener('click', () => {
-        const displayedRows = applyLocalFilter(rows);
         selectedCells.clear();
-        displayedRows.forEach((row, rowIndex) => {
+        visibleRows.forEach((row, rowIndex) => {
           const rk = row.__dbadmin_ctid || ('new:' + rowIndex);
           selectedCells.set(rk, new Set(displayColumns.map((c) => c.name)));
         });
@@ -2772,6 +2874,12 @@ export class TableDataPanelManager {
         if (typeof savedWidth === 'number' && Number.isFinite(savedWidth) && savedWidth > 0) {
           th.style.width = savedWidth + 'px';
           th.style.minWidth = savedWidth + 'px';
+          th.style.maxWidth = savedWidth + 'px';
+        } else if (!dynamicDefaultColumnWidth || shouldUseMinimumColumnWidth(col, getLongestVisibleCellLength(col, visibleRows))) {
+          const minWidth = getDefaultColumnWidth(col, visibleRows);
+          th.style.width = minWidth + 'px';
+          th.style.minWidth = minWidth + 'px';
+          th.style.maxWidth = minWidth + 'px';
         }
 
         const title = document.createElement('div');
@@ -2924,6 +3032,18 @@ export class TableDataPanelManager {
           draggedColumnName = null;
           document.body.classList.add('col-resizing');
         });
+        resizer.addEventListener('dblclick', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const defaultWidth = getDefaultColumnWidth(col, visibleRows);
+          columnResizeState = null;
+          document.body.classList.remove('col-resizing');
+          columnWidthByName.delete(col.name);
+          th.style.width = defaultWidth + 'px';
+          th.style.minWidth = defaultWidth + 'px';
+          th.style.maxWidth = defaultWidth + 'px';
+          notifyLayoutChanged();
+        });
 
         th.appendChild(resizer);
         headRow.appendChild(th);
@@ -2933,7 +3053,6 @@ export class TableDataPanelManager {
 
       const body = document.createElement('tbody');
       body.classList.add('table-cells-body');
-      const displayedRows = applyLocalFilter(rows);
       rowKeyToRow.clear();
       rowKeyToCtid.clear();
       trElements.clear();
@@ -2943,7 +3062,7 @@ export class TableDataPanelManager {
       displayedRowKeys = [];
       displayedColNames = displayColumns.map((c) => c.name);
 
-      displayedRows.forEach((row, rowIndex) => {
+      visibleRows.forEach((row, rowIndex) => {
         const tr = document.createElement('tr');
         const ctid = row.__dbadmin_ctid;
         const rowKey = ctid || ('new:' + rowIndex);
@@ -3538,6 +3657,7 @@ export class TableDataPanelManager {
         columnWidthByName.set(columnResizeState.columnName, nextWidth);
         columnResizeState.th.style.width = nextWidth + 'px';
         columnResizeState.th.style.minWidth = nextWidth + 'px';
+        columnResizeState.th.style.maxWidth = nextWidth + 'px';
         return;
       }
 
@@ -3915,9 +4035,16 @@ export class TableDataPanelManager {
 
       if (message.type === 'data') {
         endLoading();
+        currentConnectionName = String(message.connectionName || '');
         currentDatabaseName = String(message.databaseName || '');
         currentSchemaName = String(message.schemaName || '');
-        titleEl.innerHTML = SVG_DB + '<span>' + currentDatabaseName + '</span>' + SVG_SCHEMA + '<span>' + currentSchemaName + '</span>';
+        titleEl.innerHTML =
+          SVG_DB +
+          '<span class="info-fixed">' + currentDatabaseName + '</span>' +
+          SVG_SCHEMA +
+          '<span class="info-fixed">' + currentSchemaName + '</span>' +
+          SVG_CONNECTION +
+          '<span class="info-conn">' + (currentConnectionName || 'Conexão') + '</span>';
         queryEl.value = message.result.query;
         showQueryEditor = message.showQueryEditor !== false;
         applyQueryVisibility();
@@ -3933,6 +4060,7 @@ export class TableDataPanelManager {
         state.columnFilters = message.state.columnFilters || {};
         state.limit = message.state.limit || ${defaultPageSize};
         state.page = message.state.page || 1;
+        dynamicDefaultColumnWidth = message.dynamicDefaultColumnWidth !== false;
         editedRows = new Map();
         insertedRows = [];
         removedCtids = new Set();
