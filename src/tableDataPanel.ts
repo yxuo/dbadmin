@@ -16,6 +16,7 @@ interface OpenTableInput {
   newTab: boolean;
   restoringOnStartup?: boolean;
   layout?: TableLayoutState;
+  initialState?: TableState;
 }
 
 interface TableState {
@@ -48,6 +49,7 @@ type WebviewMessage =
       isJson?: boolean;
       ctid?: string | null;
       rowKey?: string | null;
+      preserveFocus?: boolean;
     }
   | {
       type: 'syncNativeJsonPreview';
@@ -57,6 +59,13 @@ type WebviewMessage =
       ctid?: string | null;
       rowKey?: string | null;
       open?: boolean;
+    }
+  | {
+      type: 'openForeignKeyTarget';
+      sourceValue: string;
+      targetSchemaName: string;
+      targetTableName: string;
+      targetColumnName: string;
     }
   | { type: 'toggleQueryVisibility' }
   | { type: 'toggleHeaderVisibility' }
@@ -111,6 +120,8 @@ export class TableDataPanelManager {
       input.layout ??
       (shouldPersistOutsideRestore ? this.readStoredLayout(input.node) : undefined);
 
+    const initialState = input.initialState ?? this.defaultState();
+
     if (!input.newTab) {
       const reused = this.reusedPanels.get(key);
       if (reused) {
@@ -122,7 +133,7 @@ export class TableDataPanelManager {
         }
         reused.title = `${input.node.objectName}`;
         reused.reveal(vscode.ViewColumn.Active, false);
-        await this.refreshPanel(reused, input.node, this.defaultState(), {
+        await this.refreshPanel(reused, input.node, initialState, {
           retryTimeout: input.restoringOnStartup === true,
         });
         return;
@@ -161,7 +172,9 @@ export class TableDataPanelManager {
       );
       this.reusedPanels.set(key, panel);
     } else {
-      panel.iconPath = new vscode.ThemeIcon('table');
+      panel.iconPath = vscode.Uri.file(
+        this.context.asAbsolutePath('resources/icons/table-local.svg')
+      );
     }
 
     this.saveOpenTabs();
@@ -178,7 +191,7 @@ export class TableDataPanelManager {
           type: 'headerVisibility',
           hideTabHeader: this.getHideTabHeader(),
         });
-        await this.refreshPanel(panel, currentNode, this.defaultState(), {
+        await this.refreshPanel(panel, currentNode, initialState, {
           retryTimeout: input.restoringOnStartup === true,
         });
         return;
@@ -241,6 +254,42 @@ export class TableDataPanelManager {
         return;
       }
 
+      if (message.type === 'openForeignKeyTarget') {
+        const targetSchemaName = String(message.targetSchemaName || '').trim();
+        const targetTableName = String(message.targetTableName || '').trim();
+        const targetColumnName = String(message.targetColumnName || '').trim();
+
+        if (!targetSchemaName || !targetTableName || !targetColumnName) {
+          panel.webview.postMessage({
+            type: 'status',
+            kind: 'error',
+            message: 'Metadados da chave estrangeira incompletos para abrir a tabela relacionada.',
+          });
+          return;
+        }
+
+        const initialTargetState = this.defaultState();
+        initialTargetState.searchMode = 'query';
+        const sourceValue = String(message.sourceValue ?? '').trim();
+        if (sourceValue.length > 0) {
+          initialTargetState.columnFilters[targetColumnName] = sourceValue;
+        }
+
+        await this.openTable({
+          node: {
+            type: 'dbObject',
+            connection: currentNode.connection,
+            databaseName: currentNode.databaseName,
+            schemaName: targetSchemaName,
+            kind: 'table',
+            objectName: targetTableName,
+          },
+          newTab: true,
+          initialState: initialTargetState,
+        });
+        return;
+      }
+
       if (message.type === 'toggleQueryVisibility') {
         const current = this.getShowQueryEditor();
         await vscode.workspace.getConfiguration().update(
@@ -274,7 +323,7 @@ export class TableDataPanelManager {
 
     panel.onDidDispose(() => {
       disposable.dispose();
-      this.clearNativePreviewState(panel);
+      void this.closeAndClearNativePreviewState(panel);
       this.panelNodes.delete(panel);
       this.panelIsNewTab.delete(panel);
       this.panelLayouts.delete(panel);
@@ -591,6 +640,7 @@ export class TableDataPanelManager {
       ctid?: string | null;
       rowKey?: string | null;
       open?: boolean;
+      preserveFocus?: boolean;
     },
     forceOpen: boolean
   ): Promise<void> {
@@ -619,6 +669,7 @@ export class TableDataPanelManager {
 
       await vscode.window.showTextDocument(document, {
         preview: false,
+        preserveFocus: payload.preserveFocus === true,
         viewColumn: vscode.ViewColumn.Active,
       });
 
@@ -633,6 +684,11 @@ export class TableDataPanelManager {
       };
       this.panelNativePreview.set(panel, state);
       this.nativePreviewDocumentToPanel.set(document.uri.toString(), panel);
+
+      if (payload.preserveFocus) {
+        panel.reveal(panel.viewColumn, false);
+        panel.webview.postMessage({ type: 'restoreGridFocus' });
+      }
       return;
     }
 
@@ -702,9 +758,14 @@ export class TableDataPanelManager {
 
       await vscode.window.showTextDocument(state.document, {
         preview: false,
-        preserveFocus: false,
+        preserveFocus: payload.preserveFocus === true,
         viewColumn: vscode.ViewColumn.Active,
       });
+
+      if (payload.preserveFocus) {
+        panel.reveal(panel.viewColumn, false);
+        panel.webview.postMessage({ type: 'restoreGridFocus' });
+      }
     }
   }
 
@@ -742,6 +803,21 @@ export class TableDataPanelManager {
     if (!panel) {
       return;
     }
+    this.clearNativePreviewState(panel);
+  }
+
+  private async closeAndClearNativePreviewState(panel: vscode.WebviewPanel): Promise<void> {
+    const state = this.panelNativePreview.get(panel);
+    if (!state) {
+      return;
+    }
+
+    try {
+      await this.closeDocumentTabByUri(state.document.uri);
+    } catch {
+      // Best effort: still clear state if closing the editor tab fails.
+    }
+
     this.clearNativePreviewState(panel);
   }
 
@@ -883,11 +959,14 @@ export class TableDataPanelManager {
     initialHideTabHeader: boolean = false
   ): string {
     const nonce = String(Date.now());
-    const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';`;
+    const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource}; script-src 'nonce-${nonce}';`;
     const defaultPageSize = this.getDefaultPageSize();
     const codeEditorStyles = buildCodeEditorStyles();
     const codeEditorMarkup = buildCodeEditorMarkup();
     const codeEditorScript = buildCodeEditorScript();
+    const codiconsCssUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, 'node_modules', '@vscode', 'codicons', 'dist', 'codicon.css')
+    );
 
     return `<!DOCTYPE html>
 <html lang="pt-BR">
@@ -895,6 +974,7 @@ export class TableDataPanelManager {
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="${csp}" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link href="${codiconsCssUri}" rel="stylesheet" />
   <style>
     html, body { height: 100%; }
     body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); background: var(--vscode-editor-background); margin: 0; padding: 0; overflow: hidden; }
@@ -908,7 +988,7 @@ export class TableDataPanelManager {
     }
     .header { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; padding: 0px 4px; }
     .title { font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
-    .title svg { width: 14px; height: 14px; }
+    .title svg { width: 14px; height: 14px; margin-top: 4px; }
     .header-menu-wrap { position: relative; }
     .overlay-backdrop { position: fixed; inset: 0; display: none; }
     .overlay-surface { position: fixed; display: none; border: 1px solid color-mix(in srgb, var(--vscode-foreground) 11%, var(--vscode-panel-border)); background: var(--vscode-editorWidget-background); border-radius: 8px; box-shadow: 0 0 10px rgba(0, 0, 0, 0.18); }
@@ -952,11 +1032,30 @@ export class TableDataPanelManager {
     body.header-hidden .header { display: none; }
     body.header-hidden #toolbarMenuBtn { display: inline-flex; }
     .grow { flex: 1 1 150px; min-width: 150px; }
+    .search-wrap { position: relative; }
+    .search-wrap .input { width: 100%; }
+    .search-context-placeholder {
+      position: absolute;
+      inset: 0;
+      padding: 0 8px;
+      display: none;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--vscode-descriptionForeground);
+      pointer-events: none;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+    .search-context-placeholder svg { width: 12px; height: 12px; flex: 0 0 auto; }
+    .search-context-placeholder span { overflow: hidden; text-overflow: ellipsis; }
     .input { border: 1px solid var(--vscode-input-border, transparent); background: var(--vscode-input-background); color: var(--vscode-input-foreground); border-radius: 6px; padding: 0 8px; height: 28px; box-sizing: border-box; }
     .btn-icon-fix { padding: 0px 0px 2px 0px !important; }
     button { border: 1px solid var(--vscode-button-border, transparent); background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-radius: 6px; padding: 0 10px; height: 28px; cursor: pointer; box-sizing: border-box; }
     button.secondary { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
     button:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground)); border-color: var(--vscode-focusBorder); }
+    button.primary:hover:not(:disabled) { background: var(--vscode-button-hoverBackground); border-color: var(--vscode-button-border, transparent); }
     button:focus-visible { outline: none; box-shadow: 0 0 0 1px var(--vscode-focusBorder) inset; }
     #pageInfo { white-space: nowrap; font-size: 12px; color: var(--vscode-descriptionForeground); line-height: 28px; }
     .mode-select { position: relative; display: inline-flex; }
@@ -986,6 +1085,7 @@ export class TableDataPanelManager {
     .columns-item-handle { color: var(--vscode-descriptionForeground); font-size: 12px; }
     #errorMsg { display: none; color: var(--vscode-errorForeground); padding: 12px 10px; white-space: pre-wrap; font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; flex: 1 1 auto; min-height: 0; overflow: auto; }
     .table-wrap { border-top: 1px solid var(--vscode-panel-border); border-bottom: 1px solid var(--vscode-panel-border); overflow: auto; flex: 1 1 auto; min-height: 0; }
+    .table-wrap:focus { outline: none; }
     table { width: 100%; border-collapse: collapse; }
     .table-cells-body { user-select: none; }
     th, td { border-bottom: 1px solid var(--vscode-panel-border); padding: 2px 6px; vertical-align: top; }
@@ -1049,7 +1149,7 @@ export class TableDataPanelManager {
     .json-open-btn svg path { stroke-width: 1.45; }
     tr.row-added td { background: rgba(46, 160, 67, 0.12); }
     tr.row-removed td { background: rgba(220, 53, 69, 0.16); }
-    .json-modal-backdrop { z-index: 69; }
+    .json-modal-backdrop { z-index: 69; background: rgba(0, 0, 0, 0.35); }
     .json-modal {
       position: fixed;
       left: 50%;
@@ -1117,6 +1217,7 @@ export class TableDataPanelManager {
     .submenu-chevron { width: 14px; height: 14px; color: var(--vscode-descriptionForeground); flex: 0 0 auto; }
     .btn-icon { width: 28px; height: 28px; padding: 0; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; }
     .btn-icon svg { width: 14px; height: 14px; }
+    .btn-icon .codicon { font-size: 14px; }
     button:disabled { opacity: 0.45; cursor: default; }
     .menu-submenu-wrap { position: relative; }
     .menu-submenu { position: absolute; top: -1px; left: calc(100% + 4px); display: none; min-width: 180px; max-height: 60vh; }
@@ -1159,7 +1260,7 @@ export class TableDataPanelManager {
     }
   </style>
 </head>
-<body class="${initialHideTabHeader ? 'header-hidden' : ''}">
+<body class="${initialHideTabHeader ? "header-hidden" : ""}">
   <div class="shell">
     <div class="loading-bar" id="loadingBar"></div>
     <div class="header">
@@ -1179,7 +1280,11 @@ export class TableDataPanelManager {
     </div>
 
     <div class="toolbar">
-      <input id="search" class="input grow" placeholder="Pesquisar tudo" />
+      <div class="search-wrap grow">
+        <input id="search" class="input" placeholder="Pesquisar tudo" />
+        <div id="searchContextPlaceholder" class="search-context-placeholder" aria-hidden="true"></div>
+      </div>
+      <button id="clearFiltersBtn" class="secondary btn-icon" title="Limpar filtros" aria-label="Limpar filtros" style="display:none;"></button>
       <div class="mode-select" id="modeSelectWrap">
         <button id="modeBtn" class="secondary btn-icon" title="Modo de busca"></button>
         <div class="mode-dropdown simple-menu overlay-surface overlay-scroll" id="modeDropdown">
@@ -1195,7 +1300,7 @@ export class TableDataPanelManager {
         </svg>
       </button>
       <button id="reload" class="secondary btn-icon" title="Recarregar">↻</button>
-      <button id="save" class="btn-icon" title="Salvar" aria-label="Salvar">
+      <button id="save" class="btn-icon primary" title="Salvar" aria-label="Salvar">
         <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path d="M3 2.5h8.5L13.5 4.5v9H3z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
           <path d="M5 2.5h5v3H5z" stroke="currentColor" stroke-width="1.2"/>
@@ -1212,7 +1317,7 @@ export class TableDataPanelManager {
     </div>
 
     <div id="errorMsg"></div>
-    <div class="table-wrap">
+    <div class="table-wrap" tabindex="-1">
       <table id="grid"></table>
     </div>
   </div>
@@ -1234,11 +1339,11 @@ export class TableDataPanelManager {
     <button id="showInExplorer" title="Mostrar no explorador">
       <span>Mostrar no explorador</span>
     </button>
-    <button id="toggleQueryVisibility" title="Mostrar query">
-      <span id="toggleQueryVisibilityLabel">Ocultar query</span>
-    </button>
     <button id="toggleHeaderVisibility" title="Mostrar/Ocultar cabeçalho">
       <span id="toggleHeaderVisibilityLabel">Ocultar cabeçalho</span>
+    </button>
+    <button id="toggleQueryVisibility" title="Mostrar query">
+      <span id="toggleQueryVisibilityLabel">Ocultar query</span>
     </button>
     <button id="resetLayout" title="Restaurar layout da tabela">
       <span>Restaurar layout</span>
@@ -1286,7 +1391,7 @@ export class TableDataPanelManager {
         <span class="json-modal-title" id="jsonModalTitle">Conteúdo JSON</span>
       </div>
       <div class="json-modal-actions">
-        <button id="jsonModalApply" title="Aplicar alteracoes">Aplicar</button>
+        <button id="jsonModalApply" class="primary" title="Aplicar alteracoes">Aplicar</button>
         <button id="jsonModalOpenNative" class="secondary">Abrir no VS Code</button>
         <button id="jsonModalClose" class="secondary">Fechar</button>
       </div>
@@ -1308,6 +1413,8 @@ export class TableDataPanelManager {
     const menuBackdrop = document.getElementById('menuBackdrop');
     const errorMsgEl = document.getElementById('errorMsg');
     const tableWrapEl = document.querySelector('.table-wrap');
+    const searchInputEl = document.getElementById('search');
+    const searchContextPlaceholderEl = document.getElementById('searchContextPlaceholder');
     const modeBtn = document.getElementById('modeBtn');
     const modeDropdown = document.getElementById('modeDropdown');
     const modeBackdrop = document.getElementById('modeBackdrop');
@@ -1354,16 +1461,24 @@ export class TableDataPanelManager {
     const toggleHeaderVisibilityBtn = document.getElementById('toggleHeaderVisibility');
     const toggleHeaderVisibilityLabel = document.getElementById('toggleHeaderVisibilityLabel');
     const resetLayoutBtn = document.getElementById('resetLayout');
+    const clearFiltersBtn = document.getElementById('clearFiltersBtn');
     const saveBtn = document.getElementById('save');
     const openNativePreviewActionBtn = cellMenu.querySelector('button[data-action="openNativePreview"]');
 
     const SVG_LOCAL = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 3h12l-4.5 5.5V13h-3V8.5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>';
     const SVG_QUERY = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><ellipse cx="8" cy="4.5" rx="5.5" ry="2" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 4.5v7c0 1.1 2.46 2 5.5 2s5.5-.9 5.5-2v-7" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 8c0 1.1 2.46 2 5.5 2s5.5-.9 5.5-2" stroke="currentColor" stroke-width="1.3"/></svg>';
     const SVG_DB = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><ellipse cx="8" cy="4" rx="5.5" ry="2" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 4v7.5C2.5 12.88 4.96 14 8 14s5.5-1.12 5.5-2.5V4" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 7.5c0 1.38 2.46 2.5 5.5 2.5s5.5-1.12 5.5-2.5" stroke="currentColor" stroke-width="1.3"/></svg>';
-    const SVG_SCHEMA = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 3h12v3H2zM2 8h12v5H2z" stroke="currentColor" stroke-width="1.2"/></svg>';
-    const SVG_SORT_NONE = '<svg width="14" height="14" viewBox="0 -3 24 24" fill="none" aria-hidden="true"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m8 15 4 4 4-4m0-6-4-4-4 4"/></svg>';
-    const SVG_EXTERNAL_LINK = '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M9.5 2.5h4v4M8 8l5.5-5.5M7 3.5h-2A1.5 1.5 0 0 0 3.5 5v6A1.5 1.5 0 0 0 5 12.5h6a1.5 1.5 0 0 0 1.5-1.5v-2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    const SVG_SCHEMA = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 3h12v3H2zM2 8h12v5H2z" stroke="currentColor" stroke-width="1.2"/></svg>';
+    const SVG_SORT_NONE = '<svg width="16" height="16" viewBox="0 -3 24 24" fill="none" aria-hidden="true"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m8 15 4 4 4-4m0-6-4-4-4 4"/></svg>';
+    const SVG_EXTERNAL_LINK = '<svg viewBox="0 0 1 1" fill="none" aria-hidden="true"><path d="M9.5 2.5h4v4M8 8l5.5-5.5M7 3.5h-2A1.5 1.5 0 0 0 3.5 5v6A1.5 1.5 0 0 0 5 12.5h6a1.5 1.5 0 0 0 1.5-1.5v-2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    const SVG_ZOOM_IN = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M12.0278 6.14861C12.1234 7.56649 11.6685 8.96661 10.7577 10.0575L15.0177 14.3176L14.3178 15.0275L10.0578 10.7575C8.96686 11.6682 7.56674 12.1231 6.14885 12.0275C4.73097 11.9319 3.40461 11.2931 2.44585 10.2442C1.48709 9.19523 0.969739 7.81691 1.00164 6.39617C1.03353 4.97542 1.61212 3.62162 2.61699 2.61675C3.62187 1.61188 4.97566 1.03329 6.39641 1.00139C7.81716 0.969494 9.19548 1.48684 10.2444 2.44561C11.2934 3.40437 11.9321 4.73072 12.0278 6.14861ZM6.57781 11.0375C7.77066 11.0354 8.91402 10.5608 9.75774 9.71758L9.71782 9.7376C10.145 9.32074 10.4851 8.82316 10.7186 8.27385C10.952 7.72455 11.0741 7.13437 11.0778 6.53752C11.0778 5.64751 10.8139 4.77755 10.3194 4.03752C9.82492 3.2975 9.12212 2.72065 8.29985 2.38005C7.47759 2.03946 6.57279 1.95032 5.69988 2.12395C4.82696 2.29758 4.02514 2.72618 3.3958 3.35552C2.76646 3.98485 2.33787 4.78668 2.16423 5.6596C1.9906 6.53251 2.07974 7.4373 2.42034 8.25957C2.76093 9.08184 3.33766 9.78464 4.07769 10.2791C4.81771 10.7736 5.68779 11.0375 6.57781 11.0375ZM9.01773 7.0376V6.0376H7.01773V4.0376H6.01773V6.0376H4.01773V7.0376H6.01773V9.0376H7.01773V7.0376H9.01773Z" fill="currentColor"/></svg>';
+    const SVG_CLEAR_ALL = '<svg width="14" height="14" viewBox="0 0 14 14" xmlns="http://www.w3.org/2000/svg" fill="currentColor" aria-hidden="true"><path d="M13.5004 12.0004C13.7762 12.0006 14.0004 12.2245 14.0004 12.5004C14.0002 12.7761 13.7761 13.0002 13.5004 13.0004H2.50037C2.22449 13.0004 2.00056 12.7762 2.00037 12.5004C2.00037 12.2244 2.22437 12.0004 2.50037 12.0004H13.5004Z"/><path d="M13.5004 9.00037C13.7762 9.00056 14.0004 9.22449 14.0004 9.50037C14.0002 9.77608 13.7761 10.0002 13.5004 10.0004H2.50037C2.22449 10.0004 2.00056 9.7762 2.00037 9.50037C2.00037 9.22437 2.22437 9.00037 2.50037 9.00037H13.5004Z"/><path d="M13.5004 6.00037C13.7762 6.00056 14.0004 6.22449 14.0004 6.50037C14.0002 6.77608 13.7761 7.00017 13.5004 7.00037H7.50037C7.22449 7.00037 7.00056 6.7762 7.00037 6.50037C7.00037 6.22437 7.22437 6.00037 7.50037 6.00037H13.5004Z"/><path d="M5.50037 0.999023C5.63295 0.999115 5.76009 1.05179 5.85388 1.14551C5.94777 1.23939 6.00037 1.36722 6.00037 1.5C6.00027 1.63265 5.94769 1.75971 5.85388 1.85352L3.7074 4L5.85388 6.14551C5.94777 6.23939 6.00037 6.36722 6.00037 6.5C6.00027 6.63265 5.94769 6.75971 5.85388 6.85352C5.76008 6.94732 5.63302 6.99991 5.50037 7C5.36759 7 5.23976 6.9474 5.14587 6.85352L3.00037 4.70703L0.853882 6.85352C0.760077 6.94732 0.633017 6.99991 0.500366 7C0.36759 7 0.239761 6.9474 0.145874 6.85352C0.0521583 6.75972 -0.000519052 6.63258 -0.000610352 6.5C-0.000610354 6.36722 0.0519875 6.23939 0.145874 6.14551L2.29333 4L0.145874 1.85352C0.0521583 1.75972 -0.000519119 1.63258 -0.000610352 1.5C-0.000610351 1.36722 0.0519874 1.23939 0.145874 1.14551C0.239761 1.05162 0.36759 0.999023 0.500366 0.999023C0.63295 0.999115 0.76009 1.05179 0.853882 1.14551L3.00037 3.29297L5.14587 1.14551C5.23976 1.05162 5.36759 0.999023 5.50037 0.999023Z"/><path d="M13.5004 3.00037C13.7762 3.00056 14.0004 3.22449 14.0004 3.50037C14.0002 3.77608 13.7761 4.00017 13.5004 4.00037H7.50037C7.22449 4.00037 7.00056 3.7762 7.00037 3.50037C7.00037 3.22437 7.22437 3.00037 7.50037 3.00037H13.5004Z"/></svg>';
+    const SVG_GO_TO_FILE = '<svg width="14" height="14" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M8.58594 1.00098C8.98394 1.00098 9.36646 1.15943 9.64746 1.44043L12.5605 4.35352C12.8415 4.63552 13.001 5.01704 13.001 5.41504V13.001C13.001 14.106 12.106 15.001 11.001 15.001H5.00098C3.89599 15.001 3.00098 14.106 3.00098 13.001V6.00098H4.00098V13.001C4.00098 13.553 4.44899 14.001 5.00098 14.001H11.001C11.553 14.001 12.001 13.553 12.001 13.001V6.00098H9.50098C8.67299 6.00096 8.00098 5.32897 8.00098 4.50098V2.00098C7.99198 1.97699 7.98265 1.9527 7.97266 1.92871C7.89674 1.74704 7.78717 1.5812 7.64746 1.44238L7.20605 1.00098H8.58594ZM9 4.5C9 4.776 9.224 5 9.5 5H11.793L9 2.20703V4.5Z"/><path d="M4.5 0C4.63299 0 4.75952 0.0534683 4.85352 0.147461L6.85352 2.14746C6.90042 2.19336 6.93789 2.24775 6.96289 2.30859C6.98789 2.36959 7.00097 2.43498 7.00098 2.50098C7.00098 2.56698 6.98789 2.63236 6.96289 2.69336C6.93789 2.75323 6.90043 2.80956 6.85352 2.85547L4.85352 4.85547C4.75956 4.94917 4.63278 5.00195 4.5 5.00195C4.36722 5.00195 4.24044 4.94917 4.14648 4.85547C4.05248 4.76147 3.99902 4.63398 3.99902 4.50098C3.99903 4.36799 4.05249 4.24146 4.14648 4.14746L5.29297 3.00098H2.5C2.10201 3.00098 1.72045 3.15944 1.43945 3.44043C1.15846 3.72242 1.00001 4.10298 1 4.50098V5.50098C1 5.63398 0.947516 5.76147 0.853516 5.85547C0.759563 5.94817 0.632774 6.00098 0.5 6.00098C0.367225 6.00098 0.240437 5.94917 0.146484 5.85547C0.0534844 5.76147 0 5.63398 0 5.50098V4.50098C6.17892e-06 3.83799 0.263427 3.20239 0.732422 2.7334C1.20142 2.26441 1.83701 2.00098 2.5 2.00098H5.29297L4.14648 0.855469C4.05248 0.761469 3.99902 0.633977 3.99902 0.500977C3.99903 0.367985 4.05249 0.241455 4.14648 0.147461C4.24048 0.0534683 4.36701 0 4.5 0Z"/></svg>';
 
+    if (clearFiltersBtn) {
+      clearFiltersBtn.innerHTML = SVG_CLEAR_ALL;
+    }
+    
     function updateModeIcon() {
       modeBtn.innerHTML = state.searchMode === 'query' ? SVG_QUERY : SVG_LOCAL;
     }
@@ -1538,9 +1653,12 @@ export class TableDataPanelManager {
     let isLoading = false;
     let showQueryEditor = ${initialShowQueryEditor ? "true" : "false"};
     let hideTabHeader = ${initialHideTabHeader ? "true" : "false"};
+    let currentDatabaseName = '';
+    let currentSchemaName = '';
     let currentJsonModalPayload = {
       columnName: '',
       content: '',
+      isJson: false,
       row: null,
       column: null,
       ctid: null,
@@ -1613,6 +1731,34 @@ export class TableDataPanelManager {
     function applyHeaderVisibility() {
       document.body.classList.toggle('header-hidden', hideTabHeader);
       toggleHeaderVisibilityLabel.textContent = hideTabHeader ? 'Mostrar cabeçalho' : 'Ocultar cabeçalho';
+      updateSearchContextPlaceholder();
+    }
+
+    function updateSearchContextPlaceholder() {
+      if (!searchInputEl || !searchContextPlaceholderEl) {
+        return;
+      }
+
+      const hasSearchText = String(searchInputEl.value || '').trim().length > 0;
+      const isCompactHeight = window.innerHeight <= 500;
+      const canShowContext = hideTabHeader && !hasSearchText && !isCompactHeight;
+
+      searchInputEl.placeholder = canShowContext ? '' : 'Pesquisar tudo';
+
+      if (!canShowContext) {
+        searchContextPlaceholderEl.style.display = 'none';
+        searchContextPlaceholderEl.innerHTML = '';
+        return;
+      }
+
+      const dbLabel = currentDatabaseName || 'Banco';
+      const schemaLabel = currentSchemaName || 'Schema';
+      searchContextPlaceholderEl.innerHTML =
+        SVG_DB +
+        '<span>' + dbLabel + '</span>' +
+        SVG_SCHEMA +
+        '<span>' + schemaLabel + '</span>';
+      searchContextPlaceholderEl.style.display = 'inline-flex';
     }
 
     function rememberSearchFocus() {
@@ -1714,6 +1860,36 @@ export class TableDataPanelManager {
       return dataType === 'json' || dataType === 'jsonb';
     }
 
+    function isFkColumn(column) {
+      return column?.isForeignKey === true;
+    }
+
+    function isPreviewableColumn(column) {
+      return !isFkColumn(column);
+    }
+
+    function openForeignKeyTarget(column, row, ctid) {
+      if (!isFkColumn(column)) {
+        return;
+      }
+
+      const targetSchemaName = String(column?.foreignKeyTargetSchema || '').trim();
+      const targetTableName = String(column?.foreignKeyTargetTable || '').trim();
+      const targetColumnName = String(column?.foreignKeyTargetColumn || '').trim();
+      if (!targetSchemaName || !targetTableName || !targetColumnName) {
+        return;
+      }
+
+      const sourceValue = toCellInputText(getEffectiveCellValue(row, column.name, ctid), column);
+      vscode.postMessage({
+        type: 'openForeignKeyTarget',
+        sourceValue,
+        targetSchemaName,
+        targetTableName,
+        targetColumnName,
+      });
+    }
+
     function formatJsonCompactText(value) {
       try {
         const jsonText = JSON.stringify(value, null, 2);
@@ -1793,6 +1969,15 @@ export class TableDataPanelManager {
       }
 
       const rawContent = codeEditor.getValue() || '';
+      if (!target.isJson) {
+        currentJsonModalPayload.content = rawContent;
+        applyCellValue(target.row, target.column, target.ctid, rawContent, target.input);
+        if (closeAfterApply) {
+          closeJsonModal();
+        }
+        return true;
+      }
+
       try {
         const parsed = JSON.parse(rawContent);
         const formatted = JSON.stringify(parsed, null, 2);
@@ -1890,11 +2075,13 @@ export class TableDataPanelManager {
 
     function openJsonModal(column, value, row, ctid, input) {
       const columnName = column.name;
+      const isJson = isJsonColumn(column);
       jsonModalTitle.textContent = columnName;
-      const formatted = formatJsonPrettyText(value);
+      const formatted = isJson ? formatJsonPrettyText(value) : String(value ?? '');
       currentJsonModalPayload = {
         columnName,
         content: formatted,
+        isJson,
         row,
         column,
         ctid,
@@ -2209,11 +2396,31 @@ export class TableDataPanelManager {
     }
 
     function syncControls() {
-      document.getElementById('search').value = state.searchText;
+      searchInputEl.value = state.searchText;
       document.getElementById('limit').value = String(state.limit);
       updateModeIcon();
+      updateSearchContextPlaceholder();
+      syncClearFiltersButton();
       renderPageInfo();
       updateSaveButtonState();
+    }
+
+    function hasActiveFilters() {
+      const hasSearch = String(state.searchText || '').trim().length > 0;
+      const hasColumnFilters = Object.values(state.columnFilters || {}).some(
+        (value) => String(value || '').trim().length > 0
+      );
+      return hasSearch || hasColumnFilters;
+    }
+
+    function syncClearFiltersButton() {
+      if (!clearFiltersBtn) {
+        return;
+      }
+
+      const active = hasActiveFilters();
+      clearFiltersBtn.style.display = active ? '' : 'none';
+      clearFiltersBtn.disabled = !active;
     }
 
     function currentState() {
@@ -2667,6 +2874,7 @@ export class TableDataPanelManager {
           } else {
             delete state.columnFilters[col.name];
           }
+          syncClearFiltersButton();
 
           if (state.searchMode === 'local') {
             rememberColumnFocus(col.name, filterInput);
@@ -2684,6 +2892,7 @@ export class TableDataPanelManager {
           } else {
             delete state.columnFilters[col.name];
           }
+          syncClearFiltersButton();
           state.page = 1;
           rememberColumnFocus(col.name, filterInput);
 
@@ -2799,7 +3008,7 @@ export class TableDataPanelManager {
           const effectiveCurrent = getEffectiveCellValue(row, col.name, ctid);
           input.value = toCellInputText(effectiveCurrent, col);
 
-          if (isJsonColumn(col)) {
+          if (isPreviewableColumn(col) || isFkColumn(col)) {
             td.classList.add('json-cell');
           }
 
@@ -2948,13 +3157,30 @@ export class TableDataPanelManager {
 
           td.appendChild(input);
 
-          if (isJsonColumn(col)) {
+          if (isFkColumn(col)) {
+            const openFkBtn = document.createElement('button');
+            openFkBtn.type = 'button';
+            openFkBtn.className = 'json-open-btn cell-action-btn';
+            openFkBtn.title = 'Abrir tabela relacionada';
+            openFkBtn.setAttribute('aria-label', 'Abrir tabela relacionada');
+            openFkBtn.innerHTML = SVG_GO_TO_FILE;
+            openFkBtn.addEventListener('mousedown', (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            });
+            openFkBtn.addEventListener('click', (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              openForeignKeyTarget(col, row, ctid);
+            });
+            td.appendChild(openFkBtn);
+          } else if (isPreviewableColumn(col)) {
             const openJsonBtn = document.createElement('button');
             openJsonBtn.type = 'button';
             openJsonBtn.className = 'json-open-btn cell-action-btn';
             openJsonBtn.title = 'Abrir conteúdo';
             openJsonBtn.setAttribute('aria-label', 'Abrir conteúdo');
-            openJsonBtn.innerHTML = SVG_EXTERNAL_LINK;
+            openJsonBtn.innerHTML = SVG_ZOOM_IN;
             openJsonBtn.addEventListener('mousedown', (event) => {
               event.preventDefault();
               event.stopPropagation();
@@ -3043,19 +3269,22 @@ export class TableDataPanelManager {
       beginLoading();
     }
 
-    document.getElementById('search').addEventListener('input', (event) => {
+    searchInputEl.addEventListener('input', (event) => {
       state.searchText = event.target.value;
+      updateSearchContextPlaceholder();
+      syncClearFiltersButton();
       if (state.searchMode === 'local') {
         render();
       }
     });
 
-    document.getElementById('search').addEventListener('keydown', (event) => {
+    searchInputEl.addEventListener('keydown', (event) => {
       if (event.key !== 'Enter') {
         return;
       }
 
       state.searchText = event.target.value;
+      syncClearFiltersButton();
       if (state.searchMode === 'query') {
         rememberSearchFocus();
         state.page = 1;
@@ -3072,6 +3301,7 @@ export class TableDataPanelManager {
         state.searchMode = btn.getAttribute('data-mode');
         closeModeDropdown();
         updateModeIcon();
+        syncClearFiltersButton();
         state.page = 1;
         if (state.searchMode === 'query') {
           beginLoading();
@@ -3100,7 +3330,29 @@ export class TableDataPanelManager {
       columnsPopupOverlay.reposition();
     });
 
+    clearFiltersBtn?.addEventListener('click', () => {
+      state.searchText = '';
+      state.columnFilters = {};
+      state.page = 1;
+
+      const searchInput = document.getElementById('search');
+      if (searchInput) {
+        searchInput.value = '';
+      }
+      updateSearchContextPlaceholder();
+
+      if (state.searchMode === 'query') {
+        beginLoading();
+        vscode.postMessage({ type: 'reload', state: currentState() });
+      } else {
+        render();
+      }
+
+      syncClearFiltersButton();
+    });
+
     window.addEventListener('resize', () => {
+      updateSearchContextPlaceholder();
       overlayControllers.forEach((overlay) => overlay.reposition());
     });
 
@@ -3394,6 +3646,49 @@ export class TableDataPanelManager {
         return;
       }
 
+      // Space: open preview popup for the selected cell
+      if (event.key === ' ' && !editingCellInput && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+        if (lastSelectedCell) {
+          const spaceRow = rowKeyToRow.get(lastSelectedCell.rowKey);
+          const spaceCol = columns.find((c) => c.name === lastSelectedCell.colName);
+          if (spaceRow && spaceCol) {
+            const spaceCtid = rowKeyToCtid.get(lastSelectedCell.rowKey) || null;
+            if (isFkColumn(spaceCol)) {
+              openForeignKeyTarget(spaceCol, spaceRow, spaceCtid);
+              event.preventDefault();
+            } else if (isPreviewableColumn(spaceCol)) {
+              const spaceInputMap = inputElements.get(lastSelectedCell.rowKey);
+              const spaceInput = spaceInputMap ? spaceInputMap.get(spaceCol.name) : null;
+              openJsonModal(spaceCol, getEffectiveCellValue(spaceRow, spaceCol.name, spaceCtid), spaceRow, spaceCtid, spaceInput);
+              event.preventDefault();
+            }
+          }
+        }
+        return;
+      }
+
+      // Ctrl+Enter: open split-screen native editor for the selected cell
+      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && !event.shiftKey && !event.altKey && !editingCellInput) {
+        if (lastSelectedCell) {
+          const nativeRow = rowKeyToRow.get(lastSelectedCell.rowKey);
+          const nativeCol = columns.find((c) => c.name === lastSelectedCell.colName);
+          if (nativeRow && nativeCol) {
+            const nativeCtid = rowKeyToCtid.get(lastSelectedCell.rowKey) || null;
+            vscode.postMessage({
+              type: 'openJsonInNativeEditor',
+              content: toCellInputText(getEffectiveCellValue(nativeRow, nativeCol.name, nativeCtid), nativeCol),
+              columnName: nativeCol.name,
+              isJson: isJsonColumn(nativeCol),
+              ctid: nativeCtid,
+              rowKey: lastSelectedCell.rowKey,
+              preserveFocus: true,
+            });
+            event.preventDefault();
+          }
+        }
+        return;
+      }
+
       // Ctrl+C: copy active editing value or last selected cell value
       if ((event.ctrlKey || event.metaKey) && event.key === 'c') {
         let value = '';
@@ -3620,7 +3915,9 @@ export class TableDataPanelManager {
 
       if (message.type === 'data') {
         endLoading();
-        titleEl.innerHTML = SVG_DB + '<span>' + (message.databaseName || '') + '</span>' + SVG_SCHEMA + '<span>' + (message.schemaName || '') + '</span>';
+        currentDatabaseName = String(message.databaseName || '');
+        currentSchemaName = String(message.schemaName || '');
+        titleEl.innerHTML = SVG_DB + '<span>' + currentDatabaseName + '</span>' + SVG_SCHEMA + '<span>' + currentSchemaName + '</span>';
         queryEl.value = message.result.query;
         showQueryEditor = message.showQueryEditor !== false;
         applyQueryVisibility();
@@ -3664,6 +3961,10 @@ export class TableDataPanelManager {
 
       if (message.type === 'nativeJsonPreviewContentChanged') {
         applyNativePreviewContent(message);
+      }
+
+      if (message.type === 'restoreGridFocus') {
+        tableWrapEl?.focus({ preventScroll: true });
       }
     });
 

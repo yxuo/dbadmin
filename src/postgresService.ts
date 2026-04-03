@@ -14,6 +14,11 @@ export interface TableColumnMeta {
   dataType: string;
   isNullable: boolean;
   hasDefault: boolean;
+  isPrimaryKey: boolean;
+  isForeignKey: boolean;
+  foreignKeyTargetSchema: string | null;
+  foreignKeyTargetTable: string | null;
+  foreignKeyTargetColumn: string | null;
 }
 
 export type TableSortDirection = 'asc' | 'desc';
@@ -545,16 +550,69 @@ export class PostgresService {
         data_type: string;
         is_nullable: 'YES' | 'NO';
         column_default: string | null;
+        is_primary_key: boolean;
+        is_foreign_key: boolean;
+        foreign_key_target_schema: string | null;
+        foreign_key_target_table: string | null;
+        foreign_key_target_column: string | null;
       }>(
         `SELECT
-           column_name AS name,
-           data_type,
-           is_nullable,
-           column_default
-         FROM information_schema.columns
-         WHERE table_schema = $1
-           AND table_name = $2
-         ORDER BY ordinal_position`,
+           c.column_name AS name,
+           c.data_type,
+           c.is_nullable,
+           c.column_default,
+           EXISTS (
+             SELECT 1
+             FROM information_schema.table_constraints tc
+             JOIN information_schema.key_column_usage kcu
+               ON tc.constraint_name = kcu.constraint_name
+              AND tc.constraint_schema = kcu.constraint_schema
+             WHERE tc.constraint_type = 'PRIMARY KEY'
+               AND kcu.table_schema = c.table_schema
+               AND kcu.table_name = c.table_name
+               AND kcu.column_name = c.column_name
+           ) AS is_primary_key,
+           EXISTS (
+             SELECT 1
+             FROM information_schema.key_column_usage kcu
+             JOIN information_schema.referential_constraints rc
+               ON rc.constraint_name = kcu.constraint_name
+              AND rc.constraint_schema = kcu.constraint_schema
+             WHERE kcu.table_schema = c.table_schema
+               AND kcu.table_name = c.table_name
+               AND kcu.column_name = c.column_name
+           ) AS is_foreign_key,
+           fk.foreign_key_target_schema,
+           fk.foreign_key_target_table,
+           fk.foreign_key_target_column
+         FROM information_schema.columns c
+         LEFT JOIN (
+           SELECT
+             kcu.table_schema,
+             kcu.table_name,
+             kcu.column_name,
+             ukcu.table_schema AS foreign_key_target_schema,
+             ukcu.table_name AS foreign_key_target_table,
+             ukcu.column_name AS foreign_key_target_column
+           FROM information_schema.table_constraints tc
+           JOIN information_schema.key_column_usage kcu
+             ON tc.constraint_name = kcu.constraint_name
+            AND tc.constraint_schema = kcu.constraint_schema
+           JOIN information_schema.referential_constraints rc
+             ON rc.constraint_name = tc.constraint_name
+            AND rc.constraint_schema = tc.constraint_schema
+           JOIN information_schema.key_column_usage ukcu
+             ON ukcu.constraint_name = rc.unique_constraint_name
+            AND ukcu.constraint_schema = rc.unique_constraint_schema
+            AND ukcu.ordinal_position = kcu.position_in_unique_constraint
+           WHERE tc.constraint_type = 'FOREIGN KEY'
+         ) fk
+           ON fk.table_schema = c.table_schema
+          AND fk.table_name = c.table_name
+          AND fk.column_name = c.column_name
+         WHERE c.table_schema = $1
+           AND c.table_name = $2
+         ORDER BY c.ordinal_position`,
         [schemaName, tableName]
       );
 
@@ -563,6 +621,11 @@ export class PostgresService {
         dataType: row.data_type,
         isNullable: row.is_nullable === 'YES',
         hasDefault: row.column_default !== null,
+        isPrimaryKey: Boolean(row.is_primary_key),
+        isForeignKey: Boolean(row.is_foreign_key),
+        foreignKeyTargetSchema: row.foreign_key_target_schema,
+        foreignKeyTargetTable: row.foreign_key_target_table,
+        foreignKeyTargetColumn: row.foreign_key_target_column,
       }));
     } finally {
       await client.end();
@@ -579,6 +642,7 @@ export class PostgresService {
     const columns = await this.getTableColumns(connection, databaseName, schemaName, tableName);
     const columnNames = columns.map((column) => column.name);
     const validColumns = new Set(columnNames);
+    const columnsByName = new Map(columns.map((column) => [column.name, column]));
 
     const safeLimit = Math.max(1, Math.min(500, Math.trunc(queryInput.limit || 100)));
     const safePage = Math.max(1, Math.trunc(queryInput.page || 1));
@@ -596,7 +660,9 @@ export class PostgresService {
         continue;
       }
 
-      params.push(`%${filterValue}%`);
+      const columnMeta = columnsByName.get(columnName);
+      const shouldUseExactMatch = columnMeta?.isPrimaryKey === true || columnMeta?.isForeignKey === true;
+      params.push(shouldUseExactMatch ? filterValue : `%${filterValue}%`);
       whereParts.push(`${this.quoteIdentifier(columnName)}::text ILIKE $${params.length}`);
     }
 
