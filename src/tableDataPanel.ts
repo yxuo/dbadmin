@@ -34,10 +34,12 @@ type WebviewMessage =
   | { type: 'openSettings' }
   | { type: 'showInExplorer' }
   | { type: 'toggleQueryVisibility' }
+  | { type: 'toggleHeaderVisibility' }
   | { type: 'updateLayout'; layout: TableLayoutState };
 
 const GLOBAL_REUSED_KEY = '__global__';
 const SHOW_QUERY_SETTING = 'dbadmin.showQueryEditor';
+const HIDE_TAB_HEADER_SETTING = 'dbadmin.hideTabHeader';
 const PERSIST_LAYOUT_SETTING = 'dbadmin.persistColumnLayout';
 const DEFAULT_PAGE_SIZE_SETTING = 'dbadmin.defaultPageSize';
 
@@ -90,7 +92,11 @@ export class TableDataPanelManager {
       }
     );
 
-    panel.webview.html = this.buildHtml(panel.webview, this.getShowQueryEditor());
+    panel.webview.html = this.buildHtml(
+      panel.webview,
+      this.getShowQueryEditor(),
+      this.getHideTabHeader()
+    );
     this.panelNodes.set(panel, input.node);
     this.panelIsNewTab.set(panel, input.newTab);
     if (initialLayout) {
@@ -117,6 +123,10 @@ export class TableDataPanelManager {
         panel.webview.postMessage({
           type: 'queryVisibility',
           showQueryEditor: this.getShowQueryEditor(),
+        });
+        panel.webview.postMessage({
+          type: 'headerVisibility',
+          hideTabHeader: this.getHideTabHeader(),
         });
         await this.refreshPanel(panel, currentNode, this.defaultState(), {
           retryTimeout: input.restoringOnStartup === true,
@@ -179,6 +189,17 @@ export class TableDataPanelManager {
           vscode.ConfigurationTarget.Global
         );
         this.notifyQueryVisibilityChanged();
+        return;
+      }
+
+      if (message.type === 'toggleHeaderVisibility') {
+        const current = this.getHideTabHeader();
+        await vscode.workspace.getConfiguration().update(
+          HIDE_TAB_HEADER_SETTING,
+          !current,
+          vscode.ConfigurationTarget.Global
+        );
+        this.notifyHeaderVisibilityChanged();
         return;
       }
 
@@ -316,6 +337,10 @@ export class TableDataPanelManager {
     return vscode.workspace.getConfiguration().get<boolean>(SHOW_QUERY_SETTING, true);
   }
 
+  private getHideTabHeader(): boolean {
+    return vscode.workspace.getConfiguration().get<boolean>(HIDE_TAB_HEADER_SETTING, false);
+  }
+
   private getPersistLayoutOutsideRestore(): boolean {
     return vscode.workspace.getConfiguration().get<boolean>(PERSIST_LAYOUT_SETTING, false);
   }
@@ -335,6 +360,16 @@ export class TableDataPanelManager {
       panel.webview.postMessage({
         type: 'queryVisibility',
         showQueryEditor,
+      });
+    });
+  }
+
+  public notifyHeaderVisibilityChanged(): void {
+    const hideTabHeader = this.getHideTabHeader();
+    this.panelNodes.forEach((_node, panel) => {
+      panel.webview.postMessage({
+        type: 'headerVisibility',
+        hideTabHeader,
       });
     });
   }
@@ -413,7 +448,11 @@ export class TableDataPanelManager {
     }
   }
 
-  private buildHtml(webview: vscode.Webview, initialShowQueryEditor: boolean = true): string {
+  private buildHtml(
+    webview: vscode.Webview,
+    initialShowQueryEditor: boolean = true,
+    initialHideTabHeader: boolean = false
+  ): string {
     const nonce = String(Date.now());
     const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';`;
     const defaultPageSize = this.getDefaultPageSize();
@@ -477,6 +516,9 @@ export class TableDataPanelManager {
     .query-resizer { position: absolute; right: 5px; bottom: 4px; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; cursor: ns-resize; user-select: none; }
     .query-resizer svg { width: 14px; height: 14px; pointer-events: none; }
     .toolbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 0 4px; flex: 0 0 auto; }
+    #toolbarMenuBtn { display: none; margin-left: auto; }
+    body.header-hidden .header { display: none; }
+    body.header-hidden #toolbarMenuBtn { display: inline-flex; }
     .grow { flex: 1 1 150px; min-width: 150px; }
     .input { border: 1px solid var(--vscode-input-border, transparent); background: var(--vscode-input-background); color: var(--vscode-input-foreground); border-radius: 6px; padding: 0 8px; height: 28px; box-sizing: border-box; }
     .btn-icon-fix { padding: 0px 0px 2px 0px !important; }
@@ -514,13 +556,13 @@ export class TableDataPanelManager {
     table { width: 100%; border-collapse: collapse; }
     .table-cells-body { user-select: none; }
     th, td { border-bottom: 1px solid var(--vscode-panel-border); padding: 2px 6px; vertical-align: top; }
-    th { position: sticky; top: 0; background: var(--vscode-sideBar-background); z-index: 2; min-width: 170px; }
+    th { position: sticky; top: 0; background: var(--vscode-sideBar-background); z-index: 2; min-width: 170px; box-sizing: border-box; }
     .th-title { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 0px 5px 0px 0px; cursor: grab; }
     .th-name { font-weight: 600; font-size: 12px; cursor: inherit; flex: 1 1 auto; min-width: 0; text-align: left; border-radius: 4px; padding-left: 5px; }
     th.col-drag-over { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
     .th-resizer { position: absolute; top: 0; right: 0; width: 8px; height: 100%; cursor: col-resize; user-select: none; border-radius: 2px; transition: background 120ms ease; }
+    .th-resizer::before { content: ''; position: absolute; top: 2px; bottom: 2px; right: 0px; width: 1px; background: color-mix(in srgb, var(--vscode-descriptionForeground) 15%, transparent); }
     .th-name:hover:not(:active) { background: var(--vscode-list-hoverBackground); }
-    .th-resizer::before { content: ''; position: absolute; top: 2px; bottom: 2px; right: 3px; width: 1px; background: color-mix(in srgb, var(--vscode-descriptionForeground) 15%, transparent); }
     body.col-resizing, body.col-resizing * { cursor: col-resize !important; }
     .th-icons { cursor: pointer; user-select: none; border-radius: 4px; }
     .th-icons-char { padding: 0px 6px; }
@@ -574,33 +616,20 @@ export class TableDataPanelManager {
     @media (max-height: 500px) {
       .header { display: none; }
       .query-container { display: none; }
+      body.header-hidden #toolbarMenuBtn { display: none; }
+    }
+    @media (max-width: 500px) {
+      body.header-hidden #toolbarMenuBtn { display: none; }
     }
   </style>
 </head>
-<body>
+<body class="${initialHideTabHeader ? 'header-hidden' : ''}">
   <div class="shell">
     <div class="loading-bar" id="loadingBar"></div>
     <div class="header">
       <div class="title" id="title">Tabela</div>
       <div class="header-menu-wrap">
         <button id="headerMenuBtn" class="secondary btn-icon btn-icon-fix" title="Menu">☰</button>
-        <div id="headerMenu" class="header-menu simple-menu overlay-surface overlay-scroll">
-          <button id="openSettings" title="Configurações">
-            <span>Configurações</span>
-          </button>
-          <button id="showInExplorer" title="Mostrar no explorador">
-            <span>Mostrar no explorador</span>
-          </button>
-          <button id="toggleQueryVisibility" title="Mostrar/Ocultar query">
-            <span id="toggleQueryVisibilityLabel">Ocultar query</span>
-          </button>
-          <button id="resetLayout" title="Restaurar layout da tabela">
-            <span>Restaurar layout</span>
-          </button>
-          <button id="openNewTab" title="Abrir em nova aba">
-            <span>Abrir em nova guia</span>
-          </button>
-        </div>
       </div>
     </div>
 
@@ -643,6 +672,7 @@ export class TableDataPanelManager {
         <span id="pageInfo"></span>
         <button id="nextPage" class="secondary btn-icon btn-icon-fix" title="Próxima página">→</button>
       </div>
+      <button id="toolbarMenuBtn" class="secondary btn-icon btn-icon-fix" title="Menu">☰</button>
     </div>
 
     <div id="errorMsg"></div>
@@ -661,6 +691,26 @@ export class TableDataPanelManager {
 
   <div class="overlay-backdrop" id="modeBackdrop"></div>
   <div class="overlay-backdrop" id="headerMenuBackdrop"></div>
+  <div id="headerMenu" class="header-menu simple-menu overlay-surface overlay-scroll">
+    <button id="openSettings" title="Configurações">
+      <span>Configurações</span>
+    </button>
+    <button id="showInExplorer" title="Mostrar no explorador">
+      <span>Mostrar no explorador</span>
+    </button>
+    <button id="toggleQueryVisibility" title="Mostrar query">
+      <span id="toggleQueryVisibilityLabel">Ocultar query</span>
+    </button>
+    <button id="toggleHeaderVisibility" title="Mostrar/Ocultar cabeçalho">
+      <span id="toggleHeaderVisibilityLabel">Ocultar cabeçalho</span>
+    </button>
+    <button id="resetLayout" title="Restaurar layout da tabela">
+      <span>Restaurar layout</span>
+    </button>
+    <button id="openNewTab" title="Abrir em nova aba">
+      <span>Abrir em nova guia</span>
+    </button>
+  </div>
 
   <div class="overlay-backdrop" id="menuBackdrop"></div>
   <div class="menu simple-menu overlay-surface overlay-scroll" id="cellMenu">
@@ -709,8 +759,11 @@ export class TableDataPanelManager {
     const headerMenuBtn = document.getElementById('headerMenuBtn');
     const headerMenu = document.getElementById('headerMenu');
     const headerMenuBackdrop = document.getElementById('headerMenuBackdrop');
+    const toolbarMenuBtn = document.getElementById('toolbarMenuBtn');
     const toggleQueryVisibilityBtn = document.getElementById('toggleQueryVisibility');
     const toggleQueryVisibilityLabel = document.getElementById('toggleQueryVisibilityLabel');
+    const toggleHeaderVisibilityBtn = document.getElementById('toggleHeaderVisibility');
+    const toggleHeaderVisibilityLabel = document.getElementById('toggleHeaderVisibilityLabel');
     const resetLayoutBtn = document.getElementById('resetLayout');
     const saveBtn = document.getElementById('save');
 
@@ -893,6 +946,7 @@ export class TableDataPanelManager {
     let layoutColumnOrderSnapshot = null;
     let isLoading = false;
     let showQueryEditor = ${initialShowQueryEditor ? "true" : "false"};
+    let hideTabHeader = ${initialHideTabHeader ? "true" : "false"};
     
     // Selection state
     let selectedCells = new Map(); // rowKey -> Set of columnNames
@@ -953,6 +1007,11 @@ export class TableDataPanelManager {
 
       queryContainer.style.display = showQueryEditor ? '' : 'none';
       toggleQueryVisibilityLabel.textContent = showQueryEditor ? 'Ocultar query' : 'Mostrar query';
+    }
+
+    function applyHeaderVisibility() {
+      document.body.classList.toggle('header-hidden', hideTabHeader);
+      toggleHeaderVisibilityLabel.textContent = hideTabHeader ? 'Mostrar cabeçalho' : 'Ocultar cabeçalho';
     }
 
     function rememberSearchFocus() {
@@ -2175,6 +2234,11 @@ export class TableDataPanelManager {
       headerMenuOverlay.toggle({ anchorEl: headerMenuBtn });
     });
 
+    toolbarMenuBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      headerMenuOverlay.toggle({ anchorEl: toolbarMenuBtn });
+    });
+
     document.getElementById('reload').addEventListener('click', () => {
       beginLoading();
       vscode.postMessage({ type: 'reload', state: currentState() });
@@ -2237,6 +2301,11 @@ export class TableDataPanelManager {
     toggleQueryVisibilityBtn.addEventListener('click', () => {
       closeHeaderMenu();
       vscode.postMessage({ type: 'toggleQueryVisibility' });
+    });
+
+    toggleHeaderVisibilityBtn.addEventListener('click', () => {
+      closeHeaderMenu();
+      vscode.postMessage({ type: 'toggleHeaderVisibility' });
     });
 
     resetLayoutBtn.addEventListener('click', () => {
@@ -2620,10 +2689,16 @@ export class TableDataPanelManager {
         showQueryEditor = message.showQueryEditor !== false;
         applyQueryVisibility();
       }
+
+      if (message.type === 'headerVisibility') {
+        hideTabHeader = message.hideTabHeader === true;
+        applyHeaderVisibility();
+      }
     });
 
     updateModeIcon();
     applyQueryVisibility();
+    applyHeaderVisibility();
     updateSaveButtonState();
     beginLoading();
     vscode.postMessage({ type: 'ready' });

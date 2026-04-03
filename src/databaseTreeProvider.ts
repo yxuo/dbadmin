@@ -91,6 +91,17 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
 
     try {
       if (element.type === 'connection') {
+        try {
+          await this.postgresService.getVersion(element.connection);
+        } catch {
+          return [
+            {
+              type: 'placeholder',
+              message: 'Erro ao conectar',
+            } satisfies PlaceholderNodeRef,
+          ];
+        }
+
         const databases = await this.postgresService.listDatabases(element.connection);
         if (databases.length === 0) {
           return [

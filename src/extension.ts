@@ -44,6 +44,10 @@ export function activate(context: vscode.ExtensionContext): void {
         tablePanels.notifyQueryVisibilityChanged();
       }
 
+      if (event.affectsConfiguration('dbadmin.hideTabHeader')) {
+        tablePanels.notifyHeaderVisibilityChanged();
+      }
+
       if (event.affectsConfiguration('dbadmin.showFilterLabel')) {
         const nextShowFilterLabel = vscode.workspace
           .getConfiguration()

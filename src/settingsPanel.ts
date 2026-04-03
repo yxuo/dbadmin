@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 
 const SHOW_QUERY_SETTING = 'dbadmin.showQueryEditor';
+const HIDE_TAB_HEADER_SETTING = 'dbadmin.hideTabHeader';
 const PERSIST_LAYOUT_SETTING = 'dbadmin.persistColumnLayout';
 const PGADMIN_BIN_PATH_SETTING = 'dbadmin.pgAdminBinPath';
 const SHOW_FILTER_LABEL_SETTING = 'dbadmin.showFilterLabel';
@@ -11,11 +12,17 @@ const DEFAULT_PAGE_SIZE_SETTING = 'dbadmin.defaultPageSize';
 
 type SettingsWebviewMessage =
   | { type: 'ready' }
-  | { type: 'setShowQueryEditor'; value: boolean }
-  | { type: 'setShowFilterLabel'; value: boolean }
-  | { type: 'setpersistColumnLayout'; value: boolean }
-  | { type: 'setDefaultPageSize'; value: number }
-  | { type: 'setPgAdminBinPath'; value: string }
+  | {
+      type: 'saveSettings';
+      settings: {
+        showQueryEditor: boolean;
+        hideTabHeader: boolean;
+        showFilterLabel: boolean;
+        persistColumnLayout: boolean;
+        defaultPageSize: number;
+        pgAdminBinPath: string;
+      };
+    }
   | { type: 'detectPgAdminBinPath' }
   | { type: 'openConnectionsFile' }
   | { type: 'openExtensionSettings' };
@@ -58,61 +65,68 @@ export class SettingsPanelManager {
         return;
       }
 
-      if (message.type === 'setShowQueryEditor') {
-        await vscode.workspace.getConfiguration().update(
-          SHOW_QUERY_SETTING,
-          Boolean(message.value),
-          vscode.ConfigurationTarget.Global
-        );
-        return;
-      }
+      if (message.type === 'saveSettings') {
+        const numeric = Number(message.settings.defaultPageSize);
+        const safePageSize = Number.isFinite(numeric)
+          ? Math.max(1, Math.min(500, Math.trunc(numeric)))
+          : 50;
 
-      if (message.type === 'setShowFilterLabel') {
-        await vscode.workspace.getConfiguration().update(
-          SHOW_FILTER_LABEL_SETTING,
-          Boolean(message.value),
-          vscode.ConfigurationTarget.Global
-        );
-        return;
-      }
+        await Promise.all([
+          vscode.workspace
+            .getConfiguration()
+            .update(
+              SHOW_QUERY_SETTING,
+              Boolean(message.settings.showQueryEditor),
+              vscode.ConfigurationTarget.Global
+            ),
+          vscode.workspace
+            .getConfiguration()
+            .update(
+              HIDE_TAB_HEADER_SETTING,
+              Boolean(message.settings.hideTabHeader),
+              vscode.ConfigurationTarget.Global
+            ),
+          vscode.workspace
+            .getConfiguration()
+            .update(
+              SHOW_FILTER_LABEL_SETTING,
+              Boolean(message.settings.showFilterLabel),
+              vscode.ConfigurationTarget.Global
+            ),
+          vscode.workspace
+            .getConfiguration()
+            .update(
+              PERSIST_LAYOUT_SETTING,
+              Boolean(message.settings.persistColumnLayout),
+              vscode.ConfigurationTarget.Global
+            ),
+          vscode.workspace
+            .getConfiguration()
+            .update(
+              DEFAULT_PAGE_SIZE_SETTING,
+              safePageSize,
+              vscode.ConfigurationTarget.Global
+            ),
+          vscode.workspace
+            .getConfiguration()
+            .update(
+              PGADMIN_BIN_PATH_SETTING,
+              String(message.settings.pgAdminBinPath || ''),
+              vscode.ConfigurationTarget.Global
+            ),
+        ]);
 
-      if (message.type === 'setpersistColumnLayout') {
-        await vscode.workspace.getConfiguration().update(
-          PERSIST_LAYOUT_SETTING,
-          Boolean(message.value),
-          vscode.ConfigurationTarget.Global
-        );
-        return;
-      }
-
-      if (message.type === 'setDefaultPageSize') {
-        const numeric = Number(message.value);
-        const safe = Number.isFinite(numeric) ? Math.max(1, Math.min(500, Math.trunc(numeric))) : 50;
-        await vscode.workspace.getConfiguration().update(
-          DEFAULT_PAGE_SIZE_SETTING,
-          safe,
-          vscode.ConfigurationTarget.Global
-        );
-        return;
-      }
-
-      if (message.type === 'setPgAdminBinPath') {
-        await vscode.workspace.getConfiguration().update(
-          PGADMIN_BIN_PATH_SETTING,
-          String(message.value),
-          vscode.ConfigurationTarget.Global
-        );
+        await panel.webview.postMessage({ type: 'settingsSaved' });
         return;
       }
 
       if (message.type === 'detectPgAdminBinPath') {
         const detected = await detectPgAdminBinPathAsync();
         if (detected) {
-          await vscode.workspace.getConfiguration().update(
-            PGADMIN_BIN_PATH_SETTING,
-            detected,
-            vscode.ConfigurationTarget.Global
-          );
+          await panel.webview.postMessage({
+            type: 'pgAdminBinPathDetected',
+            value: detected,
+          });
         } else {
           vscode.window.showWarningMessage(
             'Não foi possível detectar o diretório do pgAdmin automaticamente. Informe o caminho manualmente.'
@@ -152,6 +166,9 @@ export class SettingsPanelManager {
     const showQueryEditor = vscode.workspace
       .getConfiguration()
       .get<boolean>(SHOW_QUERY_SETTING, true);
+    const hideTabHeader = vscode.workspace
+      .getConfiguration()
+      .get<boolean>(HIDE_TAB_HEADER_SETTING, false);
     const showFilterLabel = vscode.workspace
       .getConfiguration()
       .get<boolean>(SHOW_FILTER_LABEL_SETTING, true);
@@ -168,6 +185,7 @@ export class SettingsPanelManager {
     panel.webview.postMessage({
       type: 'settingsState',
       showQueryEditor,
+      hideTabHeader,
       showFilterLabel,
       persistColumnLayout,
       defaultPageSize,
@@ -217,12 +235,22 @@ export class SettingsPanelManager {
       border-bottom: 1px solid var(--vscode-panel-border);
     }
     .item:last-child { border-bottom: 0; }
-    .meta { display: flex; flex-direction: column; gap: 2px; }
+    .actions {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .status { color: var(--vscode-descriptionForeground); font-size: 12px; }
+    .meta { display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; min-width: 0; }
     .title { font-weight: 600; }
     .desc { color: var(--vscode-descriptionForeground); }
     .path {
-      display: inline-block;
-      max-width: 440px;
+      display: block;
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -253,11 +281,21 @@ export class SettingsPanelManager {
 
     <div class="item">
       <div class="meta">
-        <span class="title">Mostrar/Ocultar query</span>
+        <span class="title">Mostrar query</span>
         <span class="desc">Exibe o editor de query na visualização de tabela.</span>
       </div>
       <label>
         <input id="showQueryEditor" type="checkbox" />
+      </label>
+    </div>
+
+    <div class="item">
+      <div class="meta">
+        <span class="title">Ocultar cabeçalho da aba de tabela</span>
+        <span class="desc">Oculta o cabeçalho da aba e move o botão de menu para a toolbar.</span>
+      </div>
+      <label>
+        <input id="hideTabHeader" type="checkbox" />
       </label>
     </div>
 
@@ -316,47 +354,70 @@ export class SettingsPanelManager {
       </div>
       <button id="openExtensionSettings" class="secondary">Abrir settings</button>
     </div>
+
+    <div class="actions">
+      <span id="saveStatus" class="status"></span>
+      <button id="saveSettings">Salvar</button>
+    </div>
   </div>
 
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     const showQueryEditor = document.getElementById('showQueryEditor');
+    const hideTabHeader = document.getElementById('hideTabHeader');
     const showFilterLabel = document.getElementById('showFilterLabel');
     const persistColumnLayout = document.getElementById('persistColumnLayout');
     const defaultPageSize = document.getElementById('defaultPageSize');
     const pgAdminBinPath = document.getElementById('pgAdminBinPath');
     const storagePath = document.getElementById('storagePath');
+    const saveSettingsBtn = document.getElementById('saveSettings');
+    const saveStatus = document.getElementById('saveStatus');
+    let hasUnsavedChanges = false;
+
+    function clampPageSize(value) {
+      const numeric = Number(value);
+      return Number.isFinite(numeric) ? Math.max(1, Math.min(500, Math.trunc(numeric))) : 50;
+    }
+
+    function setDirty(value) {
+      hasUnsavedChanges = value;
+      saveStatus.textContent = hasUnsavedChanges ? 'Alterações não salvas' : '';
+    }
+
+    function buildSettingsPayload() {
+      return {
+        showQueryEditor: Boolean(showQueryEditor.checked),
+        hideTabHeader: Boolean(hideTabHeader.checked),
+        showFilterLabel: Boolean(showFilterLabel.checked),
+        persistColumnLayout: Boolean(persistColumnLayout.checked),
+        defaultPageSize: clampPageSize(defaultPageSize.value),
+        pgAdminBinPath: String(pgAdminBinPath.value || ''),
+      };
+    }
 
     showQueryEditor.addEventListener('change', () => {
-      vscode.postMessage({
-        type: 'setShowQueryEditor',
-        value: Boolean(showQueryEditor.checked),
-      });
+      setDirty(true);
+    });
+
+    hideTabHeader.addEventListener('change', () => {
+      setDirty(true);
     });
 
     showFilterLabel.addEventListener('change', () => {
-      vscode.postMessage({
-        type: 'setShowFilterLabel',
-        value: Boolean(showFilterLabel.checked),
-      });
+      setDirty(true);
     });
 
     persistColumnLayout.addEventListener('change', () => {
-      vscode.postMessage({
-        type: 'setpersistColumnLayout',
-        value: Boolean(persistColumnLayout.checked),
-      });
+      setDirty(true);
     });
 
     defaultPageSize.addEventListener('change', () => {
-      const numeric = Number(defaultPageSize.value);
-      const safe = Number.isFinite(numeric) ? Math.max(1, Math.min(500, Math.trunc(numeric))) : 50;
-      defaultPageSize.value = String(safe);
-      vscode.postMessage({ type: 'setDefaultPageSize', value: safe });
+      defaultPageSize.value = String(clampPageSize(defaultPageSize.value));
+      setDirty(true);
     });
 
     pgAdminBinPath.addEventListener('change', () => {
-      vscode.postMessage({ type: 'setPgAdminBinPath', value: pgAdminBinPath.value });
+      setDirty(true);
     });
 
     document.getElementById('detectPgAdmin').addEventListener('click', () => {
@@ -371,19 +432,44 @@ export class SettingsPanelManager {
       vscode.postMessage({ type: 'openExtensionSettings' });
     });
 
+    saveSettingsBtn.addEventListener('click', () => {
+      const payload = buildSettingsPayload();
+      defaultPageSize.value = String(payload.defaultPageSize);
+      vscode.postMessage({ type: 'saveSettings', settings: payload });
+    });
+
     window.addEventListener('message', (event) => {
       const message = event.data;
+      if (message.type === 'settingsSaved') {
+        setDirty(false);
+        saveStatus.textContent = 'Configurações salvas';
+        setTimeout(() => {
+          if (!hasUnsavedChanges) {
+            saveStatus.textContent = '';
+          }
+        }, 1600);
+        return;
+      }
+
+      if (message.type === 'pgAdminBinPathDetected') {
+        pgAdminBinPath.value = String(message.value || '');
+        setDirty(true);
+        return;
+      }
+
       if (message.type !== 'settingsState') {
         return;
       }
 
       showQueryEditor.checked = Boolean(message.showQueryEditor);
+      hideTabHeader.checked = Boolean(message.hideTabHeader);
       showFilterLabel.checked = Boolean(message.showFilterLabel);
       persistColumnLayout.checked = Boolean(message.persistColumnLayout);
       defaultPageSize.value = String(message.defaultPageSize ?? 50);
       pgAdminBinPath.value = String(message.pgAdminBinPath || '');
       storagePath.textContent = String(message.storagePath || '');
       storagePath.title = String(message.storagePath || '');
+      setDirty(false);
     });
 
     vscode.postMessage({ type: 'ready' });

@@ -24,6 +24,11 @@
           "default": true,
           "description": "Mostrar o editor de query na visualização de tabela."
         },
+        "dbadmin.hideTabHeader": {
+          "type": "boolean",
+          "default": false,
+          "description": "Ocultar o cabeçalho do painel de abas da tabela e mover o botão de menu para a toolbar."
+        },
         "dbadmin.persistColumnLayout": {
           "type": "boolean",
           "default": false,
