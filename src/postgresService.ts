@@ -459,7 +459,6 @@ export class PostgresService {
         `SELECT
            t.table_name,
            COALESCE(
-             NULLIF(GREATEST(0, COALESCE(s.n_live_tup::bigint, c.reltuples::bigint, 0)), 0),
              (
                xpath(
                  '/row/c/text()',
@@ -474,15 +473,6 @@ export class PostgresService {
              0
            )::int AS row_count
          FROM information_schema.tables t
-         LEFT JOIN pg_namespace n
-           ON n.nspname = t.table_schema
-         LEFT JOIN pg_class c
-           ON c.relnamespace = n.oid
-          AND c.relname = t.table_name
-          AND c.relkind IN ('r', 'p')
-         LEFT JOIN pg_stat_user_tables s
-           ON s.schemaname = t.table_schema
-          AND s.relname = t.table_name
          WHERE t.table_schema = $1
            AND t.table_type = 'BASE TABLE'
          ORDER BY t.table_name`,

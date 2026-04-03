@@ -137,6 +137,12 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
+  context.subscriptions.push(
+    vscode.commands.registerCommand('dbadmin.spacer', () => {
+      // Noop command for visual spacing in context menus
+    })
+  );
+
   applyFilter(treeProvider.getTableNameFilter());
 
 
@@ -264,7 +270,7 @@ export function activate(context: vscode.ExtensionContext): void {
         await treeView.reveal(node, {
           select: true,
           focus: true,
-          expand: 4,
+          expand: false,
         });
       } catch {
         treeProvider.refresh();

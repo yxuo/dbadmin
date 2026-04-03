@@ -31,6 +31,7 @@ type WebviewMessage =
   | { type: 'reload'; state: TableState }
   | { type: 'save'; state: TableState; payload: TableSavePayload }
   | { type: 'openInNewTab' }
+  | { type: 'openSettings' }
   | { type: 'showInExplorer' }
   | { type: 'toggleQueryVisibility' }
   | { type: 'updateLayout'; layout: TableLayoutState };
@@ -38,6 +39,7 @@ type WebviewMessage =
 const GLOBAL_REUSED_KEY = '__global__';
 const SHOW_QUERY_SETTING = 'dbadmin.showQueryEditor';
 const PERSIST_LAYOUT_SETTING = 'dbadmin.persistColumnLayout';
+const DEFAULT_PAGE_SIZE_SETTING = 'dbadmin.defaultPageSize';
 
 export class TableDataPanelManager {
   private readonly reusedPanels = new Map<string, vscode.WebviewPanel>();
@@ -156,6 +158,11 @@ export class TableDataPanelManager {
 
       if (message.type === 'openInNewTab') {
         await this.openTable({ node: currentNode, newTab: true });
+        return;
+      }
+
+      if (message.type === 'openSettings') {
+        await vscode.commands.executeCommand('dbadmin.openSettings');
         return;
       }
 
@@ -278,7 +285,7 @@ export class TableDataPanelManager {
       sortColumn: undefined,
       sortDirection: undefined,
       columnFilters: {},
-      limit: 200,
+      limit: this.getDefaultPageSize(),
       page: 1,
     };
   }
@@ -311,6 +318,15 @@ export class TableDataPanelManager {
 
   private getPersistLayoutOutsideRestore(): boolean {
     return vscode.workspace.getConfiguration().get<boolean>(PERSIST_LAYOUT_SETTING, false);
+  }
+
+  private getDefaultPageSize(): number {
+    const configured = vscode.workspace.getConfiguration().get<number>(DEFAULT_PAGE_SIZE_SETTING, 50);
+    const numeric = Number(configured);
+    if (!Number.isFinite(numeric)) {
+      return 50;
+    }
+    return Math.max(1, Math.min(500, Math.trunc(numeric)));
   }
 
   public notifyQueryVisibilityChanged(): void {
@@ -400,6 +416,7 @@ export class TableDataPanelManager {
   private buildHtml(webview: vscode.Webview, initialShowQueryEditor: boolean = true): string {
     const nonce = String(Date.now());
     const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';`;
+    const defaultPageSize = this.getDefaultPageSize();
 
     return `<!DOCTYPE html>
 <html lang="pt-BR">
@@ -495,13 +512,14 @@ export class TableDataPanelManager {
     #errorMsg { display: none; color: var(--vscode-errorForeground); padding: 12px 10px; white-space: pre-wrap; font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; flex: 1 1 auto; min-height: 0; overflow: auto; }
     .table-wrap { border-top: 1px solid var(--vscode-panel-border); border-bottom: 1px solid var(--vscode-panel-border); overflow: auto; flex: 1 1 auto; min-height: 0; }
     table { width: 100%; border-collapse: collapse; }
+    .table-cells-body { user-select: none; }
     th, td { border-bottom: 1px solid var(--vscode-panel-border); padding: 2px 6px; vertical-align: top; }
     th { position: sticky; top: 0; background: var(--vscode-sideBar-background); z-index: 2; min-width: 170px; }
     .th-title { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 0px 5px 0px 0px; cursor: grab; }
     .th-name { font-weight: 600; font-size: 12px; cursor: inherit; flex: 1 1 auto; min-width: 0; text-align: left; border-radius: 4px; padding-left: 5px; }
     th.col-drag-over { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
     .th-resizer { position: absolute; top: 0; right: 0; width: 8px; height: 100%; cursor: col-resize; user-select: none; border-radius: 2px; transition: background 120ms ease; }
-    .th-name:hover:not(:active) { background: color-mix(in srgb, var(--vscode-list-hoverBackground) 55%, transparent); }
+    .th-name:hover:not(:active) { background: var(--vscode-list-hoverBackground); }
     .th-resizer::before { content: ''; position: absolute; top: 2px; bottom: 2px; right: 3px; width: 1px; background: color-mix(in srgb, var(--vscode-descriptionForeground) 15%, transparent); }
     body.col-resizing, body.col-resizing * { cursor: col-resize !important; }
     .th-icons { cursor: pointer; user-select: none; border-radius: 4px; }
@@ -535,6 +553,24 @@ export class TableDataPanelManager {
       -moz-appearance: textfield;
       appearance: textfield;
     }
+    .selection-col { width: 24px; min-width: 24px; max-width: 24px; padding: 2px 0 !important; position: relative; }
+    .selection-cell { cursor: pointer; }
+    .selection-cell.selected { background: color-mix(in srgb, var(--vscode-list-hoverBackground) 50%, transparent); }
+    th.selection-col:hover::before,
+    td.selection-cell:not(.selected):hover::before {
+      content: '';
+      position: absolute;
+      inset: 2px 3px;
+      border-radius: 4px;
+      background: var(--vscode-list-hoverBackground);
+      pointer-events: none;
+    }
+    .cell-input:not(:focus):not(.editing) { background: transparent !important; border-color: transparent !important; cursor: pointer; pointer-events: none; }
+    .cell-input.editing { pointer-events: auto; }
+    td.cell-selected { box-shadow: inset 0 0 0 1000px color-mix(in srgb, var(--vscode-foreground) 20%, transparent); }
+    tr.row-marked-delete td { background: rgba(220, 53, 69, 0.16); }
+    td:has(.cell-input.dirty) { background: color-mix(in srgb, var(--vscode-inputValidation-infoBackground, #007acc) 35%, transparent); }
+    .th-name:hover:not(:active) { background: var(--vscode-list-hoverBackground); }
     @media (max-height: 500px) {
       .header { display: none; }
       .query-container { display: none; }
@@ -549,6 +585,9 @@ export class TableDataPanelManager {
       <div class="header-menu-wrap">
         <button id="headerMenuBtn" class="secondary btn-icon btn-icon-fix" title="Menu">☰</button>
         <div id="headerMenu" class="header-menu simple-menu overlay-surface overlay-scroll">
+          <button id="openSettings" title="Configurações">
+            <span>Configurações</span>
+          </button>
           <button id="showInExplorer" title="Mostrar no explorador">
             <span>Mostrar no explorador</span>
           </button>
@@ -583,7 +622,7 @@ export class TableDataPanelManager {
           <button data-mode="query"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><ellipse cx="8" cy="4.5" rx="5.5" ry="2" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 4.5v7c0 1.1 2.46 2 5.5 2s5.5-.9 5.5-2v-7" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 8c0 1.1 2.46 2 5.5 2s5.5-.9 5.5-2" stroke="currentColor" stroke-width="1.3"/></svg>Filtro via query</button>
         </div>
       </div>
-      <input id="limit" class="input" type="number" min="1" max="500" value="200" style="width:60px" />
+      <input id="limit" class="input" type="number" min="1" max="500" value="${defaultPageSize}" style="width:60px" />
       <button id="columnsBtn" class="secondary btn-icon" title="Selecionar colunas" aria-label="Selecionar colunas">
         <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path d="M1.8 8c1.3-2.2 3.6-3.6 6.2-3.6S12.9 5.8 14.2 8c-1.3 2.2-3.6 3.6-6.2 3.6S3.1 10.2 1.8 8z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
@@ -832,7 +871,7 @@ export class TableDataPanelManager {
       sortColumn: undefined,
       sortDirection: undefined,
       columnFilters: {},
-      limit: 200,
+      limit: ${defaultPageSize},
       page: 1,
     };
 
@@ -853,8 +892,28 @@ export class TableDataPanelManager {
     let pendingFocus = null;
     let layoutColumnOrderSnapshot = null;
     let isLoading = false;
-    let showQueryEditor = ${initialShowQueryEditor ? 'true' : 'false'};
-
+    let showQueryEditor = ${initialShowQueryEditor ? "true" : "false"};
+    
+    // Selection state
+    let selectedCells = new Map(); // rowKey -> Set of columnNames
+    let rowKeyToRow = new Map(); // rowKey -> row reference
+    let rowKeyToCtid = new Map(); // rowKey -> ctid|null
+    let editingCellInput = null;
+    let lastSelectedCell = null; // { rowKey, colName }
+    // DOM element maps for lightweight selection update (avoids full re-render)
+    let trElements = new Map(); // rowKey -> tr element
+    let selectionTdElements = new Map(); // rowKey -> selection-col td
+    let inputElements = new Map(); // rowKey -> Map(colName -> input)
+    let tdElements = new Map(); // rowKey -> Map(colName -> td)
+    // Drag-to-select state
+    let isDragging = false;
+    let dragAnchor = null; // { rowIndex, colIndex }
+    let isRowSelectionDragging = false;
+    let rowSelectionDragPreserve = false;
+    let rowSelectionDragAnchorIndex = null;
+    let rowSelectionDragBaseSelection = new Map();
+    let displayedRowKeys = []; // rowKey[] in display order
+    let displayedColNames = []; // colName[] in display order
     function serializeLayoutState() {
       return {
         columnOrder: [...columnOrder],
@@ -995,6 +1054,19 @@ export class TableDataPanelManager {
       return dataType === 'json' || dataType === 'jsonb';
     }
 
+    function formatJsonCompactText(value) {
+      try {
+        const jsonText = JSON.stringify(value, null, 2);
+        let compact = jsonText.split(String.fromCharCode(10)).join(' ').trim();
+        while (compact.includes('  ')) {
+          compact = compact.split('  ').join(' ');
+        }
+        return compact;
+      } catch {
+        return String(value);
+      }
+    }
+
     function toCellInputText(value, column) {
       if (value === null || value === undefined) {
         return '';
@@ -1002,14 +1074,14 @@ export class TableDataPanelManager {
 
       if (isJsonColumn(column)) {
         if (typeof value === 'string') {
-          return value;
+          try {
+            return formatJsonCompactText(JSON.parse(value));
+          } catch {
+            return value;
+          }
         }
 
-        try {
-          return JSON.stringify(value);
-        } catch {
-          return String(value);
-        }
+        return formatJsonCompactText(value);
       }
 
       return String(value);
@@ -1281,13 +1353,13 @@ export class TableDataPanelManager {
         sortColumn: state.sortColumn,
         sortDirection: state.sortDirection,
         columnFilters: state.columnFilters,
-        limit: Number(document.getElementById('limit').value || 200),
+        limit: Number(document.getElementById('limit').value || ${defaultPageSize}),
         page: state.page,
       };
     }
 
     function renderPageInfo() {
-      const pageSize = Math.max(1, Number(state.limit || 200));
+      const pageSize = Math.max(1, Number(state.limit || ${defaultPageSize}));
       const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
       if (state.page > totalPages) {
         state.page = totalPages;
@@ -1297,10 +1369,251 @@ export class TableDataPanelManager {
       document.getElementById('nextPage').disabled = state.page >= totalPages;
     }
 
+    function enableCellEditing(input) {
+      if (editingCellInput) {
+        editingCellInput.classList.remove('editing');
+      }
+      editingCellInput = input;
+      input.classList.add('editing');
+      input.setSelectionRange(0, input.value.length);
+      input.focus();
+    }
+
+    function disableCellEditing(input) {
+      if (editingCellInput === input) {
+        editingCellInput = null;
+      }
+      if (typeof input.setSelectionRange === 'function') {
+        try {
+          input.setSelectionRange(0, 0);
+        } catch {
+          // Ignore selection reset failures.
+        }
+      }
+      input.classList.remove('editing');
+      input.readOnly = true;
+      if (document.activeElement === input) {
+        input.blur();
+      }
+      const selection = window.getSelection ? window.getSelection() : null;
+      if (selection && typeof selection.removeAllRanges === 'function') {
+        selection.removeAllRanges();
+      }
+    }
+
+    function selectRow(rowKey, displayColumns, preserveExisting) {
+      if (!preserveExisting) {
+        selectedCells.clear();
+      }
+      selectedCells.set(rowKey, new Set(displayColumns.map((col) => col.name)));
+      if (displayColumns.length > 0) {
+        lastSelectedCell = { rowKey, colName: displayColumns[0].name };
+      }
+    }
+
+    function cloneSelectionMap(source) {
+      const clone = new Map();
+      source.forEach((set, rowKey) => {
+        clone.set(rowKey, new Set(set));
+      });
+      return clone;
+    }
+
+    function applyRowSelectionDragRange(currentRowIndex, displayColumns) {
+      if (rowSelectionDragAnchorIndex === null) {
+        return;
+      }
+      selectedCells = cloneSelectionMap(rowSelectionDragBaseSelection);
+      const minR = Math.min(rowSelectionDragAnchorIndex, currentRowIndex);
+      const maxR = Math.max(rowSelectionDragAnchorIndex, currentRowIndex);
+      for (let r = minR; r <= maxR; r++) {
+        const rk = displayedRowKeys[r];
+        if (!rk) {
+          continue;
+        }
+        selectedCells.set(rk, new Set(displayColumns.map((col) => col.name)));
+      }
+      if (displayColumns.length > 0) {
+        const lastRowKey = displayedRowKeys[currentRowIndex];
+        if (lastRowKey) {
+          lastSelectedCell = { rowKey: lastRowKey, colName: displayColumns[0].name };
+        }
+      }
+      renderSelectionState();
+    }
+
+    function markSelectedRowsForDelete() {
+      selectedCells.forEach((_cols, rowKey) => {
+        const ctid = rowKeyToCtid.get(rowKey);
+        if (ctid) {
+          removedCtids.add(ctid);
+        }
+      });
+      updateSaveButtonState();
+    }
+
+    function renderSelectionState() {
+      trElements.forEach((_tr, rowKey) => {
+        const selTd = selectionTdElements.get(rowKey);
+        const cellSet = selectedCells.get(rowKey);
+        const tdMap = tdElements.get(rowKey);
+        // Selection column: highlight only when entire row is selected
+        const totalCols = tdMap ? tdMap.size : 0;
+        const isFullRowSelected = Boolean(cellSet && totalCols > 0 && cellSet.size === totalCols);
+        if (selTd) {
+          selTd.classList.toggle('selected', isFullRowSelected);
+        }
+        if (tdMap) {
+          tdMap.forEach((td, colName) => {
+            td.classList.toggle('cell-selected', Boolean(cellSet && cellSet.has(colName)));
+          });
+        }
+      });
+    }
+
+    function getCellPosition(cellRef) {
+      if (!cellRef) {
+        return null;
+      }
+      const rowIndex = displayedRowKeys.indexOf(cellRef.rowKey);
+      const colIndex = displayedColNames.indexOf(cellRef.colName);
+      if (rowIndex < 0 || colIndex < 0) {
+        return null;
+      }
+      return { rowIndex, colIndex };
+    }
+
+    function selectSingleCellAt(rowIndex, colIndex, enterEditMode) {
+      if (rowIndex < 0 || colIndex < 0 || rowIndex >= displayedRowKeys.length || colIndex >= displayedColNames.length) {
+        return;
+      }
+
+      const rowKey = displayedRowKeys[rowIndex];
+      const colName = displayedColNames[colIndex];
+      selectedCells.clear();
+      selectedCells.set(rowKey, new Set([colName]));
+      lastSelectedCell = { rowKey, colName };
+      renderSelectionState();
+
+      if (!enterEditMode) {
+        return;
+      }
+
+      const inputMap = inputElements.get(rowKey);
+      const nextInput = inputMap ? inputMap.get(colName) : null;
+      if (!nextInput) {
+        return;
+      }
+      nextInput.readOnly = false;
+      enableCellEditing(nextInput);
+    }
+
+    function moveSelectionBy(deltaRow, deltaCol) {
+      const pos = getCellPosition(lastSelectedCell);
+      if (!pos) {
+        if (displayedRowKeys.length > 0 && displayedColNames.length > 0) {
+          selectSingleCellAt(0, 0, false);
+        }
+        return;
+      }
+
+      const nextRow = Math.min(Math.max(pos.rowIndex + deltaRow, 0), displayedRowKeys.length - 1);
+      const nextCol = Math.min(Math.max(pos.colIndex + deltaCol, 0), displayedColNames.length - 1);
+      selectSingleCellAt(nextRow, nextCol, false);
+    }
+
+    function moveEditCellByTab(backward) {
+      const pos = getCellPosition(lastSelectedCell);
+      if (!pos) {
+        return;
+      }
+
+      let nextRow = pos.rowIndex;
+      let nextCol = pos.colIndex + (backward ? -1 : 1);
+      if (nextCol >= displayedColNames.length) {
+        nextCol = 0;
+        nextRow += 1;
+      } else if (nextCol < 0) {
+        nextCol = displayedColNames.length - 1;
+        nextRow -= 1;
+      }
+
+      nextRow = Math.min(Math.max(nextRow, 0), displayedRowKeys.length - 1);
+      nextCol = Math.min(Math.max(nextCol, 0), displayedColNames.length - 1);
+      selectSingleCellAt(nextRow, nextCol, true);
+    }
+
+    function getSelectedCellsCount() {
+      let count = 0;
+      selectedCells.forEach((cellSet) => {
+        count += cellSet.size;
+      });
+      return count;
+    }
+
+    function enterEditFromCurrentSelection() {
+      if (!lastSelectedCell || getSelectedCellsCount() !== 1) {
+        return false;
+      }
+
+      const pos = getCellPosition(lastSelectedCell);
+      if (!pos) {
+        return false;
+      }
+
+      selectSingleCellAt(pos.rowIndex, pos.colIndex, true);
+      return true;
+    }
+
+    function getSelectedCellsText() {
+      const TAB = String.fromCharCode(9);
+      const NEWLINE = String.fromCharCode(10);
+      let selectedCount = 0;
+      const lines = [];
+
+      displayedRowKeys.forEach((rowKey) => {
+        const row = rowKeyToRow.get(rowKey);
+        const cellSet = selectedCells.get(rowKey);
+        if (!row || !cellSet || cellSet.size === 0) {
+          return;
+        }
+
+        const values = [];
+        displayedColNames.forEach((colName) => {
+          if (!cellSet.has(colName)) {
+            return;
+          }
+          const col = columns.find((column) => column.name === colName);
+          values.push(col ? toCellInputText(getEffectiveCellValue(row, col.name, row.__dbadmin_ctid), col) : '');
+          selectedCount += 1;
+        });
+
+        lines.push(values.join(TAB));
+      });
+
+      return selectedCount > 1 ? lines.join(NEWLINE) : '';
+    }
+
     function render() {
       const displayColumns = getDisplayColumns();
       const head = document.createElement('thead');
       const headRow = document.createElement('tr');
+
+      // Empty selection column header
+      const selectTh = document.createElement('th');
+      selectTh.className = 'selection-col';
+      selectTh.textContent = '';
+      selectTh.style.cursor = 'pointer';
+      selectTh.addEventListener('click', () => {
+        const displayedRows = applyLocalFilter(rows);
+        selectedCells.clear();
+        displayedRows.forEach((row, rowIndex) => {
+          const rk = row.__dbadmin_ctid || ('new:' + rowIndex);
+          selectedCells.set(rk, new Set(displayColumns.map((c) => c.name)));
+        });
+        renderSelectionState();
+      });
+      headRow.appendChild(selectTh);
 
       displayColumns.forEach((col) => {
         const th = document.createElement('th');
@@ -1318,6 +1631,26 @@ export class TableDataPanelManager {
         const left = document.createElement('span');
         left.className = 'th-name';
         left.textContent = col.name;
+
+        // Click on column header (without drag) selects entire column
+        left.addEventListener('click', (event) => {
+          if (draggedColumnName) {
+            return;
+          }
+          event.stopPropagation();
+
+          const displayedRows = applyLocalFilter(rows);
+          selectedCells.clear();
+          displayedRows.forEach((row, rowIndex) => {
+            const rowKey = row.__dbadmin_ctid || ('new:' + rowIndex);
+            if (!selectedCells.has(rowKey)) {
+              selectedCells.set(rowKey, new Set());
+            }
+            selectedCells.get(rowKey).add(col.name);
+            lastSelectedCell = { rowKey, colName: col.name };
+          });
+          renderSelectionState();
+        });
 
         title.addEventListener('dragstart', (event) => {
           draggedColumnName = col.name;
@@ -1447,24 +1780,76 @@ export class TableDataPanelManager {
       head.appendChild(headRow);
 
       const body = document.createElement('tbody');
+      body.classList.add('table-cells-body');
       const displayedRows = applyLocalFilter(rows);
+      rowKeyToRow.clear();
+      rowKeyToCtid.clear();
+      trElements.clear();
+      selectionTdElements.clear();
+      inputElements.clear();
+      tdElements.clear();
+      displayedRowKeys = [];
+      displayedColNames = displayColumns.map((c) => c.name);
 
       displayedRows.forEach((row, rowIndex) => {
         const tr = document.createElement('tr');
         const ctid = row.__dbadmin_ctid;
+        const rowKey = ctid || ('new:' + rowIndex);
+        rowKeyToRow.set(rowKey, row);
+        rowKeyToCtid.set(rowKey, ctid || null);
+        trElements.set(rowKey, tr);
+        inputElements.set(rowKey, new Map());
+        tdElements.set(rowKey, new Map());
+        displayedRowKeys.push(rowKey);
         const isRemoved = ctid ? removedCtids.has(ctid) : Boolean(row.__dbadmin_removed);
         const isInserted = !ctid && Boolean(row.__dbadmin_inserted);
+        const rowSelection = selectedCells.get(rowKey);
+        const isRowSelected = Boolean(rowSelection && rowSelection.size > 0);
 
         if (isRemoved) {
           tr.classList.add('row-removed');
         } else if (isInserted) {
           tr.classList.add('row-added');
         }
+        if (isRemoved) {
+          tr.classList.add('row-marked-delete');
+        }
 
-        displayColumns.forEach((col) => {
+        // Empty selection column cell: click/drag selects full row(s)
+        const selectTd = document.createElement('td');
+        selectTd.className = 'selection-col selection-cell';
+        if (isRowSelected) {
+          selectTd.classList.add('selected');
+        }
+        selectionTdElements.set(rowKey, selectTd);
+        selectTd.addEventListener('mousedown', (event) => {
+          if (event.button !== 0) {
+            return;
+          }
+          event.preventDefault();
+          event.stopPropagation();
+          isRowSelectionDragging = true;
+          rowSelectionDragPreserve = event.ctrlKey || event.metaKey;
+          rowSelectionDragAnchorIndex = rowIndex;
+          rowSelectionDragBaseSelection = rowSelectionDragPreserve ? cloneSelectionMap(selectedCells) : new Map();
+          applyRowSelectionDragRange(rowIndex, displayColumns);
+        });
+        selectTd.addEventListener('mouseenter', () => {
+          if (!isRowSelectionDragging) {
+            return;
+          }
+          applyRowSelectionDragRange(rowIndex, displayColumns);
+        });
+        tr.appendChild(selectTd);
+
+        displayColumns.forEach((col, colIndex) => {
           const td = document.createElement('td');
           const input = document.createElement('input');
           input.className = 'cell-input';
+          input.readOnly = true;
+          input.tabIndex = -1;
+          inputElements.get(rowKey).set(col.name, input);
+          tdElements.get(rowKey).set(col.name, td);
 
           const baseCurrent = row[col.name];
           const baseCurrentText = toCellInputText(baseCurrent, col);
@@ -1473,6 +1858,9 @@ export class TableDataPanelManager {
 
           if (ctid && editedRows.has(ctid) && Object.prototype.hasOwnProperty.call(editedRows.get(ctid), col.name)) {
             input.classList.add('dirty');
+          }
+          if (rowSelection && rowSelection.has(col.name)) {
+            td.classList.add('cell-selected');
           }
 
           input.addEventListener('input', () => {
@@ -1497,6 +1885,103 @@ export class TableDataPanelManager {
               row[col.name] = input.value;
             }
             updateSaveButtonState();
+          });
+
+          // Mousedown selects immediately (no delay)
+          td.addEventListener('mousedown', (event) => {
+            if (event.button !== 0) {
+              return;
+            }
+            if (event.detail >= 2) {
+              // Let dblclick handle it; don't interfere
+              return;
+            }
+            event.stopPropagation();
+            isDragging = true;
+            dragAnchor = { rowIndex, colIndex };
+            if (!selectedCells.has(rowKey)) {
+              selectedCells.set(rowKey, new Set());
+            }
+            const cellSet = selectedCells.get(rowKey);
+
+            if (event.ctrlKey || event.metaKey) {
+              if (cellSet.has(col.name)) {
+                cellSet.delete(col.name);
+              } else {
+                cellSet.add(col.name);
+              }
+            } else {
+              selectedCells.clear();
+              selectedCells.set(rowKey, new Set([col.name]));
+            }
+
+            if ((event.ctrlKey || event.metaKey) && cellSet.size === 0) {
+              selectedCells.delete(rowKey);
+            }
+
+            lastSelectedCell = { rowKey, colName: col.name };
+            renderSelectionState();
+          });
+
+          td.addEventListener('mouseenter', () => {
+            if (!isDragging || !dragAnchor) {
+              return;
+            }
+            // Expand selection rectangle from anchor to current cell
+            const minR = Math.min(dragAnchor.rowIndex, rowIndex);
+            const maxR = Math.max(dragAnchor.rowIndex, rowIndex);
+            const minC = Math.min(dragAnchor.colIndex, colIndex);
+            const maxC = Math.max(dragAnchor.colIndex, colIndex);
+            selectedCells.clear();
+            for (let r = minR; r <= maxR; r++) {
+              const rk = displayedRowKeys[r];
+              if (!rk) { continue; }
+              const colSet = new Set();
+              for (let c = minC; c <= maxC; c++) {
+                const cn = displayedColNames[c];
+                if (cn) { colSet.add(cn); }
+              }
+              selectedCells.set(rk, colSet);
+            }
+            lastSelectedCell = { rowKey, colName: col.name };
+            renderSelectionState();
+          });
+
+          // Double click: clear selection and enter edit mode
+          td.addEventListener('dblclick', (event) => {
+            event.stopPropagation();
+            selectedCells.clear();
+            lastSelectedCell = { rowKey, colName: col.name };
+            renderSelectionState();
+            input.readOnly = false;
+            enableCellEditing(input);
+          });
+
+          input.addEventListener('keydown', (event) => {
+            if (event.key === 'Tab') {
+              event.preventDefault();
+              disableCellEditing(input);
+              moveEditCellByTab(event.shiftKey);
+              return;
+            }
+            if (event.key === 'Escape' || event.key === 'Enter') {
+              event.preventDefault();
+              disableCellEditing(input);
+              render();
+            }
+          });
+
+          input.addEventListener('blur', () => {
+            if (input === editingCellInput) {
+              disableCellEditing(input);
+            }
+          });
+
+          input.addEventListener('click', (event) => {
+            if (!input.classList.contains('editing')) {
+              event.preventDefault();
+              event.stopPropagation();
+            }
           });
 
           input.addEventListener('contextmenu', (event) => {
@@ -1529,6 +2014,7 @@ export class TableDataPanelManager {
       }
 
       const text = state.searchText.trim().toLowerCase();
+      const columnsByName = new Map(columns.map((col) => [col.name, col]));
       const columnFilters = Object.entries(state.columnFilters)
         .map(([columnName, value]) => [columnName, String(value || '').trim().toLowerCase()])
         .filter(([, value]) => value.length > 0);
@@ -1536,7 +2022,9 @@ export class TableDataPanelManager {
       return rawRows.filter((row) => {
         const matchesGlobal =
           text.length === 0 ||
-          columns.some((col) => String(row[col.name] ?? '').toLowerCase().includes(text));
+          columns.some((col) =>
+            toCellInputText(row[col.name], col).toLowerCase().includes(text)
+          );
 
         if (!matchesGlobal) {
           return false;
@@ -1546,9 +2034,13 @@ export class TableDataPanelManager {
           return true;
         }
 
-        return columnFilters.every(([columnName, filterValue]) =>
-          String(row[columnName] ?? '').toLowerCase().includes(filterValue)
-        );
+        return columnFilters.every(([columnName, filterValue]) => {
+          const col = columnsByName.get(columnName);
+          const cellText = col
+            ? toCellInputText(row[columnName], col)
+            : String(row[columnName] ?? '');
+          return cellText.toLowerCase().includes(filterValue);
+        });
       });
     }
 
@@ -1711,7 +2203,7 @@ export class TableDataPanelManager {
     });
 
     document.getElementById('nextPage').addEventListener('click', () => {
-      const pageSize = Math.max(1, Number(state.limit || 200));
+      const pageSize = Math.max(1, Number(state.limit || ${defaultPageSize}));
       const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
       if (state.page >= totalPages) {
         return;
@@ -1730,6 +2222,11 @@ export class TableDataPanelManager {
     document.getElementById('openNewTab').addEventListener('click', () => {
       closeHeaderMenu();
       vscode.postMessage({ type: 'openInNewTab' });
+    });
+
+    document.getElementById('openSettings').addEventListener('click', () => {
+      closeHeaderMenu();
+      vscode.postMessage({ type: 'openSettings' });
     });
 
     document.getElementById('showInExplorer').addEventListener('click', () => {
@@ -1803,6 +2300,14 @@ export class TableDataPanelManager {
     window.addEventListener('mouseup', endDrag);
     window.addEventListener('blur', endDrag);
     window.addEventListener('mouseleave', endDrag);
+    window.addEventListener('mouseup', () => {
+      isDragging = false;
+      dragAnchor = null;
+      isRowSelectionDragging = false;
+      rowSelectionDragPreserve = false;
+      rowSelectionDragAnchorIndex = null;
+      rowSelectionDragBaseSelection = new Map();
+    });
     window.addEventListener('blur', () => closeAllOverlays());
     window.addEventListener('mouseup', endColumnResize);
     window.addEventListener('blur', endColumnResize);
@@ -1815,6 +2320,125 @@ export class TableDataPanelManager {
     // Disable native browser context menu in the webview to keep custom UX flow.
     document.addEventListener('contextmenu', (event) => {
       event.preventDefault();
+    });
+
+    // Keyboard handlers for copy/paste/delete
+    document.addEventListener('keydown', (event) => {
+      const target = event.target;
+      if (
+        !editingCellInput &&
+        (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement)
+      ) {
+        return;
+      }
+
+      if (
+        !editingCellInput &&
+        event.key === 'Enter' &&
+        !event.shiftKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey
+      ) {
+        if (enterEditFromCurrentSelection()) {
+          event.preventDefault();
+        }
+        return;
+      }
+
+      if (!editingCellInput && (
+        event.key === 'ArrowUp' ||
+        event.key === 'ArrowDown' ||
+        event.key === 'ArrowLeft' ||
+        event.key === 'ArrowRight'
+      )) {
+        if (event.key === 'ArrowUp') {
+          moveSelectionBy(-1, 0);
+        } else if (event.key === 'ArrowDown') {
+          moveSelectionBy(1, 0);
+        } else if (event.key === 'ArrowLeft') {
+          moveSelectionBy(0, -1);
+        } else if (event.key === 'ArrowRight') {
+          moveSelectionBy(0, 1);
+        }
+        event.preventDefault();
+        return;
+      }
+
+      // DEL: mark rows corresponding to selected cells for deletion
+      if (event.key === 'Delete' && !editingCellInput) {
+        markSelectedRowsForDelete();
+        render();
+        event.preventDefault();
+        return;
+      }
+
+      // Ctrl+C: copy active editing value or last selected cell value
+      if ((event.ctrlKey || event.metaKey) && event.key === 'c') {
+        let value = '';
+        if (editingCellInput) {
+          value = editingCellInput.value;
+        } else {
+          value = getSelectedCellsText();
+        }
+        if (!value && lastSelectedCell) {
+          const row = rowKeyToRow.get(lastSelectedCell.rowKey);
+          const col = columns.find((c) => c.name === lastSelectedCell.colName);
+          if (row && col) {
+            value = toCellInputText(getEffectiveCellValue(row, col.name, row.__dbadmin_ctid), col);
+          }
+        }
+        navigator.clipboard.writeText(value).catch(() => {});
+        event.preventDefault();
+        return;
+      }
+
+      // Ctrl+V: paste into current editing cell or last selected cell
+      if ((event.ctrlKey || event.metaKey) && event.key === 'v') {
+        event.preventDefault();
+        navigator.clipboard.readText().then((value) => {
+          if (editingCellInput) {
+            editingCellInput.value = value;
+            editingCellInput.dispatchEvent(new Event('input', { bubbles: true }));
+            return;
+          }
+
+          if (!lastSelectedCell) {
+            return;
+          }
+
+          const row = rowKeyToRow.get(lastSelectedCell.rowKey);
+          const col = columns.find((c) => c.name === lastSelectedCell.colName);
+          if (!row || !col) {
+            return;
+          }
+
+          const ctid = row.__dbadmin_ctid;
+          const baseCurrentText = toCellInputText(row[col.name], col);
+          if (ctid) {
+            if (value === baseCurrentText) {
+              if (editedRows.has(ctid)) {
+                const values = editedRows.get(ctid);
+                delete values[col.name];
+                if (Object.keys(values).length === 0) {
+                  editedRows.delete(ctid);
+                }
+              }
+            } else {
+              if (!editedRows.has(ctid)) {
+                editedRows.set(ctid, {});
+              }
+              editedRows.get(ctid)[col.name] = value;
+            }
+          } else {
+            row[col.name] = value;
+          }
+
+          updateSaveButtonState();
+          render();
+        }).catch(() => {});
+        return;
+      }
     });
 
     document.querySelectorAll('.menu-submenu-wrap').forEach((wrap) => {
@@ -1974,7 +2598,7 @@ export class TableDataPanelManager {
         state.sortColumn = message.state.sortColumn;
         state.sortDirection = message.state.sortDirection;
         state.columnFilters = message.state.columnFilters || {};
-        state.limit = message.state.limit || 200;
+        state.limit = message.state.limit || ${defaultPageSize};
         state.page = message.state.page || 1;
         editedRows = new Map();
         insertedRows = [];

@@ -7,12 +7,14 @@ const SHOW_QUERY_SETTING = 'dbadmin.showQueryEditor';
 const PERSIST_LAYOUT_SETTING = 'dbadmin.persistColumnLayout';
 const PGADMIN_BIN_PATH_SETTING = 'dbadmin.pgAdminBinPath';
 const SHOW_FILTER_LABEL_SETTING = 'dbadmin.showFilterLabel';
+const DEFAULT_PAGE_SIZE_SETTING = 'dbadmin.defaultPageSize';
 
 type SettingsWebviewMessage =
   | { type: 'ready' }
   | { type: 'setShowQueryEditor'; value: boolean }
   | { type: 'setShowFilterLabel'; value: boolean }
   | { type: 'setpersistColumnLayout'; value: boolean }
+  | { type: 'setDefaultPageSize'; value: number }
   | { type: 'setPgAdminBinPath'; value: string }
   | { type: 'detectPgAdminBinPath' }
   | { type: 'openConnectionsFile' }
@@ -83,6 +85,17 @@ export class SettingsPanelManager {
         return;
       }
 
+      if (message.type === 'setDefaultPageSize') {
+        const numeric = Number(message.value);
+        const safe = Number.isFinite(numeric) ? Math.max(1, Math.min(500, Math.trunc(numeric))) : 50;
+        await vscode.workspace.getConfiguration().update(
+          DEFAULT_PAGE_SIZE_SETTING,
+          safe,
+          vscode.ConfigurationTarget.Global
+        );
+        return;
+      }
+
       if (message.type === 'setPgAdminBinPath') {
         await vscode.workspace.getConfiguration().update(
           PGADMIN_BIN_PATH_SETTING,
@@ -148,12 +161,16 @@ export class SettingsPanelManager {
     const pgAdminBinPath = vscode.workspace
       .getConfiguration()
       .get<string>(PGADMIN_BIN_PATH_SETTING, '');
+    const defaultPageSize = vscode.workspace
+      .getConfiguration()
+      .get<number>(DEFAULT_PAGE_SIZE_SETTING, 50);
 
     panel.webview.postMessage({
       type: 'settingsState',
       showQueryEditor,
       showFilterLabel,
       persistColumnLayout,
+      defaultPageSize,
       pgAdminBinPath,
       storagePath,
     });
@@ -266,6 +283,14 @@ export class SettingsPanelManager {
 
     <div class="item">
       <div class="meta">
+        <span class="title">Número padrão de itens por página</span>
+        <span class="desc">Define o número padrão de itens exibidos por página na visualização de tabela. Pode ser ajustado para cada tabela individualmente.</span>
+      </div>
+      <input id="defaultPageSize" type="number" min="1" max="500" style="width:80px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border,transparent);border-radius:4px;padding:0 6px;height:26px;font-family:inherit;font-size:inherit;" />
+    </div>
+
+    <div class="item">
+      <div class="meta">
         <span class="title">pgAdmin &ndash; diretório dos binários</span>
         <span class="desc">Caminho para pg_dump e pg_restore. Deixe vazio para auto-detectar no momento do uso.</span>
         <div style="display:flex;gap:6px;margin-top:4px;">
@@ -298,6 +323,7 @@ export class SettingsPanelManager {
     const showQueryEditor = document.getElementById('showQueryEditor');
     const showFilterLabel = document.getElementById('showFilterLabel');
     const persistColumnLayout = document.getElementById('persistColumnLayout');
+    const defaultPageSize = document.getElementById('defaultPageSize');
     const pgAdminBinPath = document.getElementById('pgAdminBinPath');
     const storagePath = document.getElementById('storagePath');
 
@@ -320,6 +346,13 @@ export class SettingsPanelManager {
         type: 'setpersistColumnLayout',
         value: Boolean(persistColumnLayout.checked),
       });
+    });
+
+    defaultPageSize.addEventListener('change', () => {
+      const numeric = Number(defaultPageSize.value);
+      const safe = Number.isFinite(numeric) ? Math.max(1, Math.min(500, Math.trunc(numeric))) : 50;
+      defaultPageSize.value = String(safe);
+      vscode.postMessage({ type: 'setDefaultPageSize', value: safe });
     });
 
     pgAdminBinPath.addEventListener('change', () => {
@@ -347,6 +380,7 @@ export class SettingsPanelManager {
       showQueryEditor.checked = Boolean(message.showQueryEditor);
       showFilterLabel.checked = Boolean(message.showFilterLabel);
       persistColumnLayout.checked = Boolean(message.persistColumnLayout);
+      defaultPageSize.value = String(message.defaultPageSize ?? 50);
       pgAdminBinPath.value = String(message.pgAdminBinPath || '');
       storagePath.textContent = String(message.storagePath || '');
       storagePath.title = String(message.storagePath || '');

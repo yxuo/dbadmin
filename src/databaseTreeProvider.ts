@@ -234,10 +234,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
           return [
             {
               type: 'placeholder',
-              message:
-                element.kind === 'table' && this.tableNameFilter
-                  ? 'Sem tabelas para o filtro atual.'
-                  : 'Sem itens.',
+              message: 'Sem resultados.',
             } satisfies PlaceholderNodeRef,
           ];
         }

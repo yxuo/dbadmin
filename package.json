@@ -12,8 +12,6 @@
   ],
   "activationEvents": [
     "onStartupFinished",
-    "onView:databaseExplorer",
-    "onView:databaseExplorerFilter",
     "*"
   ],
   "main": "./out/extension.js",
@@ -40,6 +38,15 @@
           "type": "boolean",
           "default": true,
           "description": "Mostrar o label do filtro no topo do DBAdmin quando houver filtro ativo."
+        },
+        "dbadmin.defaultPageSize": {
+          "type": "integer",
+          "default": 50,
+          "minimum": 1,
+          "maximum": 500,
+          "scope": "window",
+          "order": 50,
+          "description": "Número padrão de itens por página na visualização de tabela."
         }
       }
     },
@@ -55,14 +62,17 @@
     "views": {
       "dbadmin": [
         {
-          "id": "databaseExplorerFilter",
-          "name": "Filtro de tabelas",
-          "type": "webview"
-        },
-        {
           "id": "databaseExplorer",
           "name": "DBAdmin",
-          "icon": "resources/icons/database.svg"
+          "icon": "resources/icons/database.svg",
+          "order": 1
+        },
+        {
+          "id": "databaseExplorerFilter",
+          "name": "Filtro de tabelas",
+          "icon": "resources/icons/database.svg",
+          "type": "webview",
+          "order": 2
         }
       ]
     },
@@ -105,7 +115,7 @@
       {
         "command": "dbadmin.openTableInNewTab",
         "title": "Abrir em nova aba",
-        "icon": "$(list-tree)"
+        "icon": "$(go-to-file)"
       },
       {
         "command": "dbadmin.createDatabase",
@@ -142,23 +152,28 @@
       },
       {
         "command": "dbadmin.openColumnDetailsInNewTab",
-        "title": "Abrir coluna em nova aba",
+        "title": "Abrir em nova aba",
         "icon": "$(go-to-file)"
       },
       {
         "command": "dbadmin.openConstraintDetailsInNewTab",
-        "title": "Abrir restrição em nova aba",
+        "title": "Abrir em nova aba",
         "icon": "$(go-to-file)"
       },
       {
         "command": "dbadmin.editTableFilter",
-        "title": "Editar filtro de tabelas",
+        "title": "Filtrar tabelas",
         "icon": "$(search)"
       },
       {
         "command": "dbadmin.clearTableFilter",
         "title": "Limpar filtro de tabelas",
         "icon": "$(close)"
+      },
+      {
+        "command": "dbadmin.spacer",
+        "title": "Espaçador",
+        "icon": "$(blank)"
       }
     ],
     "menus": {
@@ -201,6 +216,11 @@
           "group": "inline"
         },
         {
+          "command": "dbadmin.spacer",
+          "when": "view == databaseExplorer && viewItem == dbObject:table",
+          "group": "inline@999"
+        },
+        {
           "command": "dbadmin.openTableInNewTab",
           "when": "view == databaseExplorer && viewItem == dbObject:table",
           "group": "navigation"
@@ -241,9 +261,19 @@
           "group": "inline"
         },
         {
+          "command": "dbadmin.spacer",
+          "when": "view == databaseExplorer && viewItem == tableSectionItem:column",
+          "group": "inline@999"
+        },
+        {
           "command": "dbadmin.openConstraintDetailsInNewTab",
           "when": "view == databaseExplorer && viewItem == tableSectionItem:constraint",
           "group": "inline"
+        },
+        {
+          "command": "dbadmin.spacer",
+          "when": "view == databaseExplorer && viewItem == tableSectionItem:constraint",
+          "group": "inline@999"
         },
         {
           "command": "dbadmin.clearTableFilter",
