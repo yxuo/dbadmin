@@ -228,6 +228,17 @@ export class SettingsPanelManager {
       font-family: var(--vscode-font-family);
       font-size: 13px;
     }
+    .page-title {
+      margin: 0 0 10px;
+      font-size: 16px;
+      font-weight: 700;
+    }
+    .cards {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      max-width: 760px;
+    }
     .card {
       max-width: 760px;
       border: 1px solid var(--vscode-panel-border);
@@ -235,16 +246,22 @@ export class SettingsPanelManager {
       padding: 14px;
       background: var(--vscode-editorWidget-background);
     }
-    h1 {
-      margin: 0 0 10px;
-      font-size: 16px;
+    .card-title {
+      margin: 0;
+      padding: 0 0 10px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+      text-transform: uppercase;
+      color: var(--vscode-descriptionForeground);
+      border-bottom: 1px solid var(--vscode-panel-border);
     }
     .item {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 10px;
-      padding: 10px 0;
+      padding: 10px 0 10px;
       border-bottom: 1px solid var(--vscode-panel-border);
     }
     .item:last-child { border-bottom: 0; }
@@ -289,99 +306,112 @@ export class SettingsPanelManager {
   </style>
 </head>
 <body>
-  <div class="card">
-    <h1>Configurações da extensão</h1>
+  <h1 class="page-title">Configurações da extensão</h1>
 
-    <div class="item">
-      <div class="meta">
-        <span class="title">Mostrar query</span>
-        <span class="desc">Exibe o editor de query na visualização de tabela.</span>
+  <div class="cards">
+    <div class="card">
+      <h2 class="card-title">Barra lateral</h2>
+
+      <div class="item">
+        <div class="meta">
+          <span class="title">Mostrar label do filtro na árvore</span>
+          <span class="desc">Exibe o item de label do filtro no topo da treeview quando houver filtro ativo.</span>
+        </div>
+        <label>
+          <input id="showFilterLabel" type="checkbox" />
+        </label>
       </div>
-      <label>
-        <input id="showQueryEditor" type="checkbox" />
-      </label>
     </div>
 
-    <div class="item">
-      <div class="meta">
-        <span class="title">Ocultar cabeçalho da aba de tabela</span>
-        <span class="desc">Oculta o cabeçalho da aba e move o botão de menu para a toolbar.</span>
+    <div class="card">
+      <h2 class="card-title">Tabela</h2>
+
+      <div class="item">
+        <div class="meta">
+          <span class="title">Mostrar query</span>
+          <span class="desc">Exibe o editor de query na visualização de tabela.</span>
+        </div>
+        <label>
+          <input id="showQueryEditor" type="checkbox" />
+        </label>
       </div>
-      <label>
-        <input id="hideTabHeader" type="checkbox" />
-      </label>
+
+      <div class="item">
+        <div class="meta">
+          <span class="title">Ocultar cabeçalho da aba de tabela</span>
+          <span class="desc">Oculta o cabeçalho da aba e move o botão de menu para a toolbar.</span>
+        </div>
+        <label>
+          <input id="hideTabHeader" type="checkbox" />
+        </label>
+      </div>
+
+      <div class="item">
+        <div class="meta">
+          <span class="title">Persistir layout de colunas</span>
+          <span class="desc">Ao abrir uma nova aba, as configurações de layout de colunas serão mantidas.</span>
+        </div>
+        <label>
+          <input id="persistColumnLayout" type="checkbox" />
+        </label>
+      </div>
+
+      <div class="item">
+        <div class="meta">
+          <span class="title">Número padrão de itens por página</span>
+          <span class="desc">Define o número padrão de itens exibidos por página na visualização de tabela. Pode ser ajustado para cada tabela individualmente.</span>
+        </div>
+        <input id="defaultPageSize" type="number" min="1" max="500" style="width:80px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border,transparent);border-radius:4px;padding:0 6px;height:26px;font-family:inherit;font-size:inherit;" />
+      </div>
     </div>
 
-    <div class="item">
-      <div class="meta">
-        <span class="title">Mostrar label do filtro na árvore</span>
-        <span class="desc">Exibe o item de label do filtro no topo da treeview quando houver filtro ativo.</span>
-      </div>
-      <label>
-        <input id="showFilterLabel" type="checkbox" />
-      </label>
-    </div>
+    <div class="card">
+      <h2 class="card-title">Outros</h2>
 
-    <div class="item">
-      <div class="meta">
-        <span class="title">Persistir layout de colunas</span>
-        <span class="desc">Ao abrir uma nova aba, as configurações de layout de colunas serão mantidas.</span>
+      <div class="item">
+        <div class="meta">
+          <span class="title">Prévia nativa: tipo por coluna (experimental)</span>
+          <span class="desc">Quando ativado, usa .json para colunas JSON e .txt para as demais. Quando desativado, usa sempre .json.</span>
+        </div>
+        <label>
+          <input id="nativePreviewMatchColumnType" type="checkbox" />
+        </label>
       </div>
-      <label>
-        <input id="persistColumnLayout" type="checkbox" />
-      </label>
-    </div>
 
-    <div class="item">
-      <div class="meta">
-        <span class="title">Prévia nativa: tipo por coluna (experimental)</span>
-        <span class="desc">Quando ativado, usa .json para colunas JSON e .txt para as demais. Quando desativado, usa sempre .json.</span>
-      </div>
-      <label>
-        <input id="nativePreviewMatchColumnType" type="checkbox" />
-      </label>
-    </div>
-
-    <div class="item">
-      <div class="meta">
-        <span class="title">Número padrão de itens por página</span>
-        <span class="desc">Define o número padrão de itens exibidos por página na visualização de tabela. Pode ser ajustado para cada tabela individualmente.</span>
-      </div>
-      <input id="defaultPageSize" type="number" min="1" max="500" style="width:80px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border,transparent);border-radius:4px;padding:0 6px;height:26px;font-family:inherit;font-size:inherit;" />
-    </div>
-
-    <div class="item">
-      <div class="meta">
-        <span class="title">pgAdmin &ndash; diretório dos binários</span>
-        <span class="desc">Caminho para pg_dump e pg_restore. Deixe vazio para auto-detectar no momento do uso.</span>
-        <div style="display:flex;gap:6px;margin-top:4px;">
-          <input id="pgAdminBinPath" type="text" placeholder="Ex: C:\\Program Files\\pgAdmin 4\\runtime"
-            style="flex:1;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border,transparent);border-radius:4px;padding:0 6px;height:26px;font-family:inherit;font-size:inherit;" />
-          <button id="detectPgAdmin" class="secondary" style="white-space:nowrap;">Detectar</button>
+      <div class="item">
+        <div class="meta">
+          <span class="title">pgAdmin &ndash; diretório dos binários</span>
+          <span class="desc">Caminho para pg_dump e pg_restore. Deixe vazio para auto-detectar no momento do uso.</span>
+          <div style="display:flex;gap:6px;margin-top:4px;">
+            <input id="pgAdminBinPath" type="text" placeholder="Ex: C:\\Program Files\\pgAdmin 4\\runtime"
+              style="flex:1;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border,transparent);border-radius:4px;padding:0 6px;height:26px;font-family:inherit;font-size:inherit;" />
+            <button id="detectPgAdmin" class="secondary" style="white-space:nowrap;">Detectar</button>
+          </div>
         </div>
       </div>
-    </div>
 
-    <div class="item">
-      <div class="meta">
-        <span class="title">Arquivo de conexões</span>
-        <span class="desc path" id="storagePath"></span>
+      <div class="item">
+        <div class="meta">
+          <span class="title">Arquivo de conexões</span>
+          <span class="desc path" id="storagePath"></span>
+        </div>
+        <button id="openConnectionsFile" class="secondary">Abrir</button>
       </div>
-      <button id="openConnectionsFile" class="secondary">Abrir</button>
-    </div>
 
-    <div class="item">
-      <div class="meta">
-        <span class="title">Configurações no VS Code</span>
-        <span class="desc">Abrir o editor de settings da extensão.</span>
+      <div class="item">
+        <div class="meta">
+          <span class="title">Configurações no VS Code</span>
+          <span class="desc">Abrir o editor de settings da extensão.</span>
+        </div>
+        <button id="openExtensionSettings" class="secondary">Abrir settings</button>
       </div>
-      <button id="openExtensionSettings" class="secondary">Abrir settings</button>
     </div>
 
-    <div class="actions">
-      <span id="saveStatus" class="status"></span>
-      <button id="saveSettings">Salvar</button>
-    </div>
+  </div>
+
+  <div class="actions">
+    <span id="saveStatus" class="status"></span>
+    <button id="saveSettings">Salvar</button>
   </div>
 
   <script nonce="${nonce}">
