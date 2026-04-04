@@ -222,17 +222,53 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand('dbadmin.editTableFilter', async () => {
       const current = treeProvider.getTableNameFilter();
-      const value = await vscode.window.showInputBox({
-        title: 'Filtro de tabelas',
-        value: current,
-        valueSelection: [0, current.length],
-      });
+      const expandLabel = 'Expandir itens';
+      const quickPick = vscode.window.createQuickPick<vscode.QuickPickItem>();
+      quickPick.title = 'Filtro de tabelas';
+      quickPick.placeholder = 'Digite para filtrar tabelas...';
+      quickPick.value = current;
+      quickPick.canSelectMany = true;
 
-      if (value === undefined) {
-        return;
+      const expandItem: vscode.QuickPickItem = {
+        label: expandLabel,
+        description: '',
+        alwaysShow: true,
+        picked: getExpandFilterResultsSetting(),
+      };
+
+      quickPick.items = [expandItem];
+      if (expandItem.picked) {
+        quickPick.selectedItems = [expandItem];
       }
 
-      applyFilter(value);
+      await new Promise<void>((resolve) => {
+        let accepted = false;
+
+        quickPick.onDidAccept(() => {
+          accepted = true;
+          const value = quickPick.value;
+          const expandEnabled = quickPick.selectedItems.some((item) => item.label === expandLabel);
+
+          void (async () => {
+            if (expandEnabled !== getExpandFilterResultsSetting()) {
+              await setExpandFilterResultsSetting(expandEnabled);
+            }
+            applyFilter(value);
+            resolve();
+          })();
+
+          quickPick.hide();
+        });
+
+        quickPick.onDidHide(() => {
+          quickPick.dispose();
+          if (!accepted) {
+            resolve();
+          }
+        });
+
+        quickPick.show();
+      });
     })
   );
 
