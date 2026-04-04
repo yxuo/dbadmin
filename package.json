@@ -169,6 +169,16 @@
         "icon": "$(cloud-upload)"
       },
       {
+        "command": "dbadmin.createSchema",
+        "title": "Criar schema",
+        "icon": "$(add)"
+      },
+      {
+        "command": "dbadmin.dropSchema",
+        "title": "Excluir schema",
+        "icon": "$(trash)"
+      },
+      {
         "command": "dbadmin.openColumnDetails",
         "title": "Abrir detalhes da coluna"
       },
@@ -302,9 +312,29 @@
           "group": "navigation"
         },
         {
-          "command": "dbadmin.restoreSchema",
+          "command": "dbadmin.dropSchema",
+          "when": "view == databaseExplorer && viewItem == schema",
+          "group": "inline"
+        },
+        {
+          "command": "dbadmin.dropSchema",
           "when": "view == databaseExplorer && viewItem == schema",
           "group": "navigation@1"
+        },
+        {
+          "command": "dbadmin.restoreSchema",
+          "when": "view == databaseExplorer && viewItem == schema",
+          "group": "navigation@2"
+        },
+        {
+          "command": "dbadmin.createSchema",
+          "when": "view == databaseExplorer && viewItem == databaseGroup:schemas",
+          "group": "inline"
+        },
+        {
+          "command": "dbadmin.createSchema",
+          "when": "view == databaseExplorer && viewItem == databaseGroup:schemas",
+          "group": "navigation"
         },
         {
           "command": "dbadmin.openColumnDetailsInNewTab",

@@ -136,6 +136,32 @@ export class PostgresService {
     }
   }
 
+  public async createSchema(
+    connection: PostgresConnection,
+    databaseName: string,
+    schemaName: string
+  ): Promise<void> {
+    const client = await this.connect({ ...connection, database: databaseName });
+    try {
+      await client.query(`CREATE SCHEMA ${this.quoteIdentifier(schemaName)}`);
+    } finally {
+      await client.end();
+    }
+  }
+
+  public async dropSchema(
+    connection: PostgresConnection,
+    databaseName: string,
+    schemaName: string
+  ): Promise<void> {
+    const client = await this.connect({ ...connection, database: databaseName });
+    try {
+      await client.query(`DROP SCHEMA ${this.quoteIdentifier(schemaName)} CASCADE`);
+    } finally {
+      await client.end();
+    }
+  }
+
   public async listSchemas(connection: PostgresConnection, databaseName: string): Promise<string[]> {
     const client = await this.connect({ ...connection, database: databaseName });
     try {

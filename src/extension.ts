@@ -4,6 +4,7 @@ import { showConnectionForm } from './connectionFormPanel';
 import { DatabaseTreeProvider } from './databaseTreeProvider';
 import {
   ConnectionNodeRef,
+  DatabaseGroupNodeRef,
   DatabaseNodeRef,
   DbObjectNodeRef,
   PostgresConnection,
@@ -484,6 +485,37 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.commands.registerCommand(
+      'dbadmin.createSchema',
+      async (node?: DatabaseGroupNodeRef) => {
+        try {
+          if (!node || node.type !== 'databaseGroup' || node.kind !== 'schemas') {
+            return;
+          }
+
+          const schemaName = await vscode.window.showInputBox({
+            title: `Criar schema em "${node.databaseName}"`,
+            prompt: 'Nome do novo schema',
+            validateInput: (value) => (value.trim() ? undefined : 'Informe um nome.'),
+          });
+
+          if (!schemaName) {
+            return;
+          }
+
+          await postgresService.createSchema(node.connection, node.databaseName, schemaName.trim());
+          await treeProvider.reloadAllMetadata();
+          vscode.window.showInformationMessage(
+            `Schema "${schemaName.trim()}" criado com sucesso.`
+          );
+        } catch (error) {
+          showError(error);
+        }
+      }
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
       'dbadmin.renameDatabase',
       async (node?: DatabaseNodeRef) => {
         try {
@@ -570,6 +602,37 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
           }
           restorePanels.show(context, node);
+        } catch (error) {
+          showError(error);
+        }
+      }
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'dbadmin.dropSchema',
+      async (node?: SchemaNodeRef) => {
+        try {
+          if (!node || node.type !== 'schema') {
+            return;
+          }
+
+          const confirmation = await vscode.window.showWarningMessage(
+            `Deseja excluir permanentemente o schema "${node.schemaName}" e todos os seus objetos? Esta ação não pode ser desfeita.`,
+            { modal: true },
+            'Excluir'
+          );
+
+          if (confirmation !== 'Excluir') {
+            return;
+          }
+
+          await postgresService.dropSchema(node.connection, node.databaseName, node.schemaName);
+          await treeProvider.reloadAllMetadata();
+          vscode.window.showInformationMessage(
+            `Schema "${node.schemaName}" excluído com sucesso.`
+          );
         } catch (error) {
           showError(error);
         }
