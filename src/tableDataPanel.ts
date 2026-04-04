@@ -39,6 +39,14 @@ type WebviewMessage =
   | { type: 'ready' }
   | { type: 'reload'; state: TableState }
   | { type: 'save'; state: TableState; payload: TableSavePayload }
+  | {
+      type: 'exportData';
+      format: 'json' | 'csv';
+      dataScope: 'result' | 'all' | 'selected';
+      state: TableState;
+      columns: string[];
+      rows: Array<Record<string, unknown>>;
+    }
   | { type: 'openInNewTab' }
   | { type: 'openSettings' }
   | { type: 'showInExplorer' }
@@ -231,6 +239,19 @@ export class TableDataPanelManager {
         return;
       }
 
+      if (message.type === 'exportData') {
+        try {
+          await this.exportTableData(panel, currentNode, message);
+        } catch (error) {
+          panel.webview.postMessage({
+            type: 'status',
+            kind: 'error',
+            message: this.errorMessage(error),
+          });
+        }
+        return;
+      }
+
       if (message.type === 'openInNewTab') {
         await this.openTable({ node: currentNode, newTab: true });
         return;
@@ -398,6 +419,130 @@ export class TableDataPanelManager {
       kind: 'error',
       message: this.errorMessage(lastError),
     });
+  }
+
+  private async exportTableData(
+    panel: vscode.WebviewPanel,
+    node: DbObjectNodeRef,
+    message: Extract<WebviewMessage, { type: 'exportData' }>
+  ): Promise<void> {
+    let columns = Array.isArray(message.columns) ? [...message.columns] : [];
+    let rows = Array.isArray(message.rows) ? [...message.rows] : [];
+
+    if (message.dataScope === 'all') {
+      const allResult = await this.fetchAllRowsForExport(node, message.state);
+      columns = allResult.columns;
+      rows = allResult.rows;
+    }
+
+    const format = message.format === 'csv' ? 'csv' : 'json';
+    const content = this.buildExportContent(format, columns, rows);
+    const language = format === 'csv' ? 'csv' : 'json';
+    const document = await vscode.workspace.openTextDocument({ language, content });
+
+    await vscode.window.showTextDocument(document, {
+      preview: false,
+      preserveFocus: false,
+      viewColumn: panel.viewColumn ?? vscode.ViewColumn.Active,
+    });
+
+    panel.webview.postMessage({
+      type: 'status',
+      kind: 'ok',
+      message: 'Exportacao aberta em nova aba.',
+    });
+  }
+
+  private async fetchAllRowsForExport(
+    node: DbObjectNodeRef,
+    state: TableState
+  ): Promise<{ columns: string[]; rows: Array<Record<string, unknown>> }> {
+    const rows: Array<Record<string, unknown>> = [];
+    let columns: string[] = [];
+    let totalRows = 0;
+    let page = 1;
+    const limit = 500;
+
+    while (true) {
+      const result = await this.postgresService.getTableData(
+        node.connection,
+        node.databaseName,
+        node.schemaName,
+        node.objectName,
+        {
+          searchText: state.searchText,
+          searchMode: state.searchMode,
+          sortColumn: state.sortColumn,
+          sortDirection: state.sortDirection,
+          columnFilters: state.columnFilters,
+          limit,
+          page,
+        }
+      );
+
+      if (page === 1) {
+        columns = result.columns.map((column) => column.name);
+        totalRows = Number(result.totalRows || 0);
+      }
+
+      rows.push(...result.rows);
+
+      if (result.rows.length === 0 || rows.length >= totalRows) {
+        break;
+      }
+
+      page += 1;
+    }
+
+    return { columns, rows };
+  }
+
+  private buildExportContent(
+    format: 'json' | 'csv',
+    columns: string[],
+    rows: Array<Record<string, unknown>>
+  ): string {
+    const normalizedColumns = columns.filter((columnName) => Boolean(columnName));
+
+    const pickRowValues = (row: Record<string, unknown>): Record<string, unknown> => {
+      if (normalizedColumns.length === 0) {
+        return { ...row };
+      }
+
+      const picked: Record<string, unknown> = {};
+      normalizedColumns.forEach((columnName) => {
+        picked[columnName] = row[columnName];
+      });
+      return picked;
+    };
+
+    if (format === 'json') {
+      return JSON.stringify(rows.map((row) => pickRowValues(row)), null, 2);
+    }
+
+    const escapeCsv = (value: unknown): string => {
+      if (value === null || value === undefined) {
+        return '';
+      }
+
+      const text =
+        typeof value === 'object'
+          ? JSON.stringify(value)
+          : String(value);
+      if (!/[",\n\r]/.test(text)) {
+        return text;
+      }
+
+      return `"${text.replace(/"/g, '""')}"`;
+    };
+
+    const header = normalizedColumns.map((columnName) => escapeCsv(columnName)).join(',');
+    const lines = rows.map((row) => {
+      const source = pickRowValues(row);
+      return normalizedColumns.map((columnName) => escapeCsv(source[columnName])).join(',');
+    });
+
+    return [header, ...lines].join('\n');
   }
 
   private isTimeoutError(error: unknown): boolean {
@@ -1010,6 +1155,7 @@ export class TableDataPanelManager {
     .title .info-conn { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     .header-menu-wrap { position: relative; }
     .overlay-backdrop { position: fixed; inset: 0; display: none; }
+    .overlay-backdrop.open { display: block; }
     .overlay-surface { position: fixed; display: none; border: 1px solid color-mix(in srgb, var(--vscode-foreground) 11%, var(--vscode-panel-border)); background: var(--vscode-editorWidget-background); border-radius: 8px; box-shadow: 0 0 10px rgba(0, 0, 0, 0.18); }
     .overlay-surface.open { display: block; }
     .overlay-scroll,
@@ -1228,6 +1374,30 @@ export class TableDataPanelManager {
       gap: 6px;
       flex: 0 0 auto;
     }
+    .export-modal {
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: min(480px, calc(100vw - 24px));
+      border: 1px solid var(--vscode-panel-border);
+      background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+      border-radius: 8px;
+      box-shadow: 0 0 16px rgba(0, 0, 0, 0.28);
+      display: none;
+      flex-direction: column;
+      z-index: 71;
+      overflow: hidden;
+    }
+    .export-modal.open { display: flex; }
+    #exportModalBackdrop { z-index: 70; background: rgba(0, 0, 0, 0.35); }
+    .export-modal-head { padding: 10px 12px; border-bottom: 1px solid var(--vscode-panel-border); font-weight: 600; }
+    .export-modal-body { padding: 10px 12px; display: grid; gap: 12px; }
+    .export-group-title { font-size: 12px; color: var(--vscode-descriptionForeground); margin-bottom: 6px; }
+    .export-group { display: grid; gap: 6px; }
+    .export-option { display: inline-flex; align-items: center; gap: 8px; }
+    .export-option.disabled { opacity: 0.55; }
+    .export-modal-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--vscode-panel-border); }
     .json-modal-status {
       display: none;
     }
@@ -1367,6 +1537,9 @@ export class TableDataPanelManager {
     <button id="toggleQueryVisibility" title="Mostrar query">
       <span id="toggleQueryVisibilityLabel">Ocultar query</span>
     </button>
+    <button id="openExport" title="Exportar dados">
+      <span>Exportar</span>
+    </button>
     <button id="resetLayout" title="Restaurar layout da tabela">
       <span>Restaurar layout</span>
     </button>
@@ -1404,6 +1577,32 @@ export class TableDataPanelManager {
       </span>
     </button>
     <button data-action="new"><span>＋ Criar linha</span></button>
+  </div>
+
+  <div class="overlay-backdrop" id="exportModalBackdrop"></div>
+  <div class="export-modal" id="exportModal" role="dialog" aria-label="Exportar dados">
+    <div class="export-modal-head">Exportar dados</div>
+    <div class="export-modal-body">
+      <div>
+        <div class="export-group-title">Formato</div>
+        <div class="export-group">
+          <label class="export-option"><input type="radio" name="exportFormat" id="exportFormatJson" value="json" checked /><span>JSON</span></label>
+          <label class="export-option"><input type="radio" name="exportFormat" id="exportFormatCsv" value="csv" /><span>CSV</span></label>
+        </div>
+      </div>
+      <div>
+        <div class="export-group-title">Dados</div>
+        <div class="export-group">
+          <label class="export-option"><input type="radio" name="exportDataScope" id="exportDataResult" value="result" checked /><span>Resultado</span></label>
+          <label class="export-option"><input type="radio" name="exportDataScope" id="exportDataAll" value="all" /><span>Tudo (sem paginacao)</span></label>
+          <label class="export-option" id="exportSelectedOption"><input type="radio" name="exportDataScope" id="exportDataSelected" value="selected" /><span>Celulas selecionadas</span></label>
+        </div>
+      </div>
+    </div>
+    <div class="export-modal-actions">
+      <button id="exportModalCancel" class="secondary">Cancelar</button>
+      <button id="exportModalConfirm" class="primary">Exportar</button>
+    </div>
   </div>
 
   <div class="overlay-backdrop json-modal-backdrop" id="jsonModalBackdrop"></div>
@@ -1448,6 +1647,16 @@ export class TableDataPanelManager {
     const jsonModal = document.getElementById('jsonModal');
     const jsonModalBackdrop = document.getElementById('jsonModalBackdrop');
     const jsonModalTitle = document.getElementById('jsonModalTitle');
+    const exportModal = document.getElementById('exportModal');
+    const exportModalBackdrop = document.getElementById('exportModalBackdrop');
+    const exportFormatJson = document.getElementById('exportFormatJson');
+    const exportFormatCsv = document.getElementById('exportFormatCsv');
+    const exportDataResult = document.getElementById('exportDataResult');
+    const exportDataAll = document.getElementById('exportDataAll');
+    const exportDataSelected = document.getElementById('exportDataSelected');
+    const exportSelectedOption = document.getElementById('exportSelectedOption');
+    const exportModalCancel = document.getElementById('exportModalCancel');
+    const exportModalConfirm = document.getElementById('exportModalConfirm');
     const codeEditor = window.DbAdminCodeEditor.create({
       rootEl: document.getElementById('codeEditorRoot'),
       findWidgetEl: document.getElementById('codeEditorFindWidget'),
@@ -1478,6 +1687,7 @@ export class TableDataPanelManager {
     const headerMenu = document.getElementById('headerMenu');
     const headerMenuBackdrop = document.getElementById('headerMenuBackdrop');
     const toolbarMenuBtn = document.getElementById('toolbarMenuBtn');
+    const openExportBtn = document.getElementById('openExport');
     const toggleQueryVisibilityBtn = document.getElementById('toggleQueryVisibility');
     const toggleQueryVisibilityLabel = document.getElementById('toggleQueryVisibilityLabel');
     const toggleHeaderVisibilityBtn = document.getElementById('toggleHeaderVisibility');
@@ -2675,6 +2885,81 @@ export class TableDataPanelManager {
       };
     }
 
+    function closeExportModal() {
+      exportModal.classList.remove('open');
+      exportModalBackdrop.classList.remove('open');
+    }
+
+    function updateExportSelectedOptionState() {
+      const hasSelection = getSelectedCellsCount() > 0;
+      exportDataSelected.disabled = !hasSelection;
+      exportSelectedOption.classList.toggle('disabled', !hasSelection);
+      if (!hasSelection && exportDataSelected.checked) {
+        exportDataResult.checked = true;
+      }
+    }
+
+    function openExportModal() {
+      updateExportSelectedOptionState();
+      exportFormatJson.checked = true;
+      exportDataResult.checked = true;
+      exportModal.classList.add('open');
+      exportModalBackdrop.classList.add('open');
+    }
+
+    function getResultExportPayload() {
+      const displayColumns = getDisplayColumns();
+      const visibleRows = applyLocalFilter(rows);
+      const columnNames = displayColumns.map((col) => col.name);
+
+      const exportRows = visibleRows.map((row) => {
+        const ctid = row.__dbadmin_ctid || null;
+        const out = {};
+        displayColumns.forEach((col) => {
+          out[col.name] = getEffectiveCellValue(row, col.name, ctid);
+        });
+        return out;
+      });
+
+      return { columns: columnNames, rows: exportRows };
+    }
+
+    function getSelectedCellsExportPayload() {
+      const displayColumns = getDisplayColumns();
+      const selectedColumnsSet = new Set();
+      displayedRowKeys.forEach((rowKey) => {
+        const cellSet = selectedCells.get(rowKey);
+        if (!cellSet || cellSet.size === 0) {
+          return;
+        }
+        cellSet.forEach((colName) => selectedColumnsSet.add(colName));
+      });
+
+      const columnNames = displayColumns
+        .map((col) => col.name)
+        .filter((name) => selectedColumnsSet.has(name));
+
+      const exportRows = [];
+      displayedRowKeys.forEach((rowKey) => {
+        const cellSet = selectedCells.get(rowKey);
+        const row = rowKeyToRow.get(rowKey);
+        if (!row || !cellSet || cellSet.size === 0) {
+          return;
+        }
+
+        const ctid = rowKeyToCtid.get(rowKey) || null;
+        const out = {};
+        columnNames.forEach((colName) => {
+          out[colName] = cellSet.has(colName)
+            ? getEffectiveCellValue(row, colName, ctid)
+            : '';
+        });
+        exportRows.push(out);
+      });
+
+      return { columns: columnNames, rows: exportRows };
+    }
+
     function renderPageInfo() {
       const pageSize = Math.max(1, Number(state.limit || ${defaultPageSize}));
       const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
@@ -2788,6 +3073,7 @@ export class TableDataPanelManager {
           });
         }
       });
+      updateExportSelectedOptionState();
       notifyNativeJsonPreviewFromSelection(false);
     }
 
@@ -3715,6 +4001,40 @@ export class TableDataPanelManager {
       closeJsonModal();
     });
 
+    exportModalCancel.addEventListener('click', () => {
+      closeExportModal();
+    });
+
+    exportModalConfirm.addEventListener('click', () => {
+      const format = exportFormatCsv.checked ? 'csv' : 'json';
+      const dataScope = exportDataAll.checked
+        ? 'all'
+        : (exportDataSelected.checked ? 'selected' : 'result');
+
+      let payload = { columns: [], rows: [] };
+      if (dataScope === 'result') {
+        payload = getResultExportPayload();
+      } else if (dataScope === 'selected') {
+        payload = getSelectedCellsExportPayload();
+      }
+
+      vscode.postMessage({
+        type: 'exportData',
+        format,
+        dataScope,
+        state: currentState(),
+        columns: payload.columns,
+        rows: payload.rows,
+      });
+
+      closeExportModal();
+      closeHeaderMenu();
+    });
+
+    exportModalBackdrop.addEventListener('click', () => {
+      closeExportModal();
+    });
+
     document.addEventListener('keydown', (event) => {
       if (event.key !== 'Escape') {
         return;
@@ -3722,6 +4042,13 @@ export class TableDataPanelManager {
 
       if (jsonModal.classList.contains('open')) {
         closeJsonModal();
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
+      if (exportModal.classList.contains('open')) {
+        closeExportModal();
         event.preventDefault();
         event.stopPropagation();
         return;
@@ -3820,6 +4147,11 @@ export class TableDataPanelManager {
     document.getElementById('openSettings').addEventListener('click', () => {
       closeHeaderMenu();
       vscode.postMessage({ type: 'openSettings' });
+    });
+
+    openExportBtn.addEventListener('click', () => {
+      closeHeaderMenu();
+      openExportModal();
     });
 
     document.getElementById('showInExplorer').addEventListener('click', () => {
