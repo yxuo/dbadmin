@@ -65,7 +65,7 @@ export function activate(context: vscode.ExtensionContext): void {
             value: getExpandFilterResultsSetting(),
           });
         }
-        applyFilter(treeProvider.getTableNameFilter());
+        applyFilter(treeProvider.getTableNameFilter(), { origin: 'config-change' });
       }
     })
   );
@@ -81,6 +81,7 @@ export function activate(context: vscode.ExtensionContext): void {
   treeProvider.setShowFilterLabel(initialShowFilterLabel);
 
   let filterView: vscode.WebviewView | undefined;
+  let searchOnTypeEnabled = true;
 
   const getExpandFilterResultsSetting = (): boolean =>
     vscode.workspace.getConfiguration().get<boolean>(EXPAND_FILTER_RESULTS_SETTING, false);
@@ -98,7 +99,7 @@ export function activate(context: vscode.ExtensionContext): void {
   let filterRunSeq = 0;
   let pendingFilterTimeout: ReturnType<typeof setTimeout> | undefined;
 
-  const runFilter = async (rawValue: string): Promise<void> => {
+  const runFilter = async (rawValue: string, _origin: string = 'unknown'): Promise<void> => {
     const runId = ++filterRunSeq;
     const isStale = (): boolean => runId !== filterRunSeq;
 
@@ -145,9 +146,19 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
 
+    await vscode.commands.executeCommand('databaseExplorer.focus');
+    if (isStale()) {
+      return;
+    }
+
     for (const tablesGroup of filteredPaths) {
       if (isStale()) {
         return;
+      }
+
+      // Se depender da quickpick, melhor dar um tempinho para o VSCode gerar a treeview com sucesso
+      if (_origin === 'quickpick') {
+        await new Promise((resolve) => setTimeout(resolve, 500));
       }
 
       await treeView.reveal(tablesGroup, {
@@ -158,22 +169,23 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   };
 
-  const applyFilter = (rawValue: string, options?: { debounceMs?: number }): void => {
+  const applyFilter = (rawValue: string, options?: { debounceMs?: number; origin?: string }): void => {
     if (pendingFilterTimeout) {
       clearTimeout(pendingFilterTimeout);
       pendingFilterTimeout = undefined;
     }
 
+    const origin = options?.origin ?? 'unknown';
     const debounceMs = options?.debounceMs ?? 0;
     if (debounceMs > 0) {
       pendingFilterTimeout = setTimeout(() => {
         pendingFilterTimeout = undefined;
-        void runFilter(rawValue);
+        void runFilter(rawValue, origin);
       }, debounceMs);
       return;
     }
 
-    void runFilter(rawValue);
+    void runFilter(rawValue, origin);
   };
 
   const filterViewProvider: vscode.WebviewViewProvider = {
@@ -183,7 +195,8 @@ export function activate(context: vscode.ExtensionContext): void {
       webviewView.webview.html = buildFilterViewHtml(
         webviewView.webview,
         treeProvider.getTableNameFilter(),
-        getExpandFilterResultsSetting()
+        getExpandFilterResultsSetting(),
+        searchOnTypeEnabled
       );
 
       webviewView.onDidDispose(() => {
@@ -194,14 +207,32 @@ export function activate(context: vscode.ExtensionContext): void {
 
       webviewView.webview.onDidReceiveMessage((message: { type?: string; value?: string; checked?: boolean }) => {
         if (message.type === 'filterChanged') {
-          applyFilter(String(message.value ?? ''), { debounceMs: FILTER_INPUT_DEBOUNCE_MS });
+          if (searchOnTypeEnabled) {
+            applyFilter(String(message.value ?? ''), { debounceMs: FILTER_INPUT_DEBOUNCE_MS, origin: 'sidebar-typing' });
+          }
+          return;
+        }
+
+        if (message.type === 'filterSubmitted') {
+          applyFilter(String(message.value ?? ''), { origin: 'sidebar-enter' });
+          return;
+        }
+
+        if (message.type === 'toggleSearchOnType') {
+          searchOnTypeEnabled = Boolean(message.checked);
+          if (filterView) {
+            void filterView.webview.postMessage({
+              type: 'setSearchOnType',
+              value: searchOnTypeEnabled,
+            });
+          }
           return;
         }
 
         if (message.type === 'toggleExpandItems') {
           void (async () => {
             await setExpandFilterResultsSetting(Boolean(message.checked));
-            applyFilter(treeProvider.getTableNameFilter());
+            applyFilter(treeProvider.getTableNameFilter(), { origin: 'toggle-expand' });
           })();
         }
       });
@@ -253,7 +284,7 @@ export function activate(context: vscode.ExtensionContext): void {
             if (expandEnabled !== getExpandFilterResultsSetting()) {
               await setExpandFilterResultsSetting(expandEnabled);
             }
-            applyFilter(value);
+            applyFilter(value, { origin: 'quickpick' });
             resolve();
           })();
 
@@ -274,7 +305,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('dbadmin.clearTableFilter', () => {
-      applyFilter('');
+      applyFilter('', { origin: 'clear-command' });
     })
   );
 
@@ -284,8 +315,7 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
-  applyFilter(treeProvider.getTableNameFilter());
-  treeProvider.initializeMetadataCache();
+  applyFilter(treeProvider.getTableNameFilter(), { origin: 'init' });
 
 
 
@@ -639,7 +669,8 @@ function showError(error: unknown): void {
 function buildFilterViewHtml(
   webview: vscode.Webview,
   initialValue: string,
-  initialExpandItems: boolean
+  initialExpandItems: boolean,
+  initialSearchOnType: boolean
 ): string {
   const nonce = String(Date.now());
   const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';`;
@@ -717,12 +748,18 @@ function buildFilterViewHtml(
       <input id="expandItems" type="checkbox" ${initialExpandItems ? 'checked' : ''} />
       <span>Expandir itens</span>
     </label>
+    <label class="check-row" title="Quando desativado, aplica o filtro somente ao pressionar Enter">
+      <input id="searchOnType" type="checkbox" ${initialSearchOnType ? 'checked' : ''} />
+      <span>Pesquisar ao digitar</span>
+    </label>
   </div>
 
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     const input = document.getElementById('tableFilter');
     const expandItems = document.getElementById('expandItems');
+    const searchOnType = document.getElementById('searchOnType');
+    let searchOnTypeEnabled = Boolean(searchOnType.checked);
 
     input.addEventListener('input', () => {
       vscode.postMessage({
@@ -731,10 +768,33 @@ function buildFilterViewHtml(
       });
     });
 
+    input.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') {
+        return;
+      }
+
+      if (!searchOnTypeEnabled) {
+        event.preventDefault();
+      }
+
+      vscode.postMessage({
+        type: 'filterSubmitted',
+        value: input.value,
+      });
+    });
+
     expandItems.addEventListener('change', () => {
       vscode.postMessage({
         type: 'toggleExpandItems',
         checked: Boolean(expandItems.checked),
+      });
+    });
+
+    searchOnType.addEventListener('change', () => {
+      searchOnTypeEnabled = Boolean(searchOnType.checked);
+      vscode.postMessage({
+        type: 'toggleSearchOnType',
+        checked: searchOnTypeEnabled,
       });
     });
 
@@ -747,6 +807,12 @@ function buildFilterViewHtml(
 
       if (message.type === 'setExpandItems') {
         expandItems.checked = Boolean(message.value);
+        return;
+      }
+
+      if (message.type === 'setSearchOnType') {
+        searchOnTypeEnabled = Boolean(message.value);
+        searchOnType.checked = searchOnTypeEnabled;
       }
     });
   </script>
