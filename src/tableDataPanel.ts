@@ -173,9 +173,10 @@ export class TableDataPanelManager {
       );
       this.reusedPanels.set(key, panel);
     } else {
-      panel.iconPath = vscode.Uri.file(
-        this.context.asAbsolutePath('resources/icons/table-local.svg')
-      );
+      panel.iconPath = {
+        light: vscode.Uri.file(this.context.asAbsolutePath('resources/icons/light/table.svg')),
+        dark: vscode.Uri.file(this.context.asAbsolutePath('resources/icons/dark/table.svg')),
+      };
     }
 
     this.saveOpenTabs();
@@ -1002,6 +1003,7 @@ export class TableDataPanelManager {
     .header { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; padding: 0px 4px; }
     .title { font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
     .title svg { width: 14px; height: 14px; margin-top: 4px; }
+    .title .info-item { display: inline-flex; align-items: center; gap: 2px; min-width: 0; }
     .title .info-fixed { flex: 0 0 auto; white-space: nowrap; }
     .title .info-conn { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     .header-menu-wrap { position: relative; }
@@ -1064,6 +1066,7 @@ export class TableDataPanelManager {
       text-overflow: ellipsis;
     }
     .search-context-placeholder svg { width: 12px; height: 12px; flex: 0 0 auto; }
+    .search-context-placeholder .info-item { display: inline-flex; align-items: center; gap: 0; min-width: 0; }
     .search-context-placeholder .info-fixed { flex: 0 0 auto; white-space: nowrap; }
     .search-context-placeholder .info-conn { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
     .input { border: 1px solid var(--vscode-input-border, transparent); background: var(--vscode-input-background); color: var(--vscode-input-foreground); border-radius: 6px; padding: 0 8px; height: 28px; box-sizing: border-box; }
@@ -1774,12 +1777,9 @@ export class TableDataPanelManager {
       const schemaLabel = currentSchemaName || 'Schema';
       const connectionLabel = currentConnectionName || 'Conexão';
       searchContextPlaceholderEl.innerHTML =
-        SVG_DB +
-        '<span class="info-fixed">' + dbLabel + '</span>' +
-        SVG_SCHEMA +
-        '<span class="info-fixed">' + schemaLabel + '</span>' +
-        SVG_CONNECTION +
-        '<span class="info-conn">' + connectionLabel + '</span>';
+        '<span class="info-item info-fixed"><span style="margin: 4px 2px 0 0;">' + SVG_DB + '</span><span>' + dbLabel + '</span></span>' +
+        '<span class="info-item info-fixed"><span style="margin: 4px 2px 0 0;">' + SVG_SCHEMA + '</span><span>' + schemaLabel + '</span></span>' +
+        '<span class="info-item info-conn">' + SVG_CONNECTION + '<span>' + connectionLabel + '</span></span>';
       searchContextPlaceholderEl.style.display = 'inline-flex';
     }
 
@@ -4036,12 +4036,9 @@ export class TableDataPanelManager {
         currentDatabaseName = String(message.databaseName || '');
         currentSchemaName = String(message.schemaName || '');
         titleEl.innerHTML =
-          SVG_DB +
-          '<span class="info-fixed">' + currentDatabaseName + '</span>' +
-          SVG_SCHEMA +
-          '<span class="info-fixed">' + currentSchemaName + '</span>' +
-          SVG_CONNECTION +
-          '<span class="info-conn">' + (currentConnectionName || 'Conexão') + '</span>';
+          '<span class="info-item info-fixed"><span style="margin-right: 4px;">' + SVG_DB + '</span><span>' + currentDatabaseName + '</span></span>' +
+          '<span class="info-item info-fixed"><span style="margin-right: 4px;">' + SVG_SCHEMA + '</span><span>' + currentSchemaName + '</span></span>' +
+          '<span class="info-item info-conn">' + SVG_CONNECTION + '<span>' + (currentConnectionName || 'Conexão') + '</span></span>';
         queryEl.value = message.result.query;
         showQueryEditor = message.showQueryEditor !== false;
         applyQueryVisibility();

@@ -271,6 +271,7 @@ export class SettingsPanelManager {
       align-items: center;
       gap: 10px;
       margin-top: 12px;
+      padding-bottom: 12px;
     }
     .status { color: var(--vscode-descriptionForeground); font-size: 12px; }
     .meta { display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; min-width: 0; }
