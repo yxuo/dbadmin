@@ -1709,6 +1709,139 @@ export class TableDataPanelManager {
     let displayedRowKeys = []; // rowKey[] in display order
     let displayedColNames = []; // colName[] in display order
     let nativePreviewSelectionSignature = '';
+    const FOCUS_GUARD_MS = 420;
+    const STICKY_FOCUS_MS = 900;
+    const STICKY_FOCUS_INTERVAL_MS = 34;
+    let focusGuardUntil = 0;
+    let lastPointerTarget = null;
+    let stickyFocusTarget = null;
+    let stickyFocusUntil = 0;
+    let stickyFocusTimer = null;
+
+    function isFocusableElement(element) {
+      if (!(element instanceof HTMLElement)) {
+        return false;
+      }
+
+      if (element.tabIndex >= 0) {
+        return true;
+      }
+
+      const tag = element.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON' || tag === 'SELECT' || tag === 'A';
+    }
+
+    function shouldIgnoreTransientBlur() {
+      return Date.now() <= focusGuardUntil;
+    }
+
+    function clearStickyFocus() {
+      if (stickyFocusTimer) {
+        clearTimeout(stickyFocusTimer);
+        stickyFocusTimer = null;
+      }
+      stickyFocusTarget = null;
+      stickyFocusUntil = 0;
+    }
+
+    function scheduleStickyFocusTick() {
+      if (stickyFocusTimer) {
+        clearTimeout(stickyFocusTimer);
+      }
+      stickyFocusTimer = setTimeout(() => {
+        stickyFocusTimer = null;
+        runStickyFocus();
+      }, STICKY_FOCUS_INTERVAL_MS);
+    }
+
+    function beginStickyFocus(target) {
+      if (!isFocusableElement(target)) {
+        return;
+      }
+
+      stickyFocusTarget = target;
+      stickyFocusUntil = Date.now() + STICKY_FOCUS_MS;
+      scheduleStickyFocusTick();
+    }
+
+    function runStickyFocus() {
+      if (!(stickyFocusTarget instanceof HTMLElement)) {
+        clearStickyFocus();
+        return;
+      }
+
+      if (Date.now() > stickyFocusUntil) {
+        clearStickyFocus();
+        return;
+      }
+
+      if (document.visibilityState === 'hidden' || !document.hasFocus()) {
+        scheduleStickyFocusTick();
+        return;
+      }
+
+      const active = document.activeElement;
+      if (
+        active &&
+        active !== document.body &&
+        active !== document.documentElement &&
+        active !== stickyFocusTarget
+      ) {
+        clearStickyFocus();
+        return;
+      }
+
+      if (!stickyFocusTarget.isConnected || !isFocusableElement(stickyFocusTarget)) {
+        clearStickyFocus();
+        return;
+      }
+
+      stickyFocusTarget.focus({ preventScroll: true });
+      if (document.activeElement === stickyFocusTarget) {
+        clearStickyFocus();
+        return;
+      }
+
+      scheduleStickyFocusTick();
+    }
+
+    function restoreFocusAfterTransientBlur() {
+      if (!shouldIgnoreTransientBlur()) {
+        return;
+      }
+
+      const target = lastPointerTarget instanceof HTMLElement ? lastPointerTarget : stickyFocusTarget;
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+
+      beginStickyFocus(target);
+    }
+
+    document.addEventListener('pointerdown', (event) => {
+      if (event.target instanceof HTMLElement) {
+        lastPointerTarget = event.target;
+        beginStickyFocus(event.target);
+      }
+    }, true);
+
+    document.addEventListener('click', (event) => {
+      if (event.target instanceof HTMLElement) {
+        lastPointerTarget = event.target;
+        beginStickyFocus(event.target);
+      }
+    }, true);
+
+    window.addEventListener('focus', () => {
+      focusGuardUntil = Date.now() + FOCUS_GUARD_MS;
+      runStickyFocus();
+    });
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        runStickyFocus();
+      }
+    });
     function serializeLayoutState() {
       return {
         columnOrder: [...columnOrder],
@@ -3676,7 +3809,13 @@ export class TableDataPanelManager {
     };
 
     window.addEventListener('mouseup', endDrag);
-    window.addEventListener('blur', endDrag);
+    window.addEventListener('blur', () => {
+      if (shouldIgnoreTransientBlur()) {
+        restoreFocusAfterTransientBlur();
+        return;
+      }
+      endDrag();
+    });
     window.addEventListener('mouseleave', endDrag);
     window.addEventListener('mouseup', () => {
       isDragging = false;
@@ -3686,9 +3825,21 @@ export class TableDataPanelManager {
       rowSelectionDragAnchorIndex = null;
       rowSelectionDragBaseSelection = new Map();
     });
-    window.addEventListener('blur', () => closeAllOverlays());
+    window.addEventListener('blur', () => {
+      if (shouldIgnoreTransientBlur()) {
+        restoreFocusAfterTransientBlur();
+        return;
+      }
+      closeAllOverlays();
+    });
     window.addEventListener('mouseup', endColumnResize);
-    window.addEventListener('blur', endColumnResize);
+    window.addEventListener('blur', () => {
+      if (shouldIgnoreTransientBlur()) {
+        restoreFocusAfterTransientBlur();
+        return;
+      }
+      endColumnResize();
+    });
     window.addEventListener('mouseleave', endColumnResize);
     document.addEventListener('visibilitychange', endDrag);
     document.addEventListener('pointerleave', endDrag);

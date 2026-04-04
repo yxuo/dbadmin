@@ -428,6 +428,136 @@ export class SettingsPanelManager {
     const saveSettingsBtn = document.getElementById('saveSettings');
     const saveStatus = document.getElementById('saveStatus');
     let hasUnsavedChanges = false;
+    const FOCUS_GUARD_MS = 420;
+    const STICKY_FOCUS_MS = 900;
+    const STICKY_FOCUS_INTERVAL_MS = 34;
+    let focusGuardUntil = 0;
+    let lastPointerTarget = null;
+    let stickyFocusTarget = null;
+    let stickyFocusUntil = 0;
+    let stickyFocusTimer = null;
+
+    function isFocusableElement(element) {
+      if (!(element instanceof HTMLElement)) {
+        return false;
+      }
+
+      if (element.tabIndex >= 0) {
+        return true;
+      }
+
+      const tag = element.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON' || tag === 'SELECT' || tag === 'A';
+    }
+
+    function clearStickyFocus() {
+      if (stickyFocusTimer) {
+        clearTimeout(stickyFocusTimer);
+        stickyFocusTimer = null;
+      }
+      stickyFocusTarget = null;
+      stickyFocusUntil = 0;
+    }
+
+    function scheduleStickyFocusTick() {
+      if (stickyFocusTimer) {
+        clearTimeout(stickyFocusTimer);
+      }
+      stickyFocusTimer = setTimeout(() => {
+        stickyFocusTimer = null;
+        runStickyFocus();
+      }, STICKY_FOCUS_INTERVAL_MS);
+    }
+
+    function beginStickyFocus(target) {
+      if (!isFocusableElement(target)) {
+        return;
+      }
+
+      stickyFocusTarget = target;
+      stickyFocusUntil = Date.now() + STICKY_FOCUS_MS;
+      scheduleStickyFocusTick();
+    }
+
+    function runStickyFocus() {
+      if (!(stickyFocusTarget instanceof HTMLElement)) {
+        clearStickyFocus();
+        return;
+      }
+
+      if (Date.now() > stickyFocusUntil) {
+        clearStickyFocus();
+        return;
+      }
+
+      if (document.visibilityState === 'hidden' || !document.hasFocus()) {
+        scheduleStickyFocusTick();
+        return;
+      }
+
+      const active = document.activeElement;
+      if (
+        active &&
+        active !== document.body &&
+        active !== document.documentElement &&
+        active !== stickyFocusTarget
+      ) {
+        clearStickyFocus();
+        return;
+      }
+
+      if (!stickyFocusTarget.isConnected || !isFocusableElement(stickyFocusTarget)) {
+        clearStickyFocus();
+        return;
+      }
+
+      stickyFocusTarget.focus({ preventScroll: true });
+      if (document.activeElement === stickyFocusTarget) {
+        clearStickyFocus();
+        return;
+      }
+
+      scheduleStickyFocusTick();
+    }
+
+    function restoreFocusIfTransient() {
+      if (Date.now() > focusGuardUntil) {
+        return;
+      }
+
+      const target = lastPointerTarget instanceof HTMLElement ? lastPointerTarget : stickyFocusTarget;
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+
+      beginStickyFocus(target);
+    }
+
+    document.addEventListener('pointerdown', (event) => {
+      if (event.target instanceof HTMLElement) {
+        lastPointerTarget = event.target;
+        beginStickyFocus(event.target);
+      }
+    }, true);
+
+    window.addEventListener('focus', () => {
+      focusGuardUntil = Date.now() + FOCUS_GUARD_MS;
+      runStickyFocus();
+    });
+
+    document.addEventListener('click', (event) => {
+      if (event.target instanceof HTMLElement) {
+        lastPointerTarget = event.target;
+        beginStickyFocus(event.target);
+      }
+      restoreFocusIfTransient();
+    }, true);
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        runStickyFocus();
+      }
+    });
 
     function clampPageSize(value) {
       const numeric = Number(value);
