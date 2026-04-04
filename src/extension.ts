@@ -29,7 +29,9 @@ export function activate(context: vscode.ExtensionContext): void {
   const tablePanels = new TableDataPanelManager(context, postgresService);
   const settingsPanel = new SettingsPanelManager(context, () => store.getStorageFilePath());
   const backupPanels = new BackupPanelManager(context);
-  const restorePanels = new RestorePanelManager(context);
+  const restorePanels = new RestorePanelManager(context, async () => {
+    await treeProvider.reloadAllMetadata();
+  });
   const metadataPanels = new TableMetadataPanelManager(context, postgresService);
 
   if (!workspaceRoot) {

@@ -11,7 +11,10 @@ type RestoreWebviewMessage =
 export class RestorePanelManager {
   private readonly panels = new Map<string, vscode.WebviewPanel>();
 
-  public constructor(private readonly context: vscode.ExtensionContext) {}
+  public constructor(
+    private readonly context: vscode.ExtensionContext,
+    private readonly onRestoreCompleted?: () => Promise<void>
+  ) {}
 
   public show(context: vscode.ExtensionContext, node: SchemaNodeRef): void {
     const key = `${node.connection.id}:${node.databaseName}:${node.schemaName}`;
@@ -66,6 +69,9 @@ export class RestorePanelManager {
               message.options,
               (line) => panel.webview.postMessage({ type: 'line', text: line })
             );
+            if (this.onRestoreCompleted) {
+              await this.onRestoreCompleted();
+            }
             panel.webview.postMessage({ type: 'done', success: true });
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
