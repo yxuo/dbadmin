@@ -644,6 +644,12 @@ export class TableDataPanelManager {
     return vscode.window.activeTextEditor?.document.uri.toString() === document.uri.toString();
   }
 
+  private getVisibleEditorForDocument(document: vscode.TextDocument): vscode.TextEditor | undefined {
+    return vscode.window.visibleTextEditors.find(
+      (editor) => editor.document.uri.toString() === document.uri.toString()
+    );
+  }
+
   private async openOrSyncNativePreview(
     panel: vscode.WebviewPanel,
     payload: {
@@ -763,16 +769,12 @@ export class TableDataPanelManager {
     }
 
     if (forceOpen && !switchedTypeWithNewEditor) {
-      try {
-        await vscode.commands.executeCommand('workbench.action.splitEditorDown');
-      } catch {
-        // Fallback below still opens the preview in the current active group.
-      }
+      const existingVisibleEditor = this.getVisibleEditorForDocument(state.document);
 
       await vscode.window.showTextDocument(state.document, {
         preview: false,
         preserveFocus: payload.preserveFocus === true,
-        viewColumn: vscode.ViewColumn.Active,
+        viewColumn: existingVisibleEditor?.viewColumn ?? vscode.ViewColumn.Active,
       });
 
       if (payload.preserveFocus) {
@@ -1251,7 +1253,8 @@ export class TableDataPanelManager {
       -moz-appearance: textfield;
       appearance: textfield;
     }
-    .selection-col { width: 24px; min-width: 24px; max-width: 24px; padding: 2px 0 !important; position: relative; }
+    .selection-col { width: 24px; min-width: 24px; max-width: 24px; padding: 2px 0 !important; }
+    td.selection-col { position: relative; }
     .selection-cell { cursor: pointer; }
     .selection-cell.selected { background: color-mix(in srgb, var(--vscode-list-hoverBackground) 50%, transparent); }
     th.selection-col:hover::before,
@@ -1411,7 +1414,7 @@ export class TableDataPanelManager {
       </div>
       <div class="json-modal-actions">
         <button id="jsonModalApply" class="primary" title="Aplicar alteracoes">Aplicar</button>
-        <button id="jsonModalOpenNative" class="secondary">Abrir no VS Code</button>
+        <button id="jsonModalOpenNative" class="secondary" title="Editar em tela dividida">Tela dividida</button>
         <button id="jsonModalClose" class="secondary">Fechar</button>
       </div>
     </div>
@@ -2072,7 +2075,7 @@ export class TableDataPanelManager {
       let headerWidth = (String(column?.name || '').length * 5) + 24 + 40;
       /** Ajuste fino */
       
-      const cellsWidth = (longestCellLength * 8) + 12;
+      const cellsWidth = (longestCellLength * 8) + 25;
       return Math.max(headerWidth, cellsWidth);
     }
 
@@ -2221,7 +2224,12 @@ export class TableDataPanelManager {
         }
         return true;
       } catch {
-        return false;
+        currentJsonModalPayload.content = rawContent;
+        applyCellValue(target.row, target.column, target.ctid, rawContent, target.input);
+        if (closeAfterApply) {
+          closeJsonModal();
+        }
+        return true;
       }
     }
 
@@ -2783,6 +2791,41 @@ export class TableDataPanelManager {
       notifyNativeJsonPreviewFromSelection(false);
     }
 
+    function ensureCellSelectionVisible(rowKey, colName) {
+      const tdMap = tdElements.get(rowKey);
+      const td = tdMap ? tdMap.get(colName) : null;
+      if (!td) {
+        return;
+      }
+
+      const tdRect = td.getBoundingClientRect();
+      const wrapRect = tableWrapEl.getBoundingClientRect();
+
+      const thead = tableWrapEl.querySelector('thead');
+      const headerHeight = thead ? thead.getBoundingClientRect().height : 0;
+
+      const visibleTop = wrapRect.top + headerHeight;
+      const visibleBottom = wrapRect.bottom;
+
+      // Esses 15px são ajuste fino, 1px é a borda.
+      if (tdRect.top < visibleTop) {
+        tableWrapEl.scrollTop -= (visibleTop - tdRect.top) + 1;
+      } else if (tdRect.bottom > visibleBottom - 16) {
+        tableWrapEl.scrollTop += (tdRect.bottom - visibleBottom) + 16;
+      }
+
+      if (tdRect.left < wrapRect.left) {
+        const isFirstCell = colName === displayedColNames[0];
+        if (isFirstCell) {
+          tableWrapEl.scrollLeft = 0;
+        } else {
+          tableWrapEl.scrollLeft -= (wrapRect.left - tdRect.left);
+        }
+      } else if (tdRect.right > wrapRect.right - 15) {
+        tableWrapEl.scrollLeft += (tdRect.right - wrapRect.right) + 15;
+      }
+    }
+
     function getCellPosition(cellRef) {
       if (!cellRef) {
         return null;
@@ -2807,6 +2850,7 @@ export class TableDataPanelManager {
       selectedCells.set(rowKey, new Set([colName]));
       lastSelectedCell = { rowKey, colName };
       renderSelectionState();
+      ensureCellSelectionVisible(rowKey, colName);
 
       if (!enterEditMode) {
         return;
@@ -2834,6 +2878,49 @@ export class TableDataPanelManager {
       const nextRow = Math.min(Math.max(pos.rowIndex + deltaRow, 0), displayedRowKeys.length - 1);
       const nextCol = Math.min(Math.max(pos.colIndex + deltaCol, 0), displayedColNames.length - 1);
       selectSingleCellAt(nextRow, nextCol, false);
+    }
+
+    function moveSelectionTo(rowIndex, colIndex) {
+      if (displayedRowKeys.length === 0 || displayedColNames.length === 0) {
+        return;
+      }
+
+      const boundedRow = Math.min(Math.max(rowIndex, 0), displayedRowKeys.length - 1);
+      const boundedCol = Math.min(Math.max(colIndex, 0), displayedColNames.length - 1);
+      selectSingleCellAt(boundedRow, boundedCol, false);
+    }
+
+    function getViewportNavigationStep() {
+      const wrapRect = tableWrapEl.getBoundingClientRect();
+
+      let visibleRows = 0;
+      displayedRowKeys.forEach((rowKey) => {
+        const tr = trElements.get(rowKey);
+        if (!tr) {
+          return;
+        }
+        const rect = tr.getBoundingClientRect();
+        if (rect.top >= wrapRect.top && rect.bottom <= wrapRect.bottom) {
+          visibleRows += 1;
+        }
+      });
+
+      let visibleCols = 0;
+      displayedColNames.forEach((colName) => {
+        const th = gridEl.querySelector('th[data-column-name="' + colName + '"]');
+        if (!th) {
+          return;
+        }
+        const rect = th.getBoundingClientRect();
+        if (rect.left >= wrapRect.left && rect.right <= wrapRect.right) {
+          visibleCols += 1;
+        }
+      });
+
+      return {
+        rows: Math.max(1, visibleRows),
+        cols: Math.max(1, visibleCols),
+      };
     }
 
     function applyKeyboardRangeSelection(anchor, focus) {
@@ -3621,6 +3708,7 @@ export class TableDataPanelManager {
         content: codeEditor.getValue(),
         ctid: currentJsonModalPayload.ctid,
       });
+      closeJsonModal();
     });
 
     jsonModalBackdrop.addEventListener('click', () => {
@@ -3881,6 +3969,22 @@ export class TableDataPanelManager {
         event.key === 'ArrowLeft' ||
         event.key === 'ArrowRight'
       )) {
+        const pos = getCellPosition(lastSelectedCell) || { rowIndex: 0, colIndex: 0 };
+
+        if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey) {
+          if (event.key === 'ArrowUp') {
+            moveSelectionTo(0, pos.colIndex);
+          } else if (event.key === 'ArrowDown') {
+            moveSelectionTo(displayedRowKeys.length - 1, pos.colIndex);
+          } else if (event.key === 'ArrowLeft') {
+            moveSelectionTo(pos.rowIndex, 0);
+          } else if (event.key === 'ArrowRight') {
+            moveSelectionTo(pos.rowIndex, displayedColNames.length - 1);
+          }
+          event.preventDefault();
+          return;
+        }
+
         if (event.shiftKey) {
           if (event.key === 'ArrowUp') {
             extendSelectionBy(-1, 0);
@@ -3902,6 +4006,29 @@ export class TableDataPanelManager {
             moveSelectionBy(0, 1);
           }
         }
+        event.preventDefault();
+        return;
+      }
+
+      if (!editingCellInput && (
+        event.key === 'PageUp' ||
+        event.key === 'PageDown' ||
+        event.key === 'Home' ||
+        event.key === 'End'
+      )) {
+        const pos = getCellPosition(lastSelectedCell) || { rowIndex: 0, colIndex: 0 };
+        const step = getViewportNavigationStep();
+
+        if (event.key === 'PageUp') {
+          moveSelectionTo(pos.rowIndex - step.rows, pos.colIndex);
+        } else if (event.key === 'PageDown') {
+          moveSelectionTo(pos.rowIndex + step.rows, pos.colIndex);
+        } else if (event.key === 'Home') {
+          moveSelectionTo(pos.rowIndex, pos.colIndex - step.cols);
+        } else if (event.key === 'End') {
+          moveSelectionTo(pos.rowIndex, pos.colIndex + step.cols);
+        }
+
         event.preventDefault();
         return;
       }
