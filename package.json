@@ -111,22 +111,22 @@
     "commands": [
       {
         "command": "dbadmin.createConnection",
-        "title": "Create Connection",
+        "title": "Criar Conexão",
         "icon": "$(add)"
       },
       {
         "command": "dbadmin.editConnection",
-        "title": "Edit Connection",
+        "title": "Editar Conexão",
         "icon": "$(edit)"
       },
       {
         "command": "dbadmin.deleteConnection",
-        "title": "Delete Connection",
+        "title": "Excluir Conexão",
         "icon": "$(trash)"
       },
       {
         "command": "dbadmin.refresh",
-        "title": "Refresh",
+        "title": "Atualizar",
         "icon": "$(refresh)"
       },
       {

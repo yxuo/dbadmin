@@ -3,11 +3,9 @@ import { ConnectionStore } from './connectionStore';
 import { showConnectionForm } from './connectionFormPanel';
 import { DatabaseTreeProvider } from './databaseTreeProvider';
 import {
-  DatabaseGroupNodeRef,
   ConnectionNodeRef,
   DatabaseNodeRef,
   DbObjectNodeRef,
-  ObjectGroupNodeRef,
   PostgresConnection,
   SchemaNodeRef,
   TableSectionItemNodeRef,
@@ -20,6 +18,7 @@ import { RestorePanelManager } from './restorePanel';
 import { TableMetadataPanelManager } from './tableMetadataPanel';
 
 const EXPAND_FILTER_RESULTS_SETTING = 'dbadmin.expandFilterResults';
+const FILTER_INPUT_DEBOUNCE_MS = 180;
 
 export function activate(context: vscode.ExtensionContext): void {
   const workspaceRoot = ConnectionStore.getWorkspaceRoot();
@@ -96,100 +95,85 @@ export function activate(context: vscode.ExtensionContext): void {
     await vscode.commands.executeCommand('workbench.actions.treeView.databaseExplorer.collapseAll');
   };
 
-  interface ExpandPath {
-    tablesGroup: ObjectGroupNodeRef;
-  }
+  let filterRunSeq = 0;
+  let pendingFilterTimeout: ReturnType<typeof setTimeout> | undefined;
 
-  const collectFilteredTablePaths = async (): Promise<ExpandPath[]> => {
-    const rootNodes = await treeProvider.getChildren();
-    const connectionNodes = rootNodes.filter((node): node is ConnectionNodeRef => node.type === 'connection');
-    const paths: ExpandPath[] = [];
+  const runFilter = async (rawValue: string): Promise<void> => {
+    const runId = ++filterRunSeq;
+    const isStale = (): boolean => runId !== filterRunSeq;
 
-    for (const connectionNode of connectionNodes) {
-      const databaseNodes = (await treeProvider.getChildren(connectionNode)).filter(
-        (node): node is DatabaseNodeRef => node.type === 'database'
-      );
+    const value = rawValue.trim();
+    treeProvider.setTableNameFilter(value);
 
-      for (const databaseNode of databaseNodes) {
-        const groupNodes = await treeProvider.getChildren(databaseNode);
-        const schemasGroup = groupNodes.find(
-          (node): node is DatabaseGroupNodeRef =>
-            node.type === 'databaseGroup' && node.kind === 'schemas'
-        );
-        if (!schemasGroup) {
-          continue;
-        }
+    const shouldShowLabel = vscode.workspace
+      .getConfiguration()
+      .get<boolean>('dbadmin.showFilterLabel', true);
+    treeProvider.setShowFilterLabel(shouldShowLabel);
 
-        const schemaNodes = (await treeProvider.getChildren(schemasGroup)).filter(
-          (node): node is SchemaNodeRef => node.type === 'schema'
-        );
-
-        for (const schemaNode of schemaNodes) {
-          const objectGroups = await treeProvider.getChildren(schemaNode);
-          const tablesGroup = objectGroups.find(
-            (node): node is ObjectGroupNodeRef => node.type === 'objectGroup' && node.kind === 'table'
-          );
-          if (!tablesGroup) {
-            continue;
-          }
-
-          const tableChildren = await treeProvider.getChildren(tablesGroup);
-          const hasTableResults = tableChildren.some(
-            (child): child is DbObjectNodeRef => child.type === 'dbObject' && child.kind === 'table'
-          );
-          if (!hasTableResults) {
-            continue;
-          }
-
-          paths.push({ tablesGroup });
-        }
-      }
+    if (filterView) {
+      await filterView.webview.postMessage({
+        type: 'setFilterValue',
+        value,
+      });
     }
 
-    return paths;
+    if (isStale()) {
+      return;
+    }
+
+    if (!value) {
+      treeProvider.setFilterHasResults(true);
+      if (getExpandFilterResultsSetting()) {
+        await collapseAllExplorer();
+      }
+      return;
+    }
+
+    const filteredPaths = treeProvider.getFilteredTableExpandPaths();
+    if (isStale()) {
+      return;
+    }
+
+    treeProvider.setFilterHasResults(filteredPaths.length > 0);
+
+    if (!getExpandFilterResultsSetting()) {
+      return;
+    }
+
+    await collapseAllExplorer();
+    if (isStale()) {
+      return;
+    }
+
+    for (const tablesGroup of filteredPaths) {
+      if (isStale()) {
+        return;
+      }
+
+      await treeView.reveal(tablesGroup, {
+        select: false,
+        focus: false,
+        expand: true,
+      });
+    }
   };
 
-  const applyFilter = (rawValue: string): void => {
-    void (async () => {
-      const value = rawValue.trim();
-      treeProvider.setTableNameFilter(value);
+  const applyFilter = (rawValue: string, options?: { debounceMs?: number }): void => {
+    if (pendingFilterTimeout) {
+      clearTimeout(pendingFilterTimeout);
+      pendingFilterTimeout = undefined;
+    }
 
-      const shouldShowLabel = vscode.workspace
-        .getConfiguration()
-        .get<boolean>('dbadmin.showFilterLabel', true);
-      treeProvider.setShowFilterLabel(shouldShowLabel);
+    const debounceMs = options?.debounceMs ?? 0;
+    if (debounceMs > 0) {
+      pendingFilterTimeout = setTimeout(() => {
+        pendingFilterTimeout = undefined;
+        void runFilter(rawValue);
+      }, debounceMs);
+      return;
+    }
 
-      if (filterView) {
-        await filterView.webview.postMessage({
-          type: 'setFilterValue',
-          value,
-        });
-      }
-
-      if (!value) {
-        treeProvider.setFilterHasResults(true);
-        if (getExpandFilterResultsSetting()) {
-          await collapseAllExplorer();
-        }
-        return;
-      }
-
-      const filteredPaths = await collectFilteredTablePaths();
-      treeProvider.setFilterHasResults(filteredPaths.length > 0);
-
-      if (!getExpandFilterResultsSetting()) {
-        return;
-      }
-
-      await collapseAllExplorer();
-      for (const path of filteredPaths) {
-        await treeView.reveal(path.tablesGroup, {
-          select: false,
-          focus: false,
-          expand: true,
-        });
-      }
-    })();
+    void runFilter(rawValue);
   };
 
   const filterViewProvider: vscode.WebviewViewProvider = {
@@ -210,13 +194,15 @@ export function activate(context: vscode.ExtensionContext): void {
 
       webviewView.webview.onDidReceiveMessage((message: { type?: string; value?: string; checked?: boolean }) => {
         if (message.type === 'filterChanged') {
-          applyFilter(String(message.value ?? ''));
+          applyFilter(String(message.value ?? ''), { debounceMs: FILTER_INPUT_DEBOUNCE_MS });
           return;
         }
 
         if (message.type === 'toggleExpandItems') {
-          void setExpandFilterResultsSetting(Boolean(message.checked));
-          applyFilter(treeProvider.getTableNameFilter());
+          void (async () => {
+            await setExpandFilterResultsSetting(Boolean(message.checked));
+            applyFilter(treeProvider.getTableNameFilter());
+          })();
         }
       });
     },
@@ -228,8 +214,8 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('dbadmin.refresh', () => {
-      treeProvider.refresh();
+    vscode.commands.registerCommand('dbadmin.refresh', async () => {
+      await treeProvider.reloadAllMetadata();
     })
   );
 
@@ -263,6 +249,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   applyFilter(treeProvider.getTableNameFilter());
+  treeProvider.initializeMetadataCache();
 
 
 

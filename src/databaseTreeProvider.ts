@@ -2,7 +2,6 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { ConnectionStore } from './connectionStore';
 import {
-  DatabaseGroupKind,
   DatabaseGroupNodeRef,
   DbObjectKind,
   DbObjectNodeRef,
@@ -21,11 +20,41 @@ import {
 } from './models';
 import { PostgresService } from './postgresService';
 
+type SnapshotLoadStatus = 'created' | 'loading' | 'ready' | 'error';
+
+interface SchemaSnapshot {
+  status: SnapshotLoadStatus;
+  tableNames: string[];
+  viewNames: string[];
+  functionNames: string[];
+  procedureNames: string[];
+  triggerNames: string[];
+  tableCountByName: Map<string, number>;
+  errorMessage?: string;
+}
+
+interface DatabaseSnapshot {
+  status: SnapshotLoadStatus;
+  schemaByName: Map<string, SchemaSnapshot>;
+  extensionNames: string[];
+  errorMessage?: string;
+}
+
+interface ConnectionSnapshot {
+  connection: PostgresConnection;
+  status: SnapshotLoadStatus;
+  databaseByName: Map<string, DatabaseSnapshot>;
+  errorMessage?: string;
+}
+
 export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef> {
   private readonly onDidChangeTreeDataEmitter = new vscode.EventEmitter<TreeNodeRef | undefined>();
   public readonly onDidChangeTreeData = this.onDidChangeTreeDataEmitter.event;
 
   private readonly versions = new Map<string, string>();
+  private readonly connectionSnapshots = new Map<string, ConnectionSnapshot>();
+  private readonly connectionLoadGeneration = new Map<string, number>();
+  private metadataLoadSeq = 0;
   private tableNameFilter = '';
   private showFilterLabel = true;
   private filterHasResults = true;
@@ -40,8 +69,45 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
     this.onDidChangeTreeDataEmitter.fire(undefined);
   }
 
+  public initializeMetadataCache(): void {
+    void this.reloadAllMetadata();
+  }
+
+  public async reloadAllMetadata(): Promise<void> {
+    const currentSeq = ++this.metadataLoadSeq;
+    const connections = await this.store.listConnections();
+    const validConnectionIds = new Set(connections.map((connection) => connection.id));
+
+    for (const cachedConnectionId of this.connectionSnapshots.keys()) {
+      if (!validConnectionIds.has(cachedConnectionId)) {
+        this.connectionSnapshots.delete(cachedConnectionId);
+        this.connectionLoadGeneration.delete(cachedConnectionId);
+        this.versions.delete(cachedConnectionId);
+      }
+    }
+
+    for (const connection of connections) {
+      const previousSnapshot = this.connectionSnapshots.get(connection.id);
+      const preservedDatabaseByName = previousSnapshot
+        ? this.cloneDatabaseMap(previousSnapshot.databaseByName)
+        : new Map<string, DatabaseSnapshot>();
+
+      this.connectionSnapshots.set(connection.id, {
+        connection,
+        status: previousSnapshot ? 'loading' : 'created',
+        databaseByName: preservedDatabaseByName,
+      });
+
+      this.startConnectionLoad(connection, currentSeq);
+    }
+
+    this.refresh();
+  }
+
   public clearConnectionCache(connectionId: string): void {
     this.versions.delete(connectionId);
+    this.connectionSnapshots.delete(connectionId);
+    this.connectionLoadGeneration.delete(connectionId);
   }
 
   public setTableNameFilter(filter: string): void {
@@ -66,9 +132,50 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
     this.refresh();
   }
 
+  public getFilteredTableExpandPaths(): ObjectGroupNodeRef[] {
+    if (!this.tableNameFilter) {
+      return [];
+    }
+
+    const paths: ObjectGroupNodeRef[] = [];
+    for (const [, snapshot] of this.connectionSnapshots.entries()) {
+      if (snapshot.status === 'error') {
+        continue;
+      }
+
+      const connection = snapshot.connection;
+
+      for (const [databaseName, database] of snapshot.databaseByName.entries()) {
+        for (const [schemaName, schema] of database.schemaByName.entries()) {
+          const hasMatches = schema.tableNames.some((name) =>
+            name.toLowerCase().includes(this.tableNameFilter)
+          );
+          if (!hasMatches) {
+            continue;
+          }
+
+          paths.push({
+            type: 'objectGroup',
+            connection,
+            databaseName,
+            schemaName,
+            kind: 'table',
+            count: schema.tableNames.length,
+          });
+        }
+      }
+    }
+
+    return paths;
+  }
+
   public async getChildren(element?: TreeNodeRef): Promise<TreeNodeRef[]> {
     if (!element) {
       const connections = await this.store.listConnections();
+      for (const connection of connections) {
+        this.ensureConnectionSnapshotLoaded(connection);
+      }
+
       const rootNodes: TreeNodeRef[] = [];
 
       if (this.showFilterLabel && this.tableNameFilter.trim()) {
@@ -100,19 +207,40 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
 
     try {
       if (element.type === 'connection') {
-        try {
-          await this.postgresService.getVersion(element.connection);
-        } catch {
+        this.ensureConnectionSnapshotLoaded(element.connection);
+        const snapshot = this.connectionSnapshots.get(element.connection.id);
+        if (!snapshot) {
           return [
             {
               type: 'placeholder',
-              message: 'Erro ao conectar',
+              message: 'Preparando snapshot...',
             } satisfies PlaceholderNodeRef,
           ];
         }
 
-        const databases = await this.postgresService.listDatabases(element.connection);
+        const databases = Array.from(snapshot.databaseByName.keys()).sort((a, b) =>
+          a.localeCompare(b)
+        );
+
+        if (snapshot.status === 'error' && databases.length === 0) {
+          return [
+            {
+              type: 'placeholder',
+              message: snapshot.errorMessage ?? 'Erro ao conectar',
+            } satisfies PlaceholderNodeRef,
+          ];
+        }
+
         if (databases.length === 0) {
+          if (snapshot.status === 'created' || snapshot.status === 'loading') {
+            return [
+              {
+                type: 'placeholder',
+                message: 'Carregando bancos...',
+              } satisfies PlaceholderNodeRef,
+            ];
+          }
+
           return [
             {
               type: 'placeholder',
@@ -129,6 +257,17 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
       }
 
       if (element.type === 'database') {
+        const snapshot = this.connectionSnapshots.get(element.connection.id);
+        const database = snapshot?.databaseByName.get(element.databaseName);
+        if (!snapshot || !database) {
+          return [
+            {
+              type: 'placeholder',
+              message: 'Carregando metadados...',
+            } satisfies PlaceholderNodeRef,
+          ];
+        }
+
         return [
           {
             type: 'databaseGroup',
@@ -146,9 +285,29 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
       }
 
       if (element.type === 'databaseGroup') {
+        const snapshot = this.connectionSnapshots.get(element.connection.id);
+        const database = snapshot?.databaseByName.get(element.databaseName);
+        if (!snapshot || !database) {
+          return [
+            {
+              type: 'placeholder',
+              message: 'Carregando metadados...',
+            } satisfies PlaceholderNodeRef,
+          ];
+        }
+
         if (element.kind === 'schemas') {
-          const schemas = await this.postgresService.listSchemas(element.connection, element.databaseName);
+          const schemas = Array.from(database.schemaByName.keys()).sort((a, b) => a.localeCompare(b));
           if (schemas.length === 0) {
+            if (database.status === 'created' || database.status === 'loading') {
+              return [
+                {
+                  type: 'placeholder',
+                  message: 'Carregando schemas...',
+                } satisfies PlaceholderNodeRef,
+              ];
+            }
+
             return [
               {
                 type: 'placeholder',
@@ -165,8 +324,17 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
           })) satisfies SchemaNodeRef[];
         }
 
-        const extensions = await this.postgresService.listExtensions(element.connection, element.databaseName);
+        const extensions = [...database.extensionNames];
         if (extensions.length === 0) {
+          if (database.status === 'created' || database.status === 'loading') {
+            return [
+              {
+                type: 'placeholder',
+                message: 'Carregando extensions...',
+              } satisfies PlaceholderNodeRef,
+            ];
+          }
+
           return [
             {
               type: 'placeholder',
@@ -184,11 +352,31 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
       }
 
       if (element.type === 'schema') {
-        const counts = await this.postgresService.getSchemaObjectCounts(
-          element.connection,
-          element.databaseName,
-          element.schemaName
-        );
+        const schema = this.getSchemaSnapshot(element.connection.id, element.databaseName, element.schemaName);
+        if (!schema) {
+          return [
+            {
+              type: 'placeholder',
+              message: 'Carregando metadados...',
+            } satisfies PlaceholderNodeRef,
+          ];
+        }
+
+        if (
+          schema.status !== 'ready' &&
+          schema.tableNames.length === 0 &&
+          schema.viewNames.length === 0 &&
+          schema.functionNames.length === 0 &&
+          schema.procedureNames.length === 0 &&
+          schema.triggerNames.length === 0
+        ) {
+          return [
+            {
+              type: 'placeholder',
+              message: 'Carregando objetos do schema...',
+            } satisfies PlaceholderNodeRef,
+          ];
+        }
 
         return [
           {
@@ -197,7 +385,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
             databaseName: element.databaseName,
             schemaName: element.schemaName,
             kind: 'table',
-            count: counts.tables,
+            count: schema.tableNames.length,
           },
           {
             type: 'objectGroup',
@@ -205,7 +393,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
             databaseName: element.databaseName,
             schemaName: element.schemaName,
             kind: 'view',
-            count: counts.views,
+            count: schema.viewNames.length,
           },
           {
             type: 'objectGroup',
@@ -213,7 +401,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
             databaseName: element.databaseName,
             schemaName: element.schemaName,
             kind: 'function',
-            count: counts.functions,
+            count: schema.functionNames.length,
           },
           {
             type: 'objectGroup',
@@ -221,7 +409,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
             databaseName: element.databaseName,
             schemaName: element.schemaName,
             kind: 'procedure',
-            count: counts.procedures,
+            count: schema.procedureNames.length,
           },
           {
             type: 'objectGroup',
@@ -229,28 +417,43 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
             databaseName: element.databaseName,
             schemaName: element.schemaName,
             kind: 'trigger',
-            count: counts.triggers,
+            count: schema.triggerNames.length,
           },
         ] satisfies ObjectGroupNodeRef[];
       }
 
       if (element.type === 'objectGroup') {
-        const objectNames = await this.listGroupObjects(element);
+        const schemaSnapshot = this.getSchemaSnapshot(
+          element.connection.id,
+          element.databaseName,
+          element.schemaName
+        );
+        if (!schemaSnapshot) {
+          return [
+            {
+              type: 'placeholder',
+              message: 'Carregando objetos...',
+            } satisfies PlaceholderNodeRef,
+          ];
+        }
+
+        const objectNames = this.listGroupObjectsFromSnapshot(element);
         const filteredObjectNames =
           element.kind === 'table' && this.tableNameFilter
             ? objectNames.filter((name) => name.toLowerCase().includes(this.tableNameFilter))
             : objectNames;
-        const tableCounts =
-          element.kind === 'table'
-            ? await this.postgresService.listTableEstimatedCounts(
-                element.connection,
-                element.databaseName,
-                element.schemaName
-              )
-            : [];
-        const tableCountByName = new Map(tableCounts.map((item) => [item.tableName, item.count]));
+        const tableCountByName = schemaSnapshot.tableCountByName;
 
         if (filteredObjectNames.length === 0) {
+          if (schemaSnapshot.status === 'created' || schemaSnapshot.status === 'loading') {
+            return [
+              {
+                type: 'placeholder',
+                message: 'Carregando lista...',
+              } satisfies PlaceholderNodeRef,
+            ];
+          }
+
           return [
             {
               type: 'placeholder',
@@ -381,10 +584,16 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
         ),
       };
 
+      const snapshot = this.connectionSnapshots.get(element.connection.id);
+      if (snapshot?.status === 'loading' || snapshot?.status === 'created') {
+        item.description = `${item.description} • carregando`;
+      }
+      if (snapshot?.status === 'error') {
+        item.description = `${item.description} • erro`;
+      }
+
       const cachedVersion = this.versions.get(element.connection.id);
-      if (!cachedVersion) {
-        void this.loadVersion(element.connection);
-      } else {
+      if (cachedVersion) {
         item.tooltip = `${item.tooltip}\n${cachedVersion}`;
       }
 
@@ -572,24 +781,29 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
     return undefined;
   }
 
-  private async listGroupObjects(group: ObjectGroupNodeRef): Promise<string[]> {
+  private listGroupObjectsFromSnapshot(group: ObjectGroupNodeRef): string[] {
+    const schema = this.getSchemaSnapshot(group.connection.id, group.databaseName, group.schemaName);
+    if (!schema) {
+      return [];
+    }
+
     if (group.kind === 'table') {
-      return this.postgresService.listTables(group.connection, group.databaseName, group.schemaName);
+      return [...schema.tableNames];
     }
 
     if (group.kind === 'view') {
-      return this.postgresService.listViews(group.connection, group.databaseName, group.schemaName);
+      return [...schema.viewNames];
     }
 
     if (group.kind === 'function') {
-      return this.postgresService.listFunctions(group.connection, group.databaseName, group.schemaName);
+      return [...schema.functionNames];
     }
 
     if (group.kind === 'procedure') {
-      return this.postgresService.listProcedures(group.connection, group.databaseName, group.schemaName);
+      return [...schema.procedureNames];
     }
 
-    return this.postgresService.listTriggers(group.connection, group.databaseName, group.schemaName);
+    return [...schema.triggerNames];
   }
 
   private groupLabel(kind: DbObjectKind): string {
@@ -692,14 +906,384 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
     }));
   }
 
-  private async loadVersion(connection: PostgresConnection): Promise<void> {
+  private getSchemaSnapshot(
+    connectionId: string,
+    databaseName: string,
+    schemaName: string
+  ): SchemaSnapshot | undefined {
+    return this.connectionSnapshots.get(connectionId)?.databaseByName.get(databaseName)?.schemaByName.get(schemaName);
+  }
+
+  private ensureConnectionSnapshotLoaded(connection: PostgresConnection): void {
+    const existingSnapshot = this.connectionSnapshots.get(connection.id);
+    const hasActiveLoad = (this.connectionLoadGeneration.get(connection.id) ?? 0) > 0;
+    if (existingSnapshot?.status === 'ready' || (existingSnapshot?.status === 'loading' && hasActiveLoad)) {
+      return;
+    }
+
+    if (!existingSnapshot) {
+      this.connectionSnapshots.set(connection.id, {
+        connection,
+        status: 'created',
+        databaseByName: new Map<string, DatabaseSnapshot>(),
+      });
+    }
+
+    this.startConnectionLoad(connection, this.metadataLoadSeq);
+  }
+
+  private startConnectionLoad(
+    connection: PostgresConnection,
+    expectedSeq: number
+  ): void {
+    const nextGeneration = (this.connectionLoadGeneration.get(connection.id) ?? 0) + 1;
+    this.connectionLoadGeneration.set(connection.id, nextGeneration);
+
+    const existingSnapshot = this.connectionSnapshots.get(connection.id);
+    const preservedDatabaseByName = existingSnapshot
+      ? this.cloneDatabaseMap(existingSnapshot.databaseByName)
+      : new Map<string, DatabaseSnapshot>();
+
+    this.connectionSnapshots.set(connection.id, {
+      connection,
+      status: 'loading',
+      databaseByName: preservedDatabaseByName,
+    });
+    this.refresh();
+
+    void this.loadConnectionIncrementalWithRetries(connection, expectedSeq, nextGeneration);
+  }
+
+  private async loadConnectionIncrementalWithRetries(
+    connection: PostgresConnection,
+    expectedSeq: number,
+    generation: number
+  ): Promise<void> {
+    const retryDelaysMs = [5000, 10000, 60000];
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
+      if (!this.isLoadCurrent(connection.id, expectedSeq, generation)) {
+        return;
+      }
+
+      try {
+        await this.loadConnectionIncremental(connection, expectedSeq, generation);
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt < retryDelaysMs.length) {
+          await this.delay(retryDelaysMs[attempt]);
+          continue;
+        }
+      }
+    }
+
+    if (!this.isLoadCurrent(connection.id, expectedSeq, generation)) {
+      return;
+    }
+
+    const snapshot = this.ensureConnectionSnapshot(connection);
+    const message = lastError instanceof Error ? lastError.message : 'Erro ao conectar';
+    snapshot.status = 'error';
+    snapshot.errorMessage = `Erro ao conectar: ${message}`;
+    this.versions.set(connection.id, 'Não conectado');
+    this.refresh();
+  }
+
+  private async loadConnectionIncremental(
+    connection: PostgresConnection,
+    expectedSeq: number,
+    generation: number
+  ): Promise<void> {
+    const snapshot = this.ensureConnectionSnapshot(connection);
+    snapshot.status = 'loading';
+    snapshot.errorMessage = undefined;
+    this.refresh();
+
+    const version = await this.postgresService.getVersion(connection);
+    if (!this.isLoadCurrent(connection.id, expectedSeq, generation)) {
+      return;
+    }
+
+    this.versions.set(connection.id, version);
+    this.refresh();
+
+    const databaseNames = await this.postgresService.listDatabases(connection);
+    if (!this.isLoadCurrent(connection.id, expectedSeq, generation)) {
+      return;
+    }
+
+    const validDatabaseNames = new Set(databaseNames);
+    for (const databaseName of Array.from(snapshot.databaseByName.keys())) {
+      if (!validDatabaseNames.has(databaseName)) {
+        snapshot.databaseByName.delete(databaseName);
+      }
+    }
+
+    for (const databaseName of databaseNames) {
+      const existingDatabase = snapshot.databaseByName.get(databaseName);
+      snapshot.databaseByName.set(databaseName, existingDatabase ? this.cloneDatabaseSnapshot(existingDatabase) : {
+        status: 'created',
+        schemaByName: new Map<string, SchemaSnapshot>(),
+        extensionNames: [],
+      });
+    }
+
+    this.refresh();
+
+    await Promise.all(
+      databaseNames.map((databaseName) =>
+        this.loadDatabaseIncremental(connection, databaseName, expectedSeq, generation)
+      )
+    );
+
+    if (!this.isLoadCurrent(connection.id, expectedSeq, generation)) {
+      return;
+    }
+
+    snapshot.status = 'ready';
+    snapshot.errorMessage = undefined;
+    this.refresh();
+  }
+
+  private async loadDatabaseIncremental(
+    connection: PostgresConnection,
+    databaseName: string,
+    expectedSeq: number,
+    generation: number
+  ): Promise<void> {
+    if (!this.isLoadCurrent(connection.id, expectedSeq, generation)) {
+      return;
+    }
+
+    const snapshot = this.ensureConnectionSnapshot(connection);
+    const database = snapshot.databaseByName.get(databaseName);
+    if (!database) {
+      return;
+    }
+
+    database.status = 'loading';
+    database.errorMessage = undefined;
+    this.refresh();
+
     try {
-      const version = await this.postgresService.getVersion(connection);
-      this.versions.set(connection.id, version);
+      const [schemaNames, extensionNames] = await Promise.all([
+        this.postgresService.listSchemas(connection, databaseName),
+        this.postgresService.listExtensions(connection, databaseName),
+      ]);
+
+      if (!this.isLoadCurrent(connection.id, expectedSeq, generation)) {
+        return;
+      }
+
+      database.extensionNames = [...extensionNames].sort((a, b) => a.localeCompare(b));
+
+      const validSchemaNames = new Set(schemaNames);
+      for (const schemaName of Array.from(database.schemaByName.keys())) {
+        if (!validSchemaNames.has(schemaName)) {
+          database.schemaByName.delete(schemaName);
+        }
+      }
+
+      for (const schemaName of schemaNames) {
+        const existingSchema = database.schemaByName.get(schemaName);
+        database.schemaByName.set(schemaName, existingSchema ? this.cloneSchemaSnapshot(existingSchema) : {
+          status: 'created',
+          tableNames: [],
+          viewNames: [],
+          functionNames: [],
+          procedureNames: [],
+          triggerNames: [],
+          tableCountByName: new Map<string, number>(),
+        });
+      }
+
       this.refresh();
-    } catch {
-      this.versions.set(connection.id, 'Não conectado');
+
+      await Promise.all(
+        schemaNames.map((schemaName) =>
+          this.loadSchemaIncremental(connection, databaseName, schemaName, expectedSeq, generation)
+        )
+      );
+
+      if (!this.isLoadCurrent(connection.id, expectedSeq, generation)) {
+        return;
+      }
+
+      database.status = 'ready';
+      database.errorMessage = undefined;
+      this.refresh();
+    } catch (error) {
+      if (!this.isLoadCurrent(connection.id, expectedSeq, generation)) {
+        return;
+      }
+
+      database.status = 'error';
+      database.errorMessage = error instanceof Error ? error.message : 'Erro ao carregar banco';
       this.refresh();
     }
   }
+
+  private async loadSchemaIncremental(
+    connection: PostgresConnection,
+    databaseName: string,
+    schemaName: string,
+    expectedSeq: number,
+    generation: number
+  ): Promise<void> {
+    const schema = this.getSchemaSnapshot(connection.id, databaseName, schemaName);
+    if (!schema) {
+      return;
+    }
+
+    schema.status = 'loading';
+    schema.errorMessage = undefined;
+    this.refresh();
+
+    const safeUpdate = (update: (target: SchemaSnapshot) => void): void => {
+      if (!this.isLoadCurrent(connection.id, expectedSeq, generation)) {
+        return;
+      }
+
+      const target = this.getSchemaSnapshot(connection.id, databaseName, schemaName);
+      if (!target) {
+        return;
+      }
+
+      update(target);
+      this.refresh();
+    };
+
+    let failed = false;
+
+    const tasks: Promise<void>[] = [
+      this.postgresService
+        .listTables(connection, databaseName, schemaName)
+        .then((items) => safeUpdate((target) => {
+          target.tableNames = [...items].sort((a, b) => a.localeCompare(b));
+        }))
+        .catch(() => {
+          failed = true;
+        }),
+      this.postgresService
+        .listViews(connection, databaseName, schemaName)
+        .then((items) => safeUpdate((target) => {
+          target.viewNames = [...items].sort((a, b) => a.localeCompare(b));
+        }))
+        .catch(() => {
+          failed = true;
+        }),
+      this.postgresService
+        .listFunctions(connection, databaseName, schemaName)
+        .then((items) => safeUpdate((target) => {
+          target.functionNames = [...items].sort((a, b) => a.localeCompare(b));
+        }))
+        .catch(() => {
+          failed = true;
+        }),
+      this.postgresService
+        .listProcedures(connection, databaseName, schemaName)
+        .then((items) => safeUpdate((target) => {
+          target.procedureNames = [...items].sort((a, b) => a.localeCompare(b));
+        }))
+        .catch(() => {
+          failed = true;
+        }),
+      this.postgresService
+        .listTriggers(connection, databaseName, schemaName)
+        .then((items) => safeUpdate((target) => {
+          target.triggerNames = [...items].sort((a, b) => a.localeCompare(b));
+        }))
+        .catch(() => {
+          failed = true;
+        }),
+      this.postgresService
+        .listTableEstimatedCounts(connection, databaseName, schemaName)
+        .then((items) => safeUpdate((target) => {
+          target.tableCountByName = new Map(items.map((item) => [item.tableName, item.count]));
+        }))
+        .catch(() => {
+          failed = true;
+        }),
+    ];
+
+    await Promise.all(tasks);
+
+    if (!this.isLoadCurrent(connection.id, expectedSeq, generation)) {
+      return;
+    }
+
+    const target = this.getSchemaSnapshot(connection.id, databaseName, schemaName);
+    if (!target) {
+      return;
+    }
+
+    target.status = failed ? 'error' : 'ready';
+    target.errorMessage = failed ? 'Parte dos metadados falhou ao carregar' : undefined;
+    this.refresh();
+  }
+
+  private ensureConnectionSnapshot(connection: PostgresConnection): ConnectionSnapshot {
+    const existing = this.connectionSnapshots.get(connection.id);
+    if (existing) {
+      existing.connection = connection;
+      return existing;
+    }
+
+    const created: ConnectionSnapshot = {
+      connection,
+      status: 'created',
+      databaseByName: new Map<string, DatabaseSnapshot>(),
+    };
+    this.connectionSnapshots.set(connection.id, created);
+    return created;
+  }
+
+  private isLoadCurrent(connectionId: string, expectedSeq: number, generation: number): boolean {
+    return (
+      expectedSeq === this.metadataLoadSeq &&
+      this.connectionLoadGeneration.get(connectionId) === generation
+    );
+  }
+
+  private cloneSchemaSnapshot(source: SchemaSnapshot): SchemaSnapshot {
+    return {
+      status: source.status,
+      tableNames: [...source.tableNames],
+      viewNames: [...source.viewNames],
+      functionNames: [...source.functionNames],
+      procedureNames: [...source.procedureNames],
+      triggerNames: [...source.triggerNames],
+      tableCountByName: new Map(source.tableCountByName),
+      errorMessage: source.errorMessage,
+    };
+  }
+
+  private cloneDatabaseSnapshot(source: DatabaseSnapshot): DatabaseSnapshot {
+    const schemaByName = new Map<string, SchemaSnapshot>();
+    for (const [schemaName, schemaSnapshot] of source.schemaByName.entries()) {
+      schemaByName.set(schemaName, this.cloneSchemaSnapshot(schemaSnapshot));
+    }
+
+    return {
+      status: source.status,
+      schemaByName,
+      extensionNames: [...source.extensionNames],
+      errorMessage: source.errorMessage,
+    };
+  }
+
+  private cloneDatabaseMap(source: Map<string, DatabaseSnapshot>): Map<string, DatabaseSnapshot> {
+    const cloned = new Map<string, DatabaseSnapshot>();
+    for (const [databaseName, databaseSnapshot] of source.entries()) {
+      cloned.set(databaseName, this.cloneDatabaseSnapshot(databaseSnapshot));
+    }
+    return cloned;
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
 }
