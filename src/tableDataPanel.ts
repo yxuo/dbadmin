@@ -1936,13 +1936,10 @@ export class TableDataPanelManager {
     }
 
     function getMinimumColumnWidth(column, longestCellLength) {
-      let headerWidth = (String(column?.name || '').length * 5) + 24 + 30;
+      let headerWidth = (String(column?.name || '').length * 5) + 24 + 40;
       /** Ajuste fino */
-      if (headerWidth < 100) {
-        headerWidth += 10;
-      }
-
-      const cellsWidth = (longestCellLength * 5) + 12;
+      
+      const cellsWidth = (longestCellLength * 8) + 12;
       return Math.max(headerWidth, cellsWidth);
     }
 

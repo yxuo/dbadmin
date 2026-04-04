@@ -28,6 +28,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
   private readonly versions = new Map<string, string>();
   private tableNameFilter = '';
   private showFilterLabel = true;
+  private filterHasResults = true;
 
   public constructor(
     private readonly store: ConnectionStore,
@@ -45,6 +46,14 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
 
   public setTableNameFilter(filter: string): void {
     this.tableNameFilter = filter.trim().toLowerCase();
+    if (!this.tableNameFilter) {
+      this.filterHasResults = true;
+    }
+    this.refresh();
+  }
+
+  public setFilterHasResults(hasResults: boolean): void {
+    this.filterHasResults = hasResults;
     this.refresh();
   }
 
@@ -349,6 +358,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
         vscode.TreeItemCollapsibleState.None
       );
       item.contextValue = 'filterControl';
+      item.description = activeFilter && !this.filterHasResults ? 'sem resultados' : undefined;
       item.tooltip = activeFilter
         ? `Filtro global de tabelas ativo: ${activeFilter}\n(Duplo clique ou F2 para editar)`
         : 'Filtro global de tabelas\n(Duplo clique ou F2 para editar)';
