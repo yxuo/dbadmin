@@ -37,13 +37,20 @@ interface TableLayoutState {
 
 type WebviewMessage =
   | { type: 'ready' }
-  | { type: 'reload'; state: TableState }
+  | { type: 'reload'; state: TableState; clearSelectionAndPreview?: boolean }
+  | { type: 'updateState'; state: TableState }
   | { type: 'save'; state: TableState; payload: TableSavePayload }
   | {
       type: 'exportData';
       format: 'json' | 'csv';
       dataScope: 'result' | 'all' | 'selected';
       state: TableState;
+      columns: string[];
+      rows: Array<Record<string, unknown>>;
+    }
+  | {
+      type: 'copyAdvancedClipboard';
+      format: 'json' | 'csv';
       columns: string[];
       rows: Array<Record<string, unknown>>;
     }
@@ -87,6 +94,7 @@ interface NativeJsonPreviewState {
   ctid: string | null;
   rowKey: string | null;
   columnName: string;
+  viewColumn?: vscode.ViewColumn;
 }
 
 const GLOBAL_REUSED_KEY = '__global__';
@@ -102,6 +110,7 @@ export class TableDataPanelManager {
   private readonly panelNodes = new Map<vscode.WebviewPanel, DbObjectNodeRef>();
   private readonly panelIsNewTab = new Map<vscode.WebviewPanel, boolean>();
   private readonly panelLayouts = new Map<vscode.WebviewPanel, TableLayoutState>();
+  private readonly panelStates = new Map<vscode.WebviewPanel, TableState>();
   private readonly panelPreviewTabIds = new Map<vscode.WebviewPanel, string>();
   private readonly panelNativePreview = new Map<vscode.WebviewPanel, NativeJsonPreviewState>();
   private readonly nativePreviewDocumentToPanel = new Map<string, vscode.WebviewPanel>();
@@ -135,6 +144,7 @@ export class TableDataPanelManager {
       const reused = this.reusedPanels.get(key);
       if (reused) {
         this.panelNodes.set(reused, input.node);
+        this.panelStates.set(reused, this.cloneTableState(initialState));
         if (initialLayout) {
           this.panelLayouts.set(reused, initialLayout);
         } else {
@@ -169,6 +179,7 @@ export class TableDataPanelManager {
     );
     this.panelNodes.set(panel, input.node);
     this.panelIsNewTab.set(panel, input.newTab);
+    this.panelStates.set(panel, this.cloneTableState(initialState));
     if (initialLayout) {
       this.panelLayouts.set(panel, initialLayout);
     } else {
@@ -208,12 +219,25 @@ export class TableDataPanelManager {
       }
 
       if (message.type === 'reload') {
+        this.panelStates.set(panel, this.cloneTableState(message.state));
+        this.saveOpenTabs();
+        if (message.clearSelectionAndPreview === true) {
+          await this.clearNativePreviewContent(panel);
+        }
         await this.refreshPanel(panel, currentNode, message.state);
+        return;
+      }
+
+      if (message.type === 'updateState') {
+        this.panelStates.set(panel, this.cloneTableState(message.state));
+        this.saveOpenTabs();
         return;
       }
 
       if (message.type === 'save') {
         try {
+          this.panelStates.set(panel, this.cloneTableState(message.state));
+          this.saveOpenTabs();
           await this.postgresService.saveTableData(
             currentNode.connection,
             currentNode.databaseName,
@@ -242,6 +266,25 @@ export class TableDataPanelManager {
       if (message.type === 'exportData') {
         try {
           await this.exportTableData(panel, currentNode, message);
+        } catch (error) {
+          panel.webview.postMessage({
+            type: 'status',
+            kind: 'error',
+            message: this.errorMessage(error),
+          });
+        }
+        return;
+      }
+
+      if (message.type === 'copyAdvancedClipboard') {
+        try {
+          const content = this.buildExportContent(message.format, message.columns, message.rows);
+          await vscode.env.clipboard.writeText(content);
+          panel.webview.postMessage({
+            type: 'status',
+            kind: 'ok',
+            message: 'Conteudo copiado para a area de transferencia.',
+          });
         } catch (error) {
           panel.webview.postMessage({
             type: 'status',
@@ -350,6 +393,7 @@ export class TableDataPanelManager {
       this.panelNodes.delete(panel);
       this.panelIsNewTab.delete(panel);
       this.panelLayouts.delete(panel);
+      this.panelStates.delete(panel);
       this.panelPreviewTabIds.delete(panel);
       if (!input.newTab) {
         this.reusedPanels.delete(key);
@@ -574,6 +618,18 @@ export class TableDataPanelManager {
     };
   }
 
+  private cloneTableState(state: TableState): TableState {
+    return {
+      searchText: String(state.searchText || ''),
+      searchMode: state.searchMode === 'query' ? 'query' : 'local',
+      sortColumn: state.sortColumn,
+      sortDirection: state.sortDirection,
+      columnFilters: { ...(state.columnFilters || {}) },
+      limit: Number.isFinite(Number(state.limit)) ? Math.max(1, Math.trunc(Number(state.limit))) : this.getDefaultPageSize(),
+      page: Number.isFinite(Number(state.page)) ? Math.max(1, Math.trunc(Number(state.page))) : 1,
+    };
+  }
+
   private errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : 'Erro inesperado';
   }
@@ -665,6 +721,16 @@ export class TableDataPanelManager {
     );
     edit.replace(state.document.uri, fullRange, formatted);
     await vscode.workspace.applyEdit(edit);
+  }
+
+  private async clearNativePreviewContent(panel: vscode.WebviewPanel): Promise<void> {
+    const state = this.panelNativePreview.get(panel);
+    if (!state) {
+      return;
+    }
+    await this.updateNativePreviewContent(state, '', { preserveFocus: true });
+    state.ctid = null;
+    state.rowKey = null;
   }
 
   private sanitizeFileNamePart(value: string): string {
@@ -831,7 +897,7 @@ export class TableDataPanelManager {
         // Fallback: open beside if split command is unavailable.
       }
 
-      await vscode.window.showTextDocument(document, {
+      const shownEditor = await vscode.window.showTextDocument(document, {
         preview: false,
         preserveFocus: payload.preserveFocus === true,
         viewColumn: vscode.ViewColumn.Active,
@@ -845,6 +911,7 @@ export class TableDataPanelManager {
         ctid: payload.ctid ?? null,
         rowKey: payload.rowKey ?? null,
         columnName: payload.columnName,
+        viewColumn: shownEditor.viewColumn,
       };
       this.panelNativePreview.set(panel, state);
       this.nativePreviewDocumentToPanel.set(document.uri.toString(), panel);
@@ -915,12 +982,22 @@ export class TableDataPanelManager {
 
     if (forceOpen && !switchedTypeWithNewEditor) {
       const existingVisibleEditor = this.getVisibleEditorForDocument(state.document);
+      if (!existingVisibleEditor) {
+        try {
+          await vscode.commands.executeCommand('workbench.action.splitEditorDown');
+        } catch {
+          // Fallback: keep current group when split command is unavailable.
+        }
+      }
 
-      await vscode.window.showTextDocument(state.document, {
+      const targetViewColumn = existingVisibleEditor?.viewColumn ?? vscode.ViewColumn.Active;
+
+      const shownEditor = await vscode.window.showTextDocument(state.document, {
         preview: false,
         preserveFocus: payload.preserveFocus === true,
-        viewColumn: existingVisibleEditor?.viewColumn ?? vscode.ViewColumn.Active,
+        viewColumn: targetViewColumn,
       });
+      state.viewColumn = shownEditor.viewColumn;
 
       if (payload.preserveFocus) {
         panel.reveal(panel.viewColumn, false);
@@ -1053,6 +1130,7 @@ export class TableDataPanelManager {
           objectName: node.objectName,
           newTab: this.panelIsNewTab.get(panel) ?? false,
           layout: this.panelLayouts.get(panel),
+          state: this.cloneTableState(this.panelStates.get(panel) ?? this.defaultState()),
         };
       })
       .filter((tab): tab is {
@@ -1062,6 +1140,7 @@ export class TableDataPanelManager {
         objectName: string;
         newTab: boolean;
         layout: TableLayoutState | undefined;
+        state: TableState;
       } => tab !== null);
 
     this.context.globalState.update('dbadmin.openTabs', openTabs);
@@ -1076,6 +1155,7 @@ export class TableDataPanelManager {
         objectName: string;
         newTab: boolean;
         layout?: TableLayoutState;
+        state?: TableState;
       }>;
 
       if (!openTabs || openTabs.length === 0) {
@@ -1103,6 +1183,7 @@ export class TableDataPanelManager {
             newTab: tab.newTab,
             restoringOnStartup: true,
             layout: tab.layout,
+            initialState: this.cloneTableState(tab.state ?? this.defaultState()),
           });
         } catch (error) {
           console.error(`Falha ao restaurar aba ${tab.objectName}:`, error);
@@ -1426,6 +1507,18 @@ export class TableDataPanelManager {
     .selection-col { width: 24px; min-width: 24px; max-width: 24px; padding: 2px 0 !important; }
     td.selection-col { position: relative; }
     .selection-cell { cursor: pointer; }
+    .selection-cell-index {
+      display: block;
+      width: 100%;
+      text-align: center;
+      font-size: 10px;
+      line-height: 1.2;
+      color: color-mix(in srgb, var(--vscode-descriptionForeground) 85%, transparent);
+      user-select: none;
+      pointer-events: none;
+      position: relative;
+      z-index: 1;
+    }
     .selection-cell.selected { background: color-mix(in srgb, var(--vscode-list-hoverBackground) 50%, transparent); }
     th.selection-col:hover::before,
     td.selection-cell:not(.selected):hover::before {
@@ -1439,6 +1532,15 @@ export class TableDataPanelManager {
     .cell-input:not(:focus):not(.editing) { background: transparent !important; border-color: transparent !important; cursor: pointer; pointer-events: none; }
     .cell-input.editing { pointer-events: auto; }
     td.cell-selected { box-shadow: inset 0 0 0 1000px color-mix(in srgb, var(--vscode-foreground) 20%, transparent); }
+   td.cell-selected-current-origin::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border: 2px solid var(--vscode-focusBorder);
+        top: -1px;
+        bottom: -1px;
+        right: -1px;
+    }
     tr.row-marked-delete td { background: rgba(220, 53, 69, 0.16); }
     td:has(.cell-input.dirty) { background: rgba(70, 130, 255, 0.16); }
     .th-name:hover:not(:active) { background: var(--vscode-list-hoverBackground); }
@@ -1550,6 +1652,14 @@ export class TableDataPanelManager {
 
   <div class="overlay-backdrop" id="menuBackdrop"></div>
   <div class="menu simple-menu overlay-surface overlay-scroll" id="cellMenu">
+    <button data-action="copy"><span>Copiar</span></button>
+    <div class="menu-submenu-wrap">
+      <button type="button"><span>Copiar avancado</span><svg class="submenu-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 3.5L10.5 8L6 12.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <div class="menu-submenu simple-menu overlay-surface overlay-submenu">
+        <button data-action="copyAdvancedCsv">CSV</button>
+        <button data-action="copyAdvancedJson">JSON</button>
+      </div>
+    </div>
     <div class="menu-submenu-wrap">
       <button type="button"><span>✎ Editar</span><svg class="submenu-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 3.5L10.5 8L6 12.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       <div class="menu-submenu simple-menu overlay-surface overlay-submenu">
@@ -1634,6 +1744,17 @@ export class TableDataPanelManager {
     const menuBackdrop = document.getElementById('menuBackdrop');
     const errorMsgEl = document.getElementById('errorMsg');
     const tableWrapEl = document.querySelector('.table-wrap');
+
+    const rangeSelectionOverlay = document.createElement('div');
+    rangeSelectionOverlay.style.position = 'absolute';
+    rangeSelectionOverlay.style.pointerEvents = 'none';
+    rangeSelectionOverlay.style.display = 'none';
+    rangeSelectionOverlay.style.border = '1px solid var(--vscode-focusBorder)';
+    rangeSelectionOverlay.style.borderRadius = '1px';
+    rangeSelectionOverlay.style.zIndex = '10';
+    tableWrapEl.style.position = 'relative';
+    tableWrapEl.appendChild(rangeSelectionOverlay);
+
     const searchInputEl = document.getElementById('search');
     const searchContextPlaceholderEl = document.getElementById('searchContextPlaceholder');
     const modeBtn = document.getElementById('modeBtn');
@@ -1907,6 +2028,12 @@ export class TableDataPanelManager {
     let editingCellInput = null;
     let lastSelectedCell = null; // { rowKey, colName }
     let keyboardSelectionAnchor = null; // { rowIndex, colIndex }
+    let keyboardSelectionAdditive = false;
+    let keyboardSelectionBase = new Map(); // rowKey -> Set of columnNames
+    let selectedCellCounts = new Map(); // rowKey -> Map(colName -> count)
+    let currentRangeSelection = null; // { anchor: { rowIndex, colIndex }, focus: { rowIndex, colIndex } }
+    let cellDragMode = 'replace'; // replace | add | remove
+    let cellDragBaseCounts = new Map(); // rowKey -> Map(colName -> count)
     // DOM element maps for lightweight selection update (avoids full re-render)
     let trElements = new Map(); // rowKey -> tr element
     let selectionTdElements = new Map(); // rowKey -> selection-col td
@@ -2107,7 +2234,7 @@ export class TableDataPanelManager {
         return;
       }
 
-      const hasSearchText = String(searchInputEl.value || '').trim().length > 0;
+      const hasSearchText = String(searchInputEl.value || '').length > 0;
       const isCompactHeight = window.innerHeight <= 500;
       const canShowContext = hideTabHeader && !hasSearchText && !isCompactHeight;
 
@@ -2246,6 +2373,22 @@ export class TableDataPanelManager {
       return dataType === 'boolean' || dataType === 'bool';
     }
 
+    function isNumericColumn(column) {
+      const dataType = String(column?.dataType || '').toLowerCase();
+      const numericTypes = [
+        'smallint', 'int2',
+        'integer', 'int', 'int4',
+        'bigint', 'int8',
+        'decimal', 'numeric',
+        'real', 'float4',
+        'double precision', 'float8',
+        'money',
+        'serial', 'serial4',
+        'serial8', 'bigserial',
+      ];
+      return numericTypes.includes(dataType);
+    }
+
     function getLongestVisibleCellLength(column, visibleRows) {
       let longestCellLength = 0;
       visibleRows.forEach((row) => {
@@ -2293,19 +2436,6 @@ export class TableDataPanelManager {
       const longestCellLength = getLongestVisibleCellLength(column, visibleRows);
       const useMinimumWidth = dynamicDefaultColumnWidth && shouldUseMinimumColumnWidth(column, longestCellLength);
       const resolvedWidth = useMinimumWidth ? getMinimumColumnWidth(column, longestCellLength) : 170;
-      console.log(
-        '[dbadmin][column-width-default]',
-        {
-          column: String(column?.name || ''),
-          dataType: String(column?.dataType || ''),
-          isPrimaryKey: Boolean(column?.isPrimaryKey),
-          isForeignKey: Boolean(column?.isForeignKey),
-          dynamicDefaultColumnWidth,
-          longestCellLength,
-          mode: useMinimumWidth ? 'minimum' : '170',
-          width: resolvedWidth,
-        }
-      );
       return resolvedWidth;
     }
 
@@ -2461,6 +2591,44 @@ export class TableDataPanelManager {
       }
 
       return String(value);
+    }
+
+    function isValidUnixTimestamp(value) {
+      if (typeof value !== 'number' && typeof value !== 'string') {
+        return false;
+      }
+
+      const num = typeof value === 'string' ? parseInt(value, 10) : value;
+      if (isNaN(num) || !Number.isInteger(num)) {
+        return false;
+      }
+
+      const str = String(num);
+      // Valid unix timestamp: 10 digits (seconds) or 13 digits (milliseconds)
+      // 10 digits: 1000000000 to 9999999999 (1970-01-01 to 2286-11-20)
+      // 13 digits: 1000000000000 to 9999999999999 (1970-01-01 to 5138-11-16)
+      if (str.length === 10 || str.length === 13) {
+        return true;
+      }
+
+      return false;
+    }
+
+    function getUnixTimestampTooltip(value) {
+      if (!isValidUnixTimestamp(value)) {
+        return null;
+      }
+
+      const num = typeof value === 'string' ? parseInt(value, 10) : value;
+      const isMilliseconds = String(num).length === 13;
+      const timestamp = isMilliseconds ? num : num * 1000;
+
+      try {
+        const date = new Date(timestamp);
+        return date.toLocaleString();
+      } catch {
+        return null;
+      }
     }
 
     const headerMenuOverlay = new OverlaySurfaceController({
@@ -2885,6 +3053,13 @@ export class TableDataPanelManager {
       };
     }
 
+    function persistCurrentState() {
+      vscode.postMessage({
+        type: 'updateState',
+        state: currentState(),
+      });
+    }
+
     function closeExportModal() {
       exportModal.classList.remove('open');
       exportModalBackdrop.classList.remove('open');
@@ -3005,10 +3180,14 @@ export class TableDataPanelManager {
 
     function selectRow(rowKey, displayColumns, preserveExisting) {
       keyboardSelectionAnchor = null;
+      keyboardSelectionAdditive = false;
+      keyboardSelectionBase = new Map();
+      currentRangeSelection = null;
       if (!preserveExisting) {
         selectedCells.clear();
       }
       selectedCells.set(rowKey, new Set(displayColumns.map((col) => col.name)));
+      syncSelectionCountsFromSelectedCells();
       if (displayColumns.length > 0) {
         lastSelectedCell = { rowKey, colName: displayColumns[0].name };
       }
@@ -3022,8 +3201,184 @@ export class TableDataPanelManager {
       return clone;
     }
 
+    function cloneSelectionCounts(source) {
+      const clone = new Map();
+      source.forEach((colMap, rowKey) => {
+        const nextColMap = new Map();
+        colMap.forEach((count, colName) => {
+          if (count > 0) {
+            nextColMap.set(colName, count);
+          }
+        });
+        if (nextColMap.size > 0) {
+          clone.set(rowKey, nextColMap);
+        }
+      });
+      return clone;
+    }
+
+    function selectionCountsFromSelectionMap(source) {
+      const counts = new Map();
+      source.forEach((colSet, rowKey) => {
+        const colMap = new Map();
+        colSet.forEach((colName) => {
+          colMap.set(colName, 1);
+        });
+        if (colMap.size > 0) {
+          counts.set(rowKey, colMap);
+        }
+      });
+      return counts;
+    }
+
+    function selectionMapFromCounts(source) {
+      const nextSelection = new Map();
+      source.forEach((colMap, rowKey) => {
+        const colSet = new Set();
+        colMap.forEach((count, colName) => {
+          if (count > 0) {
+            colSet.add(colName);
+          }
+        });
+        if (colSet.size > 0) {
+          nextSelection.set(rowKey, colSet);
+        }
+      });
+      return nextSelection;
+    }
+
+    function syncSelectionCountsFromSelectedCells() {
+      selectedCellCounts = selectionCountsFromSelectionMap(selectedCells);
+    }
+
+    function clearSelectionState(options) {
+      selectedCells.clear();
+      selectedCellCounts = new Map();
+      currentRangeSelection = null;
+      keyboardSelectionAnchor = null;
+      keyboardSelectionAdditive = false;
+      keyboardSelectionBase = new Map();
+      cellDragMode = 'replace';
+      cellDragBaseCounts = new Map();
+      dragAnchor = null;
+      isDragging = false;
+      lastSelectedCell = null;
+      nativePreviewSelectionSignature = '';
+      rangeSelectionOverlay.style.display = 'none';
+
+      if (!options || options.render !== false) {
+        renderSelectionState();
+      }
+    }
+
+    function clearSelectionForViewChange() {
+      clearSelectionState({ render: false });
+    }
+
+    function rerenderTableViewClearingSelection() {
+      clearSelectionForViewChange();
+      render();
+    }
+
+    function reloadTableViewClearingSelection(options) {
+      clearSelectionForViewChange();
+      beginLoading();
+      vscode.postMessage({
+        type: 'reload',
+        state: currentState(),
+        clearSelectionAndPreview: Boolean(options && options.clearSelectionAndPreview),
+      });
+    }
+
+    function applyRangeToCounts(baseCounts, minR, maxR, minC, maxC, delta) {
+      const nextCounts = cloneSelectionCounts(baseCounts);
+      for (let r = minR; r <= maxR; r++) {
+        const rowKey = displayedRowKeys[r];
+        if (!rowKey) {
+          continue;
+        }
+
+        let colMap = nextCounts.get(rowKey);
+        if (!colMap) {
+          colMap = new Map();
+          nextCounts.set(rowKey, colMap);
+        }
+
+        for (let c = minC; c <= maxC; c++) {
+          const colName = displayedColNames[c];
+          if (!colName) {
+            continue;
+          }
+          const prev = colMap.get(colName) || 0;
+          const next = Math.max(0, prev + delta);
+          if (next > 0) {
+            colMap.set(colName, next);
+          } else {
+            colMap.delete(colName);
+          }
+        }
+
+        if (colMap.size === 0) {
+          nextCounts.delete(rowKey);
+        }
+      }
+      return nextCounts;
+    }
+
+    function applyCellDragRange(currentRowIndex, currentColIndex) {
+      if (!dragAnchor) {
+        return;
+      }
+
+      const minR = Math.min(dragAnchor.rowIndex, currentRowIndex);
+      const maxR = Math.max(dragAnchor.rowIndex, currentRowIndex);
+      const minC = Math.min(dragAnchor.colIndex, currentColIndex);
+      const maxC = Math.max(dragAnchor.colIndex, currentColIndex);
+
+      if (cellDragMode === 'replace') {
+        selectedCells.clear();
+        for (let r = minR; r <= maxR; r++) {
+          const rk = displayedRowKeys[r];
+          if (!rk) {
+            continue;
+          }
+          const colSet = new Set();
+          for (let c = minC; c <= maxC; c++) {
+            const cn = displayedColNames[c];
+            if (cn) {
+              colSet.add(cn);
+            }
+          }
+          if (colSet.size > 0) {
+            selectedCells.set(rk, colSet);
+          }
+        }
+        syncSelectionCountsFromSelectedCells();
+      } else {
+        const delta = cellDragMode === 'add' ? 1 : -1;
+        selectedCellCounts = applyRangeToCounts(cellDragBaseCounts, minR, maxR, minC, maxC, delta);
+        selectedCells = selectionMapFromCounts(selectedCellCounts);
+      }
+
+      currentRangeSelection = {
+        anchor: { rowIndex: dragAnchor.rowIndex, colIndex: dragAnchor.colIndex },
+        focus: { rowIndex: currentRowIndex, colIndex: currentColIndex },
+      };
+
+      const focusRowKey = displayedRowKeys[currentRowIndex];
+      const focusColName = displayedColNames[currentColIndex];
+      if (focusRowKey && focusColName) {
+        lastSelectedCell = { rowKey: focusRowKey, colName: focusColName };
+      }
+
+      renderSelectionState();
+    }
+
     function applyRowSelectionDragRange(currentRowIndex, displayColumns) {
       keyboardSelectionAnchor = null;
+      keyboardSelectionAdditive = false;
+      keyboardSelectionBase = new Map();
+      currentRangeSelection = null;
       if (rowSelectionDragAnchorIndex === null) {
         return;
       }
@@ -3043,6 +3398,7 @@ export class TableDataPanelManager {
           lastSelectedCell = { rowKey: lastRowKey, colName: displayColumns[0].name };
         }
       }
+      syncSelectionCountsFromSelectedCells();
       renderSelectionState();
     }
 
@@ -3057,6 +3413,14 @@ export class TableDataPanelManager {
     }
 
     function renderSelectionState() {
+      const range = currentRangeSelection;
+      const minR = range ? Math.min(range.anchor.rowIndex, range.focus.rowIndex) : -1;
+      const maxR = range ? Math.max(range.anchor.rowIndex, range.focus.rowIndex) : -1;
+      const minC = range ? Math.min(range.anchor.colIndex, range.focus.colIndex) : -1;
+      const maxC = range ? Math.max(range.anchor.colIndex, range.focus.colIndex) : -1;
+      const originRowKey = range ? displayedRowKeys[range.anchor.rowIndex] : null;
+      const originColName = range ? displayedColNames[range.anchor.colIndex] : null;
+
       trElements.forEach((_tr, rowKey) => {
         const selTd = selectionTdElements.get(rowKey);
         const cellSet = selectedCells.get(rowKey);
@@ -3070,9 +3434,78 @@ export class TableDataPanelManager {
         if (tdMap) {
           tdMap.forEach((td, colName) => {
             td.classList.toggle('cell-selected', Boolean(cellSet && cellSet.has(colName)));
+            td.classList.toggle('cell-selected-current-origin', Boolean(range && rowKey === originRowKey && colName === originColName));
           });
         }
       });
+
+      // Update range selection overlay bounding box
+      if (range && minR >= 0 && maxR >= 0 && minC >= 0 && maxC >= 0) {
+        let topTd = null;
+        let bottomTd = null;
+        let leftTd = null;
+        let rightTd = null;
+
+        for (let r = minR; r <= maxR; r++) {
+          const rowKey = displayedRowKeys[r];
+          if (!rowKey) {
+            continue;
+          }
+          const tdMap = tdElements.get(rowKey);
+          if (!tdMap) {
+            continue;
+          }
+
+          for (let c = minC; c <= maxC; c++) {
+            const colName = displayedColNames[c];
+            if (!colName) {
+              continue;
+            }
+            const td = tdMap.get(colName);
+            if (!td) {
+              continue;
+            }
+
+            if (!topTd || r === minR) {
+              topTd = td;
+            }
+            if (!bottomTd || r === maxR) {
+              bottomTd = td;
+            }
+            if (!leftTd || c === minC) {
+              leftTd = td;
+            }
+            if (!rightTd || c === maxC) {
+              rightTd = td;
+            }
+          }
+        }
+
+        if (topTd && bottomTd && leftTd && rightTd) {
+          const wrapRect = tableWrapEl.getBoundingClientRect();
+          const topRect = topTd.getBoundingClientRect();
+          const bottomRect = bottomTd.getBoundingClientRect();
+          const leftRect = leftTd.getBoundingClientRect();
+          const rightRect = rightTd.getBoundingClientRect();
+
+          /** Esses números -2, -1 são ajustes finos */
+          const overlayTop = topRect.top - wrapRect.top + tableWrapEl.scrollTop - 2;
+          const overlayLeft = leftRect.left - wrapRect.left + tableWrapEl.scrollLeft;
+          const overlayWidth = (rightRect.right - leftRect.left) - 1;
+          const overlayHeight = (bottomRect.bottom - topRect.top) - 1;
+
+          rangeSelectionOverlay.style.top = overlayTop + 'px';
+          rangeSelectionOverlay.style.left = overlayLeft + 'px';
+          rangeSelectionOverlay.style.width = overlayWidth + 'px';
+          rangeSelectionOverlay.style.height = overlayHeight + 'px';
+          rangeSelectionOverlay.style.display = 'block';
+        } else {
+          rangeSelectionOverlay.style.display = 'none';
+        }
+      } else {
+        rangeSelectionOverlay.style.display = 'none';
+      }
+
       updateExportSelectedOptionState();
       notifyNativeJsonPreviewFromSelection(false);
     }
@@ -3124,16 +3557,39 @@ export class TableDataPanelManager {
       return { rowIndex, colIndex };
     }
 
+    function getSelectionAnchorPosition() {
+      if (
+        keyboardSelectionAnchor &&
+        keyboardSelectionAnchor.rowIndex >= 0 &&
+        keyboardSelectionAnchor.colIndex >= 0 &&
+        keyboardSelectionAnchor.rowIndex < displayedRowKeys.length &&
+        keyboardSelectionAnchor.colIndex < displayedColNames.length
+      ) {
+        return keyboardSelectionAnchor;
+      }
+
+      const fallback = getCellPosition(lastSelectedCell);
+      if (!fallback) {
+        return null;
+      }
+
+      return { rowIndex: fallback.rowIndex, colIndex: fallback.colIndex };
+    }
+
     function selectSingleCellAt(rowIndex, colIndex, enterEditMode) {
-      keyboardSelectionAnchor = null;
       if (rowIndex < 0 || colIndex < 0 || rowIndex >= displayedRowKeys.length || colIndex >= displayedColNames.length) {
         return;
       }
 
       const rowKey = displayedRowKeys[rowIndex];
       const colName = displayedColNames[colIndex];
+      keyboardSelectionAnchor = { rowIndex, colIndex };
+      keyboardSelectionAdditive = false;
+      keyboardSelectionBase = new Map();
+      currentRangeSelection = null;
       selectedCells.clear();
       selectedCells.set(rowKey, new Set([colName]));
+      syncSelectionCountsFromSelectedCells();
       lastSelectedCell = { rowKey, colName };
       renderSelectionState();
       ensureCellSelectionVisible(rowKey, colName);
@@ -3152,7 +3608,6 @@ export class TableDataPanelManager {
     }
 
     function moveSelectionBy(deltaRow, deltaCol) {
-      keyboardSelectionAnchor = null;
       const pos = getCellPosition(lastSelectedCell);
       if (!pos) {
         if (displayedRowKeys.length > 0 && displayedColNames.length > 0) {
@@ -3215,13 +3670,19 @@ export class TableDataPanelManager {
       const minC = Math.min(anchor.colIndex, focus.colIndex);
       const maxC = Math.max(anchor.colIndex, focus.colIndex);
 
-      selectedCells.clear();
+      if (keyboardSelectionAdditive) {
+        selectedCells = cloneSelectionMap(keyboardSelectionBase);
+      } else {
+        selectedCells.clear();
+      }
       for (let r = minR; r <= maxR; r++) {
         const rowKey = displayedRowKeys[r];
         if (!rowKey) {
           continue;
         }
-        const cellSet = new Set();
+        const cellSet = keyboardSelectionAdditive
+          ? new Set(selectedCells.get(rowKey) || [])
+          : new Set();
         for (let c = minC; c <= maxC; c++) {
           const colName = displayedColNames[c];
           if (colName) {
@@ -3231,10 +3692,17 @@ export class TableDataPanelManager {
         selectedCells.set(rowKey, cellSet);
       }
 
+      syncSelectionCountsFromSelectedCells();
+      currentRangeSelection = {
+        anchor: { rowIndex: anchor.rowIndex, colIndex: anchor.colIndex },
+        focus: { rowIndex: focus.rowIndex, colIndex: focus.colIndex },
+      };
+
       const focusRowKey = displayedRowKeys[focus.rowIndex];
       const focusColName = displayedColNames[focus.colIndex];
       if (focusRowKey && focusColName) {
         lastSelectedCell = { rowKey: focusRowKey, colName: focusColName };
+        ensureCellSelectionVisible(focusRowKey, focusColName);
       }
 
       renderSelectionState();
@@ -3258,6 +3726,29 @@ export class TableDataPanelManager {
       const next = {
         rowIndex: Math.min(Math.max(pos.rowIndex + deltaRow, 0), displayedRowKeys.length - 1),
         colIndex: Math.min(Math.max(pos.colIndex + deltaCol, 0), displayedColNames.length - 1),
+      };
+
+      applyKeyboardRangeSelection(keyboardSelectionAnchor, next);
+    }
+
+    function extendSelectionTo(rowIndex, colIndex) {
+      if (displayedRowKeys.length === 0 || displayedColNames.length === 0) {
+        return;
+      }
+
+      let pos = getCellPosition(lastSelectedCell);
+      if (!pos) {
+        selectSingleCellAt(0, 0, false);
+        pos = { rowIndex: 0, colIndex: 0 };
+      }
+
+      if (!keyboardSelectionAnchor) {
+        keyboardSelectionAnchor = { rowIndex: pos.rowIndex, colIndex: pos.colIndex };
+      }
+
+      const next = {
+        rowIndex: Math.min(Math.max(rowIndex, 0), displayedRowKeys.length - 1),
+        colIndex: Math.min(Math.max(colIndex, 0), displayedColNames.length - 1),
       };
 
       applyKeyboardRangeSelection(keyboardSelectionAnchor, next);
@@ -3335,6 +3826,64 @@ export class TableDataPanelManager {
       return selectedCount > 1 ? lines.join(NEWLINE) : '';
     }
 
+    function getFocusedCellFallbackText() {
+      if (activeCell) {
+        const activeCol = columns.find((c) => c.name === activeCell.colName);
+        if (activeCol) {
+          return toCellInputText(
+            getEffectiveCellValue(activeCell.row, activeCol.name, activeCell.ctid),
+            activeCol
+          );
+        }
+      }
+
+      if (!lastSelectedCell) {
+        return '';
+      }
+
+      const row = rowKeyToRow.get(lastSelectedCell.rowKey);
+      const col = columns.find((c) => c.name === lastSelectedCell.colName);
+      if (!row || !col) {
+        return '';
+      }
+
+      return toCellInputText(getEffectiveCellValue(row, col.name, row.__dbadmin_ctid), col);
+    }
+
+    function copyDefaultSelectionToClipboard() {
+      let value = '';
+      if (editingCellInput) {
+        value = editingCellInput.value;
+      } else {
+        value = getSelectedCellsText();
+      }
+
+      if (!value) {
+        value = getFocusedCellFallbackText();
+      }
+
+      navigator.clipboard.writeText(value || '').catch(() => {});
+    }
+
+    function copyAdvancedToClipboard(format) {
+      let payload = getSelectedCellsExportPayload();
+
+      if (!payload.rows.length) {
+        const fallbackValue = getFocusedCellFallbackText();
+        payload = {
+          columns: ['value'],
+          rows: [{ value: fallbackValue }],
+        };
+      }
+
+      vscode.postMessage({
+        type: 'copyAdvancedClipboard',
+        format,
+        columns: payload.columns,
+        rows: payload.rows,
+      });
+    }
+
     function render() {
       const displayColumns = getDisplayColumns();
       const visibleRows = applyLocalFilter(rows);
@@ -3349,6 +3898,7 @@ export class TableDataPanelManager {
         displayedRowKeys = [];
         displayedColNames = [];
         gridEl.innerHTML = '';
+        rangeSelectionOverlay.style.display = 'none';
         return;
       }
 
@@ -3361,11 +3911,13 @@ export class TableDataPanelManager {
       selectTh.textContent = '';
       selectTh.style.cursor = 'pointer';
       selectTh.addEventListener('click', () => {
+        currentRangeSelection = null;
         selectedCells.clear();
         visibleRows.forEach((row, rowIndex) => {
           const rk = row.__dbadmin_ctid || ('new:' + rowIndex);
           selectedCells.set(rk, new Set(displayColumns.map((c) => c.name)));
         });
+        syncSelectionCountsFromSelectedCells();
         renderSelectionState();
       });
       headRow.appendChild(selectTh);
@@ -3399,6 +3951,7 @@ export class TableDataPanelManager {
             return;
           }
           event.stopPropagation();
+          currentRangeSelection = null;
 
           const displayedRows = applyLocalFilter(rows);
           selectedCells.clear();
@@ -3410,6 +3963,7 @@ export class TableDataPanelManager {
             selectedCells.get(rowKey).add(col.name);
             lastSelectedCell = { rowKey, colName: col.name };
           });
+          syncSelectionCountsFromSelectedCells();
           renderSelectionState();
         });
 
@@ -3466,8 +4020,8 @@ export class TableDataPanelManager {
             state.sortColumn = undefined;
             state.sortDirection = undefined;
           }
-          beginLoading();
-          vscode.postMessage({ type: 'reload', state: currentState() });
+          persistCurrentState();
+          reloadTableViewClearingSelection();
         });
 
         title.appendChild(left);
@@ -3479,17 +4033,18 @@ export class TableDataPanelManager {
         filterInput.placeholder = col.dataType;
         filterInput.value = state.columnFilters[col.name] || '';
         filterInput.addEventListener('input', () => {
-          const value = filterInput.value.trim();
-          if (value) {
+          const value = filterInput.value;
+          if (value.length > 0) {
             state.columnFilters[col.name] = value;
           } else {
             delete state.columnFilters[col.name];
           }
           syncClearFiltersButton();
+          persistCurrentState();
 
           if (state.searchMode === 'local') {
             rememberColumnFocus(col.name, filterInput);
-            render();
+            rerenderTableViewClearingSelection();
             restorePendingFocus();
           }
         });
@@ -3497,21 +4052,21 @@ export class TableDataPanelManager {
           if (event.key !== 'Enter') {
             return;
           }
-          const value = filterInput.value.trim();
-          if (value) {
+          const value = filterInput.value;
+          if (value.length > 0) {
             state.columnFilters[col.name] = value;
           } else {
             delete state.columnFilters[col.name];
           }
           syncClearFiltersButton();
           state.page = 1;
+          persistCurrentState();
           rememberColumnFocus(col.name, filterInput);
 
           if (state.searchMode === 'query') {
-            beginLoading();
-            vscode.postMessage({ type: 'reload', state: currentState() });
+            reloadTableViewClearingSelection();
           } else {
-            render();
+            rerenderTableViewClearingSelection();
             restorePendingFocus();
           }
         });
@@ -3595,6 +4150,10 @@ export class TableDataPanelManager {
         if (isRowSelected) {
           selectTd.classList.add('selected');
         }
+        const rowNumberEl = document.createElement('span');
+        rowNumberEl.className = 'selection-cell-index';
+        rowNumberEl.textContent = String(((Math.max(1, Number(state.page || 1)) - 1) * Math.max(1, Number(state.limit || ${defaultPageSize}))) + rowIndex + 1);
+        selectTd.appendChild(rowNumberEl);
         selectionTdElements.set(rowKey, selectTd);
         selectTd.addEventListener('mousedown', (event) => {
           if (event.button !== 0) {
@@ -3676,53 +4235,53 @@ export class TableDataPanelManager {
             }
             event.stopPropagation();
             isDragging = true;
-            dragAnchor = { rowIndex, colIndex };
-            if (!selectedCells.has(rowKey)) {
-              selectedCells.set(rowKey, new Set());
+
+            const anchorPosition = getSelectionAnchorPosition();
+            if (event.shiftKey && anchorPosition) {
+              isDragging = false;
+              dragAnchor = null;
+              keyboardSelectionAnchor = {
+                rowIndex: anchorPosition.rowIndex,
+                colIndex: anchorPosition.colIndex,
+              };
+              applyKeyboardRangeSelection(keyboardSelectionAnchor, { rowIndex, colIndex });
+              return;
             }
-            const cellSet = selectedCells.get(rowKey);
+
+            dragAnchor = { rowIndex, colIndex };
+            const currentCellSet = selectedCells.get(rowKey);
+            const isAlreadySelected = Boolean(currentCellSet && currentCellSet.has(col.name));
 
             if (event.ctrlKey || event.metaKey) {
-              if (cellSet.has(col.name)) {
-                cellSet.delete(col.name);
-              } else {
-                cellSet.add(col.name);
+              const baseCounts = selectedCellCounts.size > 0
+                ? selectedCellCounts
+                : selectionCountsFromSelectionMap(selectedCells);
+              cellDragMode = isAlreadySelected ? 'remove' : 'add';
+              cellDragBaseCounts = cloneSelectionCounts(baseCounts);
+              keyboardSelectionAdditive = cellDragMode === 'add';
+              if (keyboardSelectionAdditive) {
+                keyboardSelectionBase = cloneSelectionMap(selectedCells);
               }
             } else {
-              selectedCells.clear();
-              selectedCells.set(rowKey, new Set([col.name]));
+              cellDragMode = 'replace';
+              cellDragBaseCounts = new Map();
+              keyboardSelectionAdditive = false;
+              keyboardSelectionBase = new Map();
             }
 
-            if ((event.ctrlKey || event.metaKey) && cellSet.size === 0) {
-              selectedCells.delete(rowKey);
-            }
+            keyboardSelectionAnchor = { rowIndex, colIndex };
+            applyCellDragRange(rowIndex, colIndex);
 
-            lastSelectedCell = { rowKey, colName: col.name };
-            renderSelectionState();
+            if (keyboardSelectionAdditive) {
+              keyboardSelectionBase = cloneSelectionMap(selectedCells);
+            }
           });
 
           td.addEventListener('mouseenter', () => {
             if (!isDragging || !dragAnchor) {
               return;
             }
-            // Expand selection rectangle from anchor to current cell
-            const minR = Math.min(dragAnchor.rowIndex, rowIndex);
-            const maxR = Math.max(dragAnchor.rowIndex, rowIndex);
-            const minC = Math.min(dragAnchor.colIndex, colIndex);
-            const maxC = Math.max(dragAnchor.colIndex, colIndex);
-            selectedCells.clear();
-            for (let r = minR; r <= maxR; r++) {
-              const rk = displayedRowKeys[r];
-              if (!rk) { continue; }
-              const colSet = new Set();
-              for (let c = minC; c <= maxC; c++) {
-                const cn = displayedColNames[c];
-                if (cn) { colSet.add(cn); }
-              }
-              selectedCells.set(rk, colSet);
-            }
-            lastSelectedCell = { rowKey, colName: col.name };
-            renderSelectionState();
+            applyCellDragRange(rowIndex, colIndex);
           });
 
           // Double click: clear selection and enter edit mode
@@ -3748,7 +4307,7 @@ export class TableDataPanelManager {
             if (event.key === 'Escape' || event.key === 'Enter') {
               event.preventDefault();
               disableCellEditing(input);
-              render();
+              renderSelectionState();
             }
           });
 
@@ -3775,6 +4334,20 @@ export class TableDataPanelManager {
             event.preventDefault();
             activeCell = { input, colName: col.name, ctid, row };
             showContextMenu(event.clientX, event.clientY);
+          });
+
+          td.addEventListener('mouseenter', () => {
+            if (!isNumericColumn(col)) {
+              td.title = '';
+              return;
+            }
+            const cellValue = getEffectiveCellValue(row, col.name, ctid);
+            const tooltip = getUnixTimestampTooltip(cellValue);
+            if (tooltip) {
+              td.title = tooltip;
+            } else {
+              td.title = '';
+            }
           });
 
           td.appendChild(input);
@@ -3831,18 +4404,52 @@ export class TableDataPanelManager {
         return rawRows;
       }
 
-      const text = state.searchText.trim().toLowerCase();
+      const textSuperRaw = String(state.searchText || '');
+      console.log({textSuperRaw})
+      const textRaw = String(state.searchText || '').trim();
+      const text = textRaw.toLowerCase();
       const columnsByName = new Map(columns.map((col) => [col.name, col]));
+      const parseNullFilterToken = (value) => {
+        if (value === 'NULL') {
+          return 'null';
+        }
+        if (value === 'NOT NULL') {
+          return 'not-null';
+        }
+        return null;
+      };
+      const matchesNullFilter = (value, nullFilter) => {
+        const isNull = value === null || value === undefined;
+        return nullFilter === 'null' ? isNull : !isNull;
+      };
+
+      const globalNullFilter = parseNullFilterToken(textSuperRaw);
       const columnFilters = Object.entries(state.columnFilters)
-        .map(([columnName, value]) => [columnName, String(value || '').trim().toLowerCase()])
-        .filter(([, value]) => value.length > 0);
+        .map(([columnName, value]) => {
+          const rawValue = String(value || '').trim();
+          return {
+            columnName,
+            rawValue,
+            lowerValue: rawValue.toLowerCase(),
+            nullFilter: parseNullFilterToken(rawValue),
+          };
+        })
+        .filter((entry) => entry.rawValue.length > 0);
 
       return rawRows.filter((row) => {
+        const ctid = row.__dbadmin_ctid || null;
         const matchesGlobal =
-          text.length === 0 ||
-          columns.some((col) =>
-            toCellInputText(row[col.name], col).toLowerCase().includes(text)
-          );
+          text.length === 0
+            ? true
+            : globalNullFilter
+              ? columns.some((col) =>
+                  matchesNullFilter(getEffectiveCellValue(row, col.name, ctid), globalNullFilter)
+                )
+              : columns.some((col) =>
+                  toCellInputText(getEffectiveCellValue(row, col.name, ctid), col)
+                    .toLowerCase()
+                    .includes(text)
+                );
 
         if (!matchesGlobal) {
           return false;
@@ -3852,12 +4459,18 @@ export class TableDataPanelManager {
           return true;
         }
 
-        return columnFilters.every(([columnName, filterValue]) => {
+        return columnFilters.every(({ columnName, lowerValue, nullFilter }) => {
           const col = columnsByName.get(columnName);
+          const cellValue = getEffectiveCellValue(row, columnName, ctid);
+
+          if (nullFilter) {
+            return matchesNullFilter(cellValue, nullFilter);
+          }
+
           const cellText = col
-            ? toCellInputText(row[columnName], col)
-            : String(row[columnName] ?? '');
-          return cellText.toLowerCase().includes(filterValue);
+            ? toCellInputText(cellValue, col)
+            : String(cellValue ?? '');
+          return cellText.toLowerCase().includes(lowerValue);
         });
       });
     }
@@ -3895,8 +4508,9 @@ export class TableDataPanelManager {
       state.searchText = event.target.value;
       updateSearchContextPlaceholder();
       syncClearFiltersButton();
+      persistCurrentState();
       if (state.searchMode === 'local') {
-        render();
+        rerenderTableViewClearingSelection();
       }
     });
 
@@ -3907,13 +4521,14 @@ export class TableDataPanelManager {
 
       state.searchText = event.target.value;
       syncClearFiltersButton();
+      persistCurrentState();
       if (state.searchMode === 'query') {
         rememberSearchFocus();
         state.page = 1;
-        beginLoading();
-        vscode.postMessage({ type: 'reload', state: currentState() });
+        persistCurrentState();
+        reloadTableViewClearingSelection();
       } else {
-        render();
+        rerenderTableViewClearingSelection();
       }
     });
 
@@ -3925,11 +4540,11 @@ export class TableDataPanelManager {
         updateModeIcon();
         syncClearFiltersButton();
         state.page = 1;
+        persistCurrentState();
         if (state.searchMode === 'query') {
-          beginLoading();
-          vscode.postMessage({ type: 'reload', state: currentState() });
+          reloadTableViewClearingSelection();
         } else {
-          render();
+          rerenderTableViewClearingSelection();
         }
       });
     });
@@ -3962,12 +4577,12 @@ export class TableDataPanelManager {
         searchInput.value = '';
       }
       updateSearchContextPlaceholder();
+      persistCurrentState();
 
       if (state.searchMode === 'query') {
-        beginLoading();
-        vscode.postMessage({ type: 'reload', state: currentState() });
+        reloadTableViewClearingSelection();
       } else {
-        render();
+        rerenderTableViewClearingSelection();
       }
 
       syncClearFiltersButton();
@@ -4096,8 +4711,7 @@ export class TableDataPanelManager {
     });
 
     document.getElementById('reload').addEventListener('click', () => {
-      beginLoading();
-      vscode.postMessage({ type: 'reload', state: currentState() });
+      reloadTableViewClearingSelection({ clearSelectionAndPreview: true });
     });
 
     document.getElementById('save').addEventListener('click', () => save());
@@ -4118,8 +4732,8 @@ export class TableDataPanelManager {
         return;
       }
       state.page -= 1;
-      beginLoading();
-      vscode.postMessage({ type: 'reload', state: currentState() });
+      persistCurrentState();
+      reloadTableViewClearingSelection();
     });
 
     document.getElementById('nextPage').addEventListener('click', () => {
@@ -4129,14 +4743,14 @@ export class TableDataPanelManager {
         return;
       }
       state.page += 1;
-      beginLoading();
-      vscode.postMessage({ type: 'reload', state: currentState() });
+      persistCurrentState();
+      reloadTableViewClearingSelection();
     });
 
     document.getElementById('limit').addEventListener('change', () => {
       state.page = 1;
-      beginLoading();
-      vscode.postMessage({ type: 'reload', state: currentState() });
+      persistCurrentState();
+      reloadTableViewClearingSelection();
     });
 
     document.getElementById('openNewTab').addEventListener('click', () => {
@@ -4182,8 +4796,8 @@ export class TableDataPanelManager {
       state.searchMode = 'query';
       updateModeIcon();
       state.page = 1;
-      beginLoading();
-      vscode.postMessage({ type: 'reload', state: currentState() });
+      persistCurrentState();
+      reloadTableViewClearingSelection();
     });
 
     queryResizer.addEventListener('mousedown', (event) => {
@@ -4240,6 +4854,8 @@ export class TableDataPanelManager {
     window.addEventListener('mouseup', () => {
       isDragging = false;
       dragAnchor = null;
+      cellDragMode = 'replace';
+      cellDragBaseCounts = new Map();
       isRowSelectionDragging = false;
       rowSelectionDragPreserve = false;
       rowSelectionDragAnchorIndex = null;
@@ -4303,15 +4919,23 @@ export class TableDataPanelManager {
       )) {
         const pos = getCellPosition(lastSelectedCell) || { rowIndex: 0, colIndex: 0 };
 
-        if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey) {
+        if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+          let targetRow = pos.rowIndex;
+          let targetCol = pos.colIndex;
           if (event.key === 'ArrowUp') {
-            moveSelectionTo(0, pos.colIndex);
+            targetRow = 0;
           } else if (event.key === 'ArrowDown') {
-            moveSelectionTo(displayedRowKeys.length - 1, pos.colIndex);
+            targetRow = displayedRowKeys.length - 1;
           } else if (event.key === 'ArrowLeft') {
-            moveSelectionTo(pos.rowIndex, 0);
+            targetCol = 0;
           } else if (event.key === 'ArrowRight') {
-            moveSelectionTo(pos.rowIndex, displayedColNames.length - 1);
+            targetCol = displayedColNames.length - 1;
+          }
+
+          if (event.shiftKey) {
+            extendSelectionTo(targetRow, targetCol);
+          } else {
+            moveSelectionTo(targetRow, targetCol);
           }
           event.preventDefault();
           return;
@@ -4350,15 +4974,23 @@ export class TableDataPanelManager {
       )) {
         const pos = getCellPosition(lastSelectedCell) || { rowIndex: 0, colIndex: 0 };
         const step = getViewportNavigationStep();
+        let targetRow = pos.rowIndex;
+        let targetCol = pos.colIndex;
 
         if (event.key === 'PageUp') {
-          moveSelectionTo(pos.rowIndex - step.rows, pos.colIndex);
+          targetRow = pos.rowIndex - step.rows;
         } else if (event.key === 'PageDown') {
-          moveSelectionTo(pos.rowIndex + step.rows, pos.colIndex);
+          targetRow = pos.rowIndex + step.rows;
         } else if (event.key === 'Home') {
-          moveSelectionTo(pos.rowIndex, pos.colIndex - step.cols);
+          targetCol = pos.colIndex - step.cols;
         } else if (event.key === 'End') {
-          moveSelectionTo(pos.rowIndex, pos.colIndex + step.cols);
+          targetCol = pos.colIndex + step.cols;
+        }
+
+        if (event.shiftKey) {
+          extendSelectionTo(targetRow, targetCol);
+        } else {
+          moveSelectionTo(targetRow, targetCol);
         }
 
         event.preventDefault();
@@ -4418,20 +5050,7 @@ export class TableDataPanelManager {
 
       // Ctrl+C: copy active editing value or last selected cell value
       if ((event.ctrlKey || event.metaKey) && event.key === 'c') {
-        let value = '';
-        if (editingCellInput) {
-          value = editingCellInput.value;
-        } else {
-          value = getSelectedCellsText();
-        }
-        if (!value && lastSelectedCell) {
-          const row = rowKeyToRow.get(lastSelectedCell.rowKey);
-          const col = columns.find((c) => c.name === lastSelectedCell.colName);
-          if (row && col) {
-            value = toCellInputText(getEffectiveCellValue(row, col.name, row.__dbadmin_ctid), col);
-          }
-        }
-        navigator.clipboard.writeText(value).catch(() => {});
+        copyDefaultSelectionToClipboard();
         event.preventDefault();
         return;
       }
@@ -4456,29 +5075,11 @@ export class TableDataPanelManager {
             return;
           }
 
-          const ctid = row.__dbadmin_ctid;
-          const baseCurrentText = toCellInputText(row[col.name], col);
-          if (ctid) {
-            if (value === baseCurrentText) {
-              if (editedRows.has(ctid)) {
-                const values = editedRows.get(ctid);
-                delete values[col.name];
-                if (Object.keys(values).length === 0) {
-                  editedRows.delete(ctid);
-                }
-              }
-            } else {
-              if (!editedRows.has(ctid)) {
-                editedRows.set(ctid, {});
-              }
-              editedRows.get(ctid)[col.name] = value;
-            }
-          } else {
-            row[col.name] = value;
-          }
-
-          updateSaveButtonState();
-          render();
+          const ctid = rowKeyToCtid.get(lastSelectedCell.rowKey) || null;
+          const inputMap = inputElements.get(lastSelectedCell.rowKey);
+          const input = inputMap ? inputMap.get(col.name) : null;
+          applyCellValue(row, col, ctid, value, input || null);
+          renderSelectionState();
         }).catch(() => {});
         return;
       }
@@ -4493,8 +5094,26 @@ export class TableDataPanelManager {
         }
       };
 
+      const closeOtherSubmenusImmediately = () => {
+        document.querySelectorAll('.menu-submenu-wrap').forEach((candidate) => {
+          if (candidate === wrap) {
+            return;
+          }
+
+          const timer = submenuCloseTimers.get(candidate);
+          if (timer) {
+            clearTimeout(timer);
+            submenuCloseTimers.delete(candidate);
+          }
+
+          candidate.classList.remove('submenu-open');
+          candidate.classList.remove('submenu-visible');
+        });
+      };
+
       const openSubmenu = () => {
         clearCloseTimer();
+        closeOtherSubmenusImmediately();
         const rect = wrap.getBoundingClientRect();
         const spaceRight = window.innerWidth - rect.right;
         if (spaceRight < 188) {
@@ -4564,6 +5183,18 @@ export class TableDataPanelManager {
             activeCell.row[activeCell.colName] = '';
           }
         } else {
+          if (action === 'copy') {
+            copyDefaultSelectionToClipboard();
+          }
+
+          if (action === 'copyAdvancedCsv') {
+            copyAdvancedToClipboard('csv');
+          }
+
+          if (action === 'copyAdvancedJson') {
+            copyAdvancedToClipboard('json');
+          }
+
           if (action === 'default') {
             value = '';
             if (activeCell.ctid) {
@@ -4668,6 +5299,7 @@ export class TableDataPanelManager {
         editedRows = new Map();
         insertedRows = [];
         removedCtids = new Set();
+        clearSelectionForViewChange();
         syncControls();
         render();
         hideError();

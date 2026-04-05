@@ -686,6 +686,16 @@ export class PostgresService {
         continue;
       }
 
+      const nullFilter = this.parseNullFilterToken(filterValue);
+      if (nullFilter === 'null') {
+        whereParts.push(`${this.quoteIdentifier(columnName)} IS NULL`);
+        continue;
+      }
+      if (nullFilter === 'not-null') {
+        whereParts.push(`${this.quoteIdentifier(columnName)} IS NOT NULL`);
+        continue;
+      }
+
       const columnMeta = columnsByName.get(columnName);
       const shouldUseExactMatch = columnMeta?.isPrimaryKey === true || columnMeta?.isForeignKey === true;
       params.push(shouldUseExactMatch ? filterValue : `%${filterValue}%`);
@@ -695,12 +705,21 @@ export class PostgresService {
     if (queryInput.searchMode === 'query') {
       const searchText = queryInput.searchText.trim();
       if (searchText && columnNames.length > 0) {
-        params.push(`%${searchText}%`);
-        const searchParamIndex = params.length;
-        const globalSearch = columnNames
-          .map((columnName) => `CAST(${this.quoteIdentifier(columnName)} AS TEXT) ILIKE $${searchParamIndex}`)
-          .join(' OR ');
-        whereParts.push(`(${globalSearch})`);
+        const nullFilter = this.parseNullFilterToken(searchText);
+        if (nullFilter === 'null' || nullFilter === 'not-null') {
+          const nullSql = nullFilter === 'null' ? 'IS NULL' : 'IS NOT NULL';
+          const globalSearch = columnNames
+            .map((columnName) => `${this.quoteIdentifier(columnName)} ${nullSql}`)
+            .join(' OR ');
+          whereParts.push(`(${globalSearch})`);
+        } else {
+          params.push(`%${searchText}%`);
+          const searchParamIndex = params.length;
+          const globalSearch = columnNames
+            .map((columnName) => `CAST(${this.quoteIdentifier(columnName)} AS TEXT) ILIKE $${searchParamIndex}`)
+            .join(' OR ');
+          whereParts.push(`(${globalSearch})`);
+        }
       }
     }
 
@@ -860,6 +879,17 @@ VALUES (${insertValuesSql.join(', ')})`;
     } finally {
       await client.end();
     }
+  }
+
+  private parseNullFilterToken(value: string): 'null' | 'not-null' | undefined {
+    const normalized = String(value || '');
+    if (normalized === 'NULL') {
+      return 'null';
+    }
+    if (normalized === 'NOT NULL') {
+      return 'not-null';
+    }
+    return undefined;
   }
 
   private async runTableDataQuery(
