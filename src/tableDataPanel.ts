@@ -1329,7 +1329,26 @@ export class TableDataPanelManager {
     table { width: 100%; border-collapse: collapse; }
     .table-cells-body { user-select: none; }
     th, td { border-bottom: 1px solid var(--vscode-panel-border); padding: 2px 6px; vertical-align: top; }
-    th { position: sticky; top: 0; background: var(--vscode-sideBar-background); z-index: 2; min-width: 170px; box-sizing: border-box; }
+    th {
+      position: sticky;
+      top: 0;
+      background: var(--vscode-sideBar-background);
+      z-index: 2;
+      min-width: 170px;
+      box-sizing: border-box;
+      border-bottom: 0;
+    }
+    th::after {
+      content: '';
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 1px;
+      background: var(--vscode-panel-border);
+      pointer-events: none;
+      z-index: 5;
+    }
     th.fill-col,
     td.fill-col {
       width: auto;
@@ -1346,12 +1365,12 @@ export class TableDataPanelManager {
     th.col-drag-over { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
     .th-resizer { position: absolute; top: 0; right: 0; width: 8px; height: 100%; cursor: col-resize; user-select: none; border-radius: 2px; transition: background 120ms ease; }
     .th-resizer::before { content: ''; position: absolute; top: 2px; bottom: 2px; right: 0px; width: 1px; background: color-mix(in srgb, var(--vscode-descriptionForeground) 15%, transparent); }
-    .th-name:hover:not(:active) { background: var(--vscode-list-hoverBackground); }
+    .th-name:hover:not(:active) { background: color-mix(in srgb, var(--vscode-list-hoverBackground) 80%, var(--vscode-foreground) 10%); }
     body.col-resizing, body.col-resizing * { cursor: col-resize !important; }
     .th-icons { cursor: pointer; user-select: none; border-radius: 4px; }
     .th-icons-char { padding: 0px 6px; }
     .th-icons-svg { padding: 0px 2px; }
-    .th-icons:hover { background: var(--vscode-list-hoverBackground); }
+    .th-icons:hover { background: color-mix(in srgb, var(--vscode-list-hoverBackground) 80%, var(--vscode-foreground) 10%); }
     .th-filter { width: 100%; box-sizing: border-box; border: 1px solid transparent; background: transparent; color: var(--vscode-descriptionForeground); border-radius: 4px; padding: 4px; font-size: 11px; }
     .th-filter:focus { border-color: var(--vscode-focusBorder); background: var(--vscode-input-background); color: var(--vscode-input-foreground); }
     .cell-input { width: 100%; box-sizing: border-box; border: 1px solid transparent; background: transparent; color: var(--vscode-foreground); border-radius: 4px; padding: 4px; }
@@ -1515,10 +1534,29 @@ export class TableDataPanelManager {
       position: sticky;
       left: 0;
       background: var(--vscode-sideBar-background);
-      border-right: 1px solid var(--vscode-panel-border);
     }
     th.selection-col { z-index: 4; }
     td.selection-col { z-index: 3; }
+    .selection-col::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      right: 0;
+      width: 1px;
+      background: var(--vscode-panel-border);
+      pointer-events: none;
+      z-index: 6;
+    }
+    th.selection-col::after {
+        content: "";
+        width: calc(100% - 1px);
+        border-right: solid 1px var(--vscode-panel-border);
+        height: calc(100% - 1px);
+        pointer-events: none;
+        background: transparent;
+        border-bottom: solid 1px var(--vscode-panel-border);
+    }
     .selection-cell { cursor: pointer; }
     .selection-cell-index {
       display: block;
@@ -1538,7 +1576,7 @@ export class TableDataPanelManager {
       position: absolute;
       inset: 2px 3px;
       border-radius: 4px;
-      background: var(--vscode-list-hoverBackground);
+      background: color-mix(in srgb, var(--vscode-list-hoverBackground) 80%, var(--vscode-foreground) 10%);
       pointer-events: none;
     }
     .cell-input:not(:focus):not(.editing) { background: transparent !important; border-color: transparent !important; cursor: pointer; pointer-events: none; }
@@ -1555,7 +1593,7 @@ export class TableDataPanelManager {
     }
     tr.row-marked-delete td { background: rgba(220, 53, 69, 0.16); }
     td:has(.cell-input.dirty) { background: rgba(70, 130, 255, 0.16); }
-    .th-name:hover:not(:active) { background: var(--vscode-list-hoverBackground); }
+    .th-name:hover:not(:active) { background: color-mix(in srgb, var(--vscode-list-hoverBackground) 80%, var(--vscode-foreground) 10%); }
     @media (max-height: 500px) {
       .header { display: none; }
       .query-container { display: none; }
