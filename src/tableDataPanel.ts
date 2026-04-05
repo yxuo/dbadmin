@@ -3545,12 +3545,12 @@ export class TableDataPanelManager {
         tableWrapEl.scrollTop += (tdRect.bottom - visibleBottom) + 16;
       }
 
-      if (tdRect.left < wrapRect.left) {
+      if (tdRect.left < wrapRect.left + (30 + 1)) {
         const isFirstCell = colName === displayedColNames[0];
         if (isFirstCell) {
           tableWrapEl.scrollLeft = 0;
         } else {
-          tableWrapEl.scrollLeft -= (wrapRect.left - tdRect.left);
+          tableWrapEl.scrollLeft -= (wrapRect.left - tdRect.left) + 30 + 1;
         }
       } else if (tdRect.right > wrapRect.right - 15) {
         tableWrapEl.scrollLeft += (tdRect.right - wrapRect.right) + 15;
