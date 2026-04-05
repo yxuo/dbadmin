@@ -294,6 +294,151 @@ export class PostgresService {
     }
   }
 
+  public async executeSql(
+    connection: PostgresConnection,
+    databaseName: string,
+    sql: string
+  ): Promise<void> {
+    const trimmed = String(sql || '').trim();
+    if (!trimmed) {
+      throw new Error('SQL vazio.');
+    }
+
+    const client = await this.connect({ ...connection, database: databaseName });
+    try {
+      await client.query(trimmed);
+    } finally {
+      await client.end();
+    }
+  }
+
+  public async getFunctionDefinition(
+    connection: PostgresConnection,
+    databaseName: string,
+    schemaName: string,
+    functionName: string
+  ): Promise<string> {
+    const row = await this.getRoutineDefinitionRow(
+      connection,
+      databaseName,
+      schemaName,
+      functionName,
+      'f',
+      'function'
+    );
+    return row.definition;
+  }
+
+  public async getProcedureDefinition(
+    connection: PostgresConnection,
+    databaseName: string,
+    schemaName: string,
+    procedureName: string
+  ): Promise<string> {
+    const row = await this.getRoutineDefinitionRow(
+      connection,
+      databaseName,
+      schemaName,
+      procedureName,
+      'p',
+      'procedure'
+    );
+    return row.definition;
+  }
+
+  public async dropFunction(
+    connection: PostgresConnection,
+    databaseName: string,
+    schemaName: string,
+    functionName: string
+  ): Promise<void> {
+    const row = await this.getRoutineDefinitionRow(
+      connection,
+      databaseName,
+      schemaName,
+      functionName,
+      'f',
+      'function'
+    );
+
+    const client = await this.connect({ ...connection, database: databaseName });
+    try {
+      await client.query(`DROP FUNCTION ${row.signature}`);
+    } finally {
+      await client.end();
+    }
+  }
+
+  public async dropProcedure(
+    connection: PostgresConnection,
+    databaseName: string,
+    schemaName: string,
+    procedureName: string
+  ): Promise<void> {
+    const row = await this.getRoutineDefinitionRow(
+      connection,
+      databaseName,
+      schemaName,
+      procedureName,
+      'p',
+      'procedure'
+    );
+
+    const client = await this.connect({ ...connection, database: databaseName });
+    try {
+      await client.query(`DROP PROCEDURE ${row.signature}`);
+    } finally {
+      await client.end();
+    }
+  }
+
+  public async getTriggerDefinition(
+    connection: PostgresConnection,
+    databaseName: string,
+    schemaName: string,
+    triggerName: string
+  ): Promise<{ tableName: string; definition: string }> {
+    const rows = await this.getTriggerDefinitionRows(
+      connection,
+      databaseName,
+      schemaName,
+      triggerName
+    );
+
+    if (rows.length === 0) {
+      throw new Error(`Trigger "${triggerName}" não encontrada em ${schemaName}.`);
+    }
+
+    if (rows.length > 1) {
+      throw new Error(
+        `Há mais de uma trigger chamada "${triggerName}" em ${schemaName}. Remoção/edição ambígua.`
+      );
+    }
+
+    return {
+      tableName: rows[0].table_name,
+      definition: rows[0].definition,
+    };
+  }
+
+  public async dropTrigger(
+    connection: PostgresConnection,
+    databaseName: string,
+    schemaName: string,
+    triggerName: string
+  ): Promise<void> {
+    const trigger = await this.getTriggerDefinition(connection, databaseName, schemaName, triggerName);
+
+    const client = await this.connect({ ...connection, database: databaseName });
+    try {
+      await client.query(
+        `DROP TRIGGER ${this.quoteIdentifier(triggerName)} ON ${this.quoteIdentifier(schemaName)}.${this.quoteIdentifier(trigger.tableName)}`
+      );
+    } finally {
+      await client.end();
+    }
+  }
+
   public async getTableSectionCounts(
     connection: PostgresConnection,
     databaseName: string,
@@ -890,6 +1035,73 @@ VALUES (${insertValuesSql.join(', ')})`;
       return 'not-null';
     }
     return undefined;
+  }
+
+  private async getRoutineDefinitionRow(
+    connection: PostgresConnection,
+    databaseName: string,
+    schemaName: string,
+    routineName: string,
+    routineKind: 'f' | 'p',
+    routineLabel: 'function' | 'procedure'
+  ): Promise<{ signature: string; definition: string }> {
+    const client = await this.connect({ ...connection, database: databaseName });
+    try {
+      const result = await client.query<{ signature: string; definition: string }>(
+        `SELECT
+           p.oid::regprocedure::text AS signature,
+           pg_get_functiondef(p.oid) AS definition
+         FROM pg_proc p
+         JOIN pg_namespace n ON n.oid = p.pronamespace
+         WHERE n.nspname = $1
+           AND p.proname = $2
+           AND p.prokind = $3
+         ORDER BY p.oid`,
+        [schemaName, routineName, routineKind]
+      );
+
+      if (result.rows.length === 0) {
+        throw new Error(`${routineLabel} "${routineName}" não encontrada em ${schemaName}.`);
+      }
+
+      if (result.rows.length > 1) {
+        throw new Error(
+          `Há mais de uma ${routineLabel} chamada "${routineName}" em ${schemaName}. Operação ambígua.`
+        );
+      }
+
+      return result.rows[0];
+    } finally {
+      await client.end();
+    }
+  }
+
+  private async getTriggerDefinitionRows(
+    connection: PostgresConnection,
+    databaseName: string,
+    schemaName: string,
+    triggerName: string
+  ): Promise<Array<{ table_name: string; definition: string }>> {
+    const client = await this.connect({ ...connection, database: databaseName });
+    try {
+      const result = await client.query<{ table_name: string; definition: string }>(
+        `SELECT
+           c.relname AS table_name,
+           pg_get_triggerdef(t.oid, true) AS definition
+         FROM pg_trigger t
+         JOIN pg_class c ON c.oid = t.tgrelid
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = $1
+           AND t.tgname = $2
+           AND NOT t.tgisinternal
+         ORDER BY c.relname`,
+        [schemaName, triggerName]
+      );
+
+      return result.rows;
+    } finally {
+      await client.end();
+    }
   }
 
   private async runTableDataQuery(

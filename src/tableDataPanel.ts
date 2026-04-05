@@ -1330,6 +1330,17 @@ export class TableDataPanelManager {
     .table-cells-body { user-select: none; }
     th, td { border-bottom: 1px solid var(--vscode-panel-border); padding: 2px 6px; vertical-align: top; }
     th { position: sticky; top: 0; background: var(--vscode-sideBar-background); z-index: 2; min-width: 170px; box-sizing: border-box; }
+    th.fill-col,
+    td.fill-col {
+      width: auto;
+      min-width: 0 !important;
+      max-width: none !important;
+      padding: 0 !important;
+    }
+    th.fill-col {
+      background: var(--vscode-sideBar-background);
+      z-index: 1;
+    }
     .th-title { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 0px 5px 0px 0px; cursor: grab; }
     .th-name { font-weight: 600; font-size: 12px; cursor: inherit; flex: 1 1 auto; min-width: 0; text-align: left; border-radius: 4px; padding-left: 5px; }
     th.col-drag-over { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
@@ -1496,15 +1507,24 @@ export class TableDataPanelManager {
       -moz-appearance: textfield;
       appearance: textfield;
     }
-    .selection-col { width: 24px; min-width: 24px; max-width: 24px; padding: 2px 0 !important; }
-    td.selection-col { position: relative; }
+    .selection-col {
+      width: 30px;
+      min-width: 30px;
+      max-width: 30px;
+      padding: 2px 0 !important;
+      position: sticky;
+      left: 0;
+      background: var(--vscode-sideBar-background);
+      border-right: 1px solid var(--vscode-panel-border);
+    }
+    th.selection-col { z-index: 4; }
+    td.selection-col { z-index: 3; }
     .selection-cell { cursor: pointer; }
     .selection-cell-index {
       display: block;
       width: 100%;
       text-align: center;
-      font-size: 10px;
-      line-height: 1.2;
+      top: 4px;
       color: color-mix(in srgb, var(--vscode-descriptionForeground) 85%, transparent);
       user-select: none;
       pointer-events: none;
@@ -3922,11 +3942,11 @@ export class TableDataPanelManager {
           th.style.width = savedWidth + 'px';
           th.style.minWidth = savedWidth + 'px';
           th.style.maxWidth = savedWidth + 'px';
-        } else if (!dynamicDefaultColumnWidth || shouldUseMinimumColumnWidth(col, getLongestVisibleCellLength(col, visibleRows))) {
-          const minWidth = getDefaultColumnWidth(col, visibleRows);
-          th.style.width = minWidth + 'px';
-          th.style.minWidth = minWidth + 'px';
-          th.style.maxWidth = minWidth + 'px';
+        } else {
+          const defaultWidth = getDefaultColumnWidth(col, visibleRows);
+          th.style.width = defaultWidth + 'px';
+          th.style.minWidth = defaultWidth + 'px';
+          th.style.maxWidth = defaultWidth + 'px';
         }
 
         const title = document.createElement('div');
@@ -4098,6 +4118,12 @@ export class TableDataPanelManager {
         th.appendChild(resizer);
         headRow.appendChild(th);
       });
+
+      // Coluna de preenchimento para manter o visual do header no espaco vazio.
+      const fillTh = document.createElement('th');
+      fillTh.className = 'fill-col';
+      fillTh.setAttribute('aria-hidden', 'true');
+      headRow.appendChild(fillTh);
 
       head.appendChild(headRow);
 
@@ -4383,6 +4409,11 @@ export class TableDataPanelManager {
           tr.appendChild(td);
         });
 
+        const fillTd = document.createElement('td');
+        fillTd.className = 'fill-col';
+        fillTd.setAttribute('aria-hidden', 'true');
+        tr.appendChild(fillTd);
+
         body.appendChild(tr);
       });
 
@@ -4583,7 +4614,16 @@ export class TableDataPanelManager {
     window.addEventListener('resize', () => {
       updateSearchContextPlaceholder();
       overlayControllers.forEach((overlay) => overlay.reposition());
+      renderSelectionState();
     });
+
+    if (typeof ResizeObserver !== 'undefined') {
+      const selectionOverlayResizeObserver = new ResizeObserver(() => {
+        renderSelectionState();
+      });
+      selectionOverlayResizeObserver.observe(document.documentElement);
+      selectionOverlayResizeObserver.observe(tableWrapEl);
+    }
 
     jsonModalClose.addEventListener('click', () => {
       closeJsonModal();

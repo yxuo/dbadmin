@@ -167,6 +167,51 @@
         "icon": "$(add)"
       },
       {
+        "command": "dbadmin.createFunction",
+        "title": "Criar function",
+        "icon": "$(add)"
+      },
+      {
+        "command": "dbadmin.editFunction",
+        "title": "Editar function",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "dbadmin.deleteFunction",
+        "title": "Excluir function",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "dbadmin.createProcedure",
+        "title": "Criar procedure",
+        "icon": "$(add)"
+      },
+      {
+        "command": "dbadmin.editProcedure",
+        "title": "Editar procedure",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "dbadmin.deleteProcedure",
+        "title": "Excluir procedure",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "dbadmin.createTrigger",
+        "title": "Criar trigger",
+        "icon": "$(add)"
+      },
+      {
+        "command": "dbadmin.editTrigger",
+        "title": "Editar trigger",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "dbadmin.deleteTrigger",
+        "title": "Excluir trigger",
+        "icon": "$(trash)"
+      },
+      {
         "command": "dbadmin.dropSchema",
         "title": "Excluir schema",
         "icon": "$(trash)"
@@ -208,6 +253,31 @@
         "command": "dbadmin.expandNode",
         "title": "Expandir",
         "icon": "$(expand-all)"
+      },
+      {
+        "command": "dbadmin.executeSqlFromActiveEditor",
+        "title": "Executar SQL do Editor Ativo",
+        "icon": "$(play)"
+      },
+      {
+        "command": "dbadmin.sqlRunner.selectConnection",
+        "title": "SQL Runner: Selecionar Conexão"
+      },
+      {
+        "command": "dbadmin.sqlRunner.selectDatabase",
+        "title": "SQL Runner: Selecionar Banco"
+      },
+      {
+        "command": "dbadmin.sqlRunner.selectSchema",
+        "title": "SQL Runner: Selecionar Schema"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "dbadmin.executeSqlFromActiveEditor",
+        "key": "ctrl+enter",
+        "mac": "cmd+enter",
+        "when": "editorTextFocus && editorLangId == sql"
       }
     ],
     "menus": {
@@ -328,6 +398,96 @@
           "command": "dbadmin.createSchema",
           "when": "view == databaseExplorer && viewItem == databaseGroup:schemas",
           "group": "navigation"
+        },
+        {
+          "command": "dbadmin.createFunction",
+          "when": "view == databaseExplorer && viewItem == objectGroup:function",
+          "group": "inline"
+        },
+        {
+          "command": "dbadmin.createFunction",
+          "when": "view == databaseExplorer && viewItem == objectGroup:function",
+          "group": "navigation"
+        },
+        {
+          "command": "dbadmin.editFunction",
+          "when": "view == databaseExplorer && viewItem == dbObject:function",
+          "group": "inline"
+        },
+        {
+          "command": "dbadmin.deleteFunction",
+          "when": "view == databaseExplorer && viewItem == dbObject:function",
+          "group": "inline@1"
+        },
+        {
+          "command": "dbadmin.editFunction",
+          "when": "view == databaseExplorer && viewItem == dbObject:function",
+          "group": "navigation"
+        },
+        {
+          "command": "dbadmin.deleteFunction",
+          "when": "view == databaseExplorer && viewItem == dbObject:function",
+          "group": "navigation@1"
+        },
+        {
+          "command": "dbadmin.createProcedure",
+          "when": "view == databaseExplorer && viewItem == objectGroup:procedure",
+          "group": "inline"
+        },
+        {
+          "command": "dbadmin.createProcedure",
+          "when": "view == databaseExplorer && viewItem == objectGroup:procedure",
+          "group": "navigation"
+        },
+        {
+          "command": "dbadmin.editProcedure",
+          "when": "view == databaseExplorer && viewItem == dbObject:procedure",
+          "group": "inline"
+        },
+        {
+          "command": "dbadmin.deleteProcedure",
+          "when": "view == databaseExplorer && viewItem == dbObject:procedure",
+          "group": "inline@1"
+        },
+        {
+          "command": "dbadmin.editProcedure",
+          "when": "view == databaseExplorer && viewItem == dbObject:procedure",
+          "group": "navigation"
+        },
+        {
+          "command": "dbadmin.deleteProcedure",
+          "when": "view == databaseExplorer && viewItem == dbObject:procedure",
+          "group": "navigation@1"
+        },
+        {
+          "command": "dbadmin.createTrigger",
+          "when": "view == databaseExplorer && viewItem == objectGroup:trigger",
+          "group": "inline"
+        },
+        {
+          "command": "dbadmin.createTrigger",
+          "when": "view == databaseExplorer && viewItem == objectGroup:trigger",
+          "group": "navigation"
+        },
+        {
+          "command": "dbadmin.editTrigger",
+          "when": "view == databaseExplorer && viewItem == dbObject:trigger",
+          "group": "inline"
+        },
+        {
+          "command": "dbadmin.deleteTrigger",
+          "when": "view == databaseExplorer && viewItem == dbObject:trigger",
+          "group": "inline@1"
+        },
+        {
+          "command": "dbadmin.editTrigger",
+          "when": "view == databaseExplorer && viewItem == dbObject:trigger",
+          "group": "navigation"
+        },
+        {
+          "command": "dbadmin.deleteTrigger",
+          "when": "view == databaseExplorer && viewItem == dbObject:trigger",
+          "group": "navigation@1"
         },
         {
           "command": "dbadmin.openColumnDetailsInNewTab",
