@@ -9,7 +9,6 @@ const PERSIST_LAYOUT_SETTING = 'dbadmin.persistColumnLayout';
 const PGADMIN_BIN_PATH_SETTING = 'dbadmin.pgAdminBinPath';
 const SHOW_FILTER_LABEL_SETTING = 'dbadmin.showFilterLabel';
 const DEFAULT_PAGE_SIZE_SETTING = 'dbadmin.defaultPageSize';
-const NATIVE_PREVIEW_MATCH_COLUMN_TYPE_SETTING = 'dbadmin.nativePreviewMatchColumnType';
 
 type SettingsWebviewMessage =
   | { type: 'ready' }
@@ -20,7 +19,6 @@ type SettingsWebviewMessage =
         hideTabHeader: boolean;
         showFilterLabel: boolean;
         persistColumnLayout: boolean;
-        nativePreviewMatchColumnType: boolean;
         defaultPageSize: number;
         pgAdminBinPath: string;
       };
@@ -105,13 +103,6 @@ export class SettingsPanelManager {
           vscode.workspace
             .getConfiguration()
             .update(
-              NATIVE_PREVIEW_MATCH_COLUMN_TYPE_SETTING,
-              Boolean(message.settings.nativePreviewMatchColumnType),
-              vscode.ConfigurationTarget.Global
-            ),
-          vscode.workspace
-            .getConfiguration()
-            .update(
               DEFAULT_PAGE_SIZE_SETTING,
               safePageSize,
               vscode.ConfigurationTarget.Global
@@ -184,9 +175,6 @@ export class SettingsPanelManager {
     const persistColumnLayout = vscode.workspace
       .getConfiguration()
       .get<boolean>(PERSIST_LAYOUT_SETTING, false);
-    const nativePreviewMatchColumnType = vscode.workspace
-      .getConfiguration()
-      .get<boolean>(NATIVE_PREVIEW_MATCH_COLUMN_TYPE_SETTING, true);
     const pgAdminBinPath = vscode.workspace
       .getConfiguration()
       .get<string>(PGADMIN_BIN_PATH_SETTING, '');
@@ -200,7 +188,6 @@ export class SettingsPanelManager {
       hideTabHeader,
       showFilterLabel,
       persistColumnLayout,
-      nativePreviewMatchColumnType,
       defaultPageSize,
       pgAdminBinPath,
       storagePath,
@@ -371,16 +358,6 @@ export class SettingsPanelManager {
 
       <div class="item">
         <div class="meta">
-          <span class="title">Prévia nativa: tipo por coluna (experimental)</span>
-          <span class="desc">Quando ativado, usa .json para colunas JSON e .txt para as demais. Quando desativado, usa sempre .json.</span>
-        </div>
-        <label>
-          <input id="nativePreviewMatchColumnType" type="checkbox" />
-        </label>
-      </div>
-
-      <div class="item">
-        <div class="meta">
           <span class="title">pgAdmin &ndash; diretório dos binários</span>
           <span class="desc">Caminho para pg_dump e pg_restore. Deixe vazio para auto-detectar no momento do uso.</span>
           <div style="display:flex;gap:6px;margin-top:4px;">
@@ -421,7 +398,6 @@ export class SettingsPanelManager {
     const hideTabHeader = document.getElementById('hideTabHeader');
     const showFilterLabel = document.getElementById('showFilterLabel');
     const persistColumnLayout = document.getElementById('persistColumnLayout');
-    const nativePreviewMatchColumnType = document.getElementById('nativePreviewMatchColumnType');
     const defaultPageSize = document.getElementById('defaultPageSize');
     const pgAdminBinPath = document.getElementById('pgAdminBinPath');
     const storagePath = document.getElementById('storagePath');
@@ -575,7 +551,6 @@ export class SettingsPanelManager {
         hideTabHeader: Boolean(hideTabHeader.checked),
         showFilterLabel: Boolean(showFilterLabel.checked),
         persistColumnLayout: Boolean(persistColumnLayout.checked),
-        nativePreviewMatchColumnType: Boolean(nativePreviewMatchColumnType.checked),
         defaultPageSize: clampPageSize(defaultPageSize.value),
         pgAdminBinPath: String(pgAdminBinPath.value || ''),
       };
@@ -594,10 +569,6 @@ export class SettingsPanelManager {
     });
 
     persistColumnLayout.addEventListener('change', () => {
-      setDirty(true);
-    });
-
-    nativePreviewMatchColumnType.addEventListener('change', () => {
       setDirty(true);
     });
 
@@ -655,7 +626,6 @@ export class SettingsPanelManager {
       hideTabHeader.checked = Boolean(message.hideTabHeader);
       showFilterLabel.checked = Boolean(message.showFilterLabel);
       persistColumnLayout.checked = Boolean(message.persistColumnLayout);
-      nativePreviewMatchColumnType.checked = Boolean(message.nativePreviewMatchColumnType);
       defaultPageSize.value = String(message.defaultPageSize ?? 50);
       pgAdminBinPath.value = String(message.pgAdminBinPath || '');
       storagePath.textContent = String(message.storagePath || '');

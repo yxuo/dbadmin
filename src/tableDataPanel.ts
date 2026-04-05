@@ -102,7 +102,6 @@ const SHOW_QUERY_SETTING = 'dbadmin.showQueryEditor';
 const HIDE_TAB_HEADER_SETTING = 'dbadmin.hideTabHeader';
 const PERSIST_LAYOUT_SETTING = 'dbadmin.persistColumnLayout';
 const DEFAULT_PAGE_SIZE_SETTING = 'dbadmin.defaultPageSize';
-const NATIVE_PREVIEW_MATCH_COLUMN_TYPE_SETTING = 'dbadmin.nativePreviewMatchColumnType';
 const DYNAMIC_DEFAULT_COLUMN_WIDTH_SETTING = 'dbadmin.dynamicDefaultColumnWidth';
 
 export class TableDataPanelManager {
@@ -673,12 +672,6 @@ export class TableDataPanelManager {
     return Math.max(1, Math.min(500, Math.trunc(numeric)));
   }
 
-  private getNativePreviewMatchColumnType(): boolean {
-    return vscode.workspace
-      .getConfiguration()
-      .get<boolean>(NATIVE_PREVIEW_MATCH_COLUMN_TYPE_SETTING, true);
-  }
-
   private getDynamicDefaultColumnWidth(): boolean {
     return vscode.workspace
       .getConfiguration()
@@ -874,8 +867,7 @@ export class TableDataPanelManager {
     },
     forceOpen: boolean
   ): Promise<void> {
-    const shouldMatchColumnType = this.getNativePreviewMatchColumnType();
-    const isJson = shouldMatchColumnType ? payload.isJson !== false : true;
+    const isJson = payload.isJson !== false;
     let state = this.panelNativePreview.get(panel);
     let switchedTypeWithNewEditor = false;
 

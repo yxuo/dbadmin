@@ -53,25 +53,18 @@
           "order": 50,
           "description": "Número padrão de itens por página na visualização de tabela."
         },
-        "dbadmin.nativePreviewMatchColumnType": {
-          "type": "boolean",
-          "default": false,
-          "scope": "window",
-          "order": 51,
-          "description": "Quando ativo, a prévia nativa usa .json para colunas JSON e .txt para as demais. Quando desativado, usa sempre .json."
-        },
         "dbadmin.dynamicDefaultColumnWidth": {
           "type": "boolean",
           "default": true,
           "scope": "window",
-          "order": 52,
+          "order": 51,
           "description": "Quando ativo, calcula a largura padrão das colunas de forma dinâmica com base no conteúdo visível. Quando desativado, usa largura fixa (170)."
         },
         "dbadmin.expandFilterResults": {
           "type": "boolean",
           "default": false,
           "scope": "window",
-          "order": 53,
+          "order": 52,
           "description": "Quando ativo, ao digitar no filtro de tabelas recolhe e expande automaticamente os resultados na árvore."
         }
       }
