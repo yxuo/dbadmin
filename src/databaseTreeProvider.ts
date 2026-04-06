@@ -612,16 +612,16 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
       const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.Collapsed);
       item.contextValue = `databaseGroup:${element.kind}`;
       item.iconPath =
-        element.kind === 'schemas'
-          ? new vscode.ThemeIcon('symbol-namespace')
-          : new vscode.ThemeIcon('extensions');
+        element.kind === "schemas"
+          ? new vscode.ThemeIcon("type-hierarchy-sub")
+          : new vscode.ThemeIcon("extensions");
       return item;
     }
 
     if (element.type === 'schema') {
       const item = new vscode.TreeItem(element.schemaName, vscode.TreeItemCollapsibleState.Collapsed);
       item.contextValue = 'schema';
-      item.iconPath = new vscode.ThemeIcon('symbol-namespace');
+      item.iconPath = new vscode.ThemeIcon("type-hierarchy-sub");
       return item;
     }
 

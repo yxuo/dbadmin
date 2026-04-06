@@ -317,7 +317,7 @@ export function activate(context: vscode.ExtensionContext): void {
         renderOptions: {
           after: {
             contentText: `  ${nickname}`,
-            color: new vscode.ThemeColor('charts.green'),
+            color: new vscode.ThemeColor('terminal.ansiBrightBlue'),
             fontWeight: 'bold',
           },
         },
@@ -1329,8 +1329,10 @@ function createSqlRunnerCodeLensProvider(store: ConnectionStore): vscode.CodeLen
         context.connectionId?.trim() || 'Conexão';
       const databaseLabel = context.databaseName?.trim() || 'Banco';
       const isConfigSelected = Boolean(context.connectionId) && Boolean(context.databaseName);
+      const isSchemaSelected = isConfigSelected && Boolean(context.schemaName);
+      const schemaLabel = isSchemaSelected ? ` $(type-hierarchy-sub) ${context.schemaName?.trim()}` : '';
       const contextButtonLabel = isConfigSelected
-        ? `$(plug) ${connectionLabel} $(database) ${databaseLabel}`
+        ? `$(plug) ${connectionLabel} $(database) ${databaseLabel}` + schemaLabel
         : "$(plug) Selecionar conexão";
 
       return [

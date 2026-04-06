@@ -1224,6 +1224,7 @@ export class TableDataPanelManager {
     .title { font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
     .title svg { width: 14px; height: 14px; margin-top: 4px; }
     .title .info-item { display: inline-flex; align-items: center; gap: 2px; min-width: 0; }
+    .title .info-item .codicon { font-size: 14.5px; line-height: 1; margin-top: 1.5px; }
     .title .info-fixed { flex: 0 0 auto; white-space: nowrap; }
     .title .info-conn { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     .header-menu-wrap { position: relative; }
@@ -1287,6 +1288,7 @@ export class TableDataPanelManager {
       text-overflow: ellipsis;
     }
     .search-context-placeholder svg { width: 12px; height: 12px; flex: 0 0 auto; }
+    .search-context-placeholder .codicon { font-size: 13px; line-height: 1; margin-right: 1px; }
     .search-context-placeholder .info-item { display: inline-flex; align-items: center; gap: 0; min-width: 0; }
     .search-context-placeholder .info-fixed { flex: 0 0 auto; white-space: nowrap; }
     .search-context-placeholder .info-conn { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -1328,7 +1330,7 @@ export class TableDataPanelManager {
     .table-wrap:focus { outline: none; }
     table { width: 100%; border-collapse: collapse; }
     .table-cells-body { user-select: none; }
-    th, td { border-bottom: 1px solid var(--vscode-panel-border); padding: 2px 6px; vertical-align: top; }
+    th, td { border-bottom: 1px solid color-mix(in srgb, var(--vscode-foreground) 15%, transparent); padding: 2px 6px; vertical-align: top; }
     th {
       position: sticky;
       top: 0;
@@ -1396,7 +1398,7 @@ export class TableDataPanelManager {
       opacity: 0;
       pointer-events: none;
       transition: opacity 120ms ease;
-      z-index: 5;
+      z-index: 1;
     }
     .cell-action-btn:hover:not(:disabled),
     .cell-action-btn:focus-visible {
@@ -1417,8 +1419,8 @@ export class TableDataPanelManager {
     }
     .json-open-btn svg { width: 12px; height: 12px; }
     .json-open-btn svg path { stroke-width: 1.45; }
-    tr.row-added td { background: rgba(46, 160, 67, 0.12); }
-    tr.row-removed td { background: rgba(220, 53, 69, 0.16); }
+    tr.row-added td { background: rgba(46, 160, 67, 0.12); border-bottom-color: color-mix(in srgb, var(--vscode-foreground) 15%, rgba(46, 160, 67, 0.12)) !important; }
+    tr.row-removed td { background: rgba(220, 53, 69, 0.16); border-bottom-color: color-mix(in srgb, var(--vscode-foreground) 15%, rgba(220, 53, 69, 0.16)) !important; }
     .json-modal-backdrop { z-index: 69; background: rgba(0, 0, 0, 0.35); }
     .json-modal {
       position: fixed;
@@ -1536,22 +1538,25 @@ export class TableDataPanelManager {
       background: var(--vscode-sideBar-background);
     }
     th.selection-col { z-index: 4; }
-    td.selection-col { z-index: 3; }
+    td.selection-col {
+      z-index: 3;
+      background: var(--vscode-sideBar-background) !important;
+    }
     .selection-col::after {
       content: '';
       position: absolute;
-      top: 0;
-      bottom: 0;
-      right: 0;
-      width: 1px;
-      background: var(--vscode-panel-border);
+      top: 0px;
+      width: calc(100% - 1px);
+      height: 100%;
       pointer-events: none;
+      border-right: solid 1px var(--vscode-panel-border);
+      border-bottom: solid 1px var(--vscode-panel-border);
       z-index: 6;
     }
     th.selection-col::after {
         content: "";
         width: calc(100% - 1px);
-        border-right: solid 1px var(--vscode-panel-border);
+        border-right: solid 1px color-mix(in srgb, var(--vscode-panel-border) 50%, transparent);
         height: calc(100% - 1px);
         pointer-events: none;
         background: transparent;
@@ -1569,7 +1574,7 @@ export class TableDataPanelManager {
       position: relative;
       z-index: 1;
     }
-    .selection-cell.selected { background: color-mix(in srgb, var(--vscode-list-hoverBackground) 50%, transparent); }
+    .selection-cell.selected { background: color-mix(in srgb, var(--vscode-list-hoverBackground) 82%, var(--vscode-sideBar-background)); }
     th.selection-col:hover::before,
     td.selection-cell:not(.selected):hover::before {
       content: '';
@@ -1581,18 +1586,18 @@ export class TableDataPanelManager {
     }
     .cell-input:not(:focus):not(.editing) { background: transparent !important; border-color: transparent !important; cursor: pointer; pointer-events: none; }
     .cell-input.editing { pointer-events: auto; }
-    td.cell-selected { box-shadow: inset 0 0 0 1000px color-mix(in srgb, var(--vscode-foreground) 20%, transparent); }
-   td.cell-selected-current-origin::before {
-        content: "";
-        position: absolute;
-        inset: 0;
-        border: 2px solid var(--vscode-focusBorder);
-        top: -1px;
-        bottom: -1px;
-        right: -1px;
+    td.cell-selected { box-shadow: inset 0 0 0 1000px color-mix(in srgb, var(--vscode-foreground) 10%, transparent); }
+    td.cell-selected-current-origin::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border: 2px solid color-mix(in srgb, var(--vscode-focusBorder) 70%, var(--vscode-panel-border));
+      top: -1px;
+      bottom: -1px;
+      right: -1px;
     }
-    tr.row-marked-delete td { background: rgba(220, 53, 69, 0.16); }
-    td:has(.cell-input.dirty) { background: rgba(70, 130, 255, 0.16); }
+    tr.row-marked-delete td { background: rgba(220, 53, 69, 0.16); border-bottom-color: color-mix(in srgb, var(--vscode-foreground) 15%, rgba(220, 53, 69, 0.16)) !important; }
+    td:has(.cell-input.dirty) { background: rgba(70, 130, 255, 0.16); border-bottom-color: color-mix(in srgb, var(--vscode-foreground) 15%, rgba(70, 130, 255, 0.16)) !important; }
     .th-name:hover:not(:active) { background: color-mix(in srgb, var(--vscode-list-hoverBackground) 80%, var(--vscode-foreground) 10%); }
     @media (max-height: 500px) {
       .header { display: none; }
@@ -1796,12 +1801,13 @@ export class TableDataPanelManager {
     const tableWrapEl = document.querySelector('.table-wrap');
 
     const rangeSelectionOverlay = document.createElement('div');
+    rangeSelectionOverlay.className = 'range-selection-overlay';
     rangeSelectionOverlay.style.position = 'absolute';
     rangeSelectionOverlay.style.pointerEvents = 'none';
     rangeSelectionOverlay.style.display = 'none';
-    rangeSelectionOverlay.style.border = '1px solid var(--vscode-focusBorder)';
+    rangeSelectionOverlay.style.border = '1px solid color-mix(in srgb, var(--vscode-focusBorder) 70%, var(--vscode-panel-border))';
     rangeSelectionOverlay.style.borderRadius = '1px';
-    rangeSelectionOverlay.style.zIndex = '10';
+    rangeSelectionOverlay.style.zIndex = '0';
     tableWrapEl.style.position = 'relative';
     tableWrapEl.appendChild(rangeSelectionOverlay);
 
@@ -1870,8 +1876,10 @@ export class TableDataPanelManager {
 
     const SVG_LOCAL = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 3h12l-4.5 5.5V13h-3V8.5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>';
     const SVG_QUERY = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><ellipse cx="8" cy="4.5" rx="5.5" ry="2" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 4.5v7c0 1.1 2.46 2 5.5 2s5.5-.9 5.5-2v-7" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 8c0 1.1 2.46 2 5.5 2s5.5-.9 5.5-2" stroke="currentColor" stroke-width="1.3"/></svg>';
-    const SVG_DB = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><ellipse cx="8" cy="4" rx="5.5" ry="2" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 4v7.5C2.5 12.88 4.96 14 8 14s5.5-1.12 5.5-2.5V4" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 7.5c0 1.38 2.46 2.5 5.5 2.5s5.5-1.12 5.5-2.5" stroke="currentColor" stroke-width="1.3"/></svg>';
-    const SVG_SCHEMA = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 3h12v3H2zM2 8h12v5H2z" stroke="currentColor" stroke-width="1.2"/></svg>';
+    // const SVG_DB = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><ellipse cx="8" cy="4" rx="5.5" ry="2" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 4v7.5C2.5 12.88 4.96 14 8 14s5.5-1.12 5.5-2.5V4" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 7.5c0 1.38 2.46 2.5 5.5 2.5s5.5-1.12 5.5-2.5" stroke="currentColor" stroke-width="1.3"/></svg>';
+    const ICON_DB = '<i  class="codicon codicon-database" aria-hidden="true"></i>';
+    const ICON_SCHEMA = '<i svg width="12" class="codicon codicon-type-hierarchy-sub" aria-hidden="true"></i>';
+    const ICON_CONNECTION = '<i svg width="14" class="codicon codicon-plug" aria-hidden="true"></i>';
     const SVG_CONNECTION = '<svg width="14" height="14" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="currentColor" aria-hidden="true"><path d="M10.723 4H10V1.5C10 1.224 9.776 1 9.5 1C9.224 1 9 1.224 9 1.5V4H7V1.5C7 1.224 6.776 1 6.5 1C6.224 1 6 1.224 6 1.5V4H5.277C4.573 4 4 4.573 4 5.278V8C4 10.036 5.529 11.722 7.5 11.969V14.5C7.5 14.776 7.724 15 8 15C8.276 15 8.5 14.776 8.5 14.5V11.969C10.471 11.722 12 10.037 12 8V5.278C12 4.573 11.427 4 10.723 4ZM11 8C11 9.654 9.654 11 8 11C6.346 11 5 9.654 5 8V5.278C5 5.125 5.124 5 5.277 5H10.722C10.875 5 10.999 5.125 10.999 5.278V8H11Z"/></svg>';
     const SVG_SORT_NONE = '<svg width="16" height="16" viewBox="0 -3 24 24" fill="none" aria-hidden="true"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m8 15 4 4 4-4m0-6-4-4-4 4"/></svg>';
     const SVG_EXTERNAL_LINK = '<svg viewBox="0 0 1 1" fill="none" aria-hidden="true"><path d="M9.5 2.5h4v4M8 8l5.5-5.5M7 3.5h-2A1.5 1.5 0 0 0 3.5 5v6A1.5 1.5 0 0 0 5 12.5h6a1.5 1.5 0 0 0 1.5-1.5v-2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -2096,6 +2104,8 @@ export class TableDataPanelManager {
     let rowSelectionDragPreserve = false;
     let rowSelectionDragAnchorIndex = null;
     let rowSelectionDragBaseSelection = new Map();
+    let rowShiftSelectAnchorIndex = null; // âncora persistente para shift+click em linhas
+    let colSelectionAnchorName = null; // colName string
     let displayedRowKeys = []; // rowKey[] in display order
     let displayedColNames = []; // colName[] in display order
     let nativePreviewSelectionSignature = '';
@@ -2300,9 +2310,9 @@ export class TableDataPanelManager {
       const schemaLabel = currentSchemaName || 'Schema';
       const connectionLabel = currentConnectionName || 'Conexão';
       searchContextPlaceholderEl.innerHTML =
-        '<span class="info-item info-fixed"><span style="margin: 4px 2px 0 0;">' + SVG_DB + '</span><span>' + dbLabel + '</span></span>' +
-        '<span class="info-item info-fixed"><span style="margin: 4px 2px 0 0;">' + SVG_SCHEMA + '</span><span>' + schemaLabel + '</span></span>' +
-        '<span class="info-item info-conn">' + SVG_CONNECTION + '<span>' + connectionLabel + '</span></span>';
+      '<span class="info-item info-fixed">' + ICON_SCHEMA + '<span>' + schemaLabel + '</span></span>' +
+        '<span class="info-item info-fixed"><span style="margin: 4px 2px 0 0;">' + ICON_DB + '</span><span>' + dbLabel + '</span></span>' +
+        '<span class="info-item info-conn"><span style="margin: 4px 0 0 0;"">' + ICON_CONNECTION + '</span><span>' + connectionLabel + '</span></span>';
       searchContextPlaceholderEl.style.display = 'inline-flex';
     }
 
@@ -3428,8 +3438,8 @@ export class TableDataPanelManager {
       keyboardSelectionAnchor = null;
       keyboardSelectionAdditive = false;
       keyboardSelectionBase = new Map();
-      currentRangeSelection = null;
       if (rowSelectionDragAnchorIndex === null) {
+        currentRangeSelection = null;
         return;
       }
       selectedCells = cloneSelectionMap(rowSelectionDragBaseSelection);
@@ -3448,6 +3458,10 @@ export class TableDataPanelManager {
           lastSelectedCell = { rowKey: lastRowKey, colName: displayColumns[0].name };
         }
       }
+      currentRangeSelection = {
+        anchor: { rowIndex: rowSelectionDragAnchorIndex, colIndex: 0 },
+        focus: { rowIndex: currentRowIndex, colIndex: Math.max(0, displayedColNames.length - 1) },
+      };
       syncSelectionCountsFromSelectedCells();
       renderSelectionState();
     }
@@ -3482,9 +3496,13 @@ export class TableDataPanelManager {
           selTd.classList.toggle('selected', isFullRowSelected);
         }
         if (tdMap) {
+          const isSingleCellFocus = !range && lastSelectedCell && lastSelectedCell.rowKey === rowKey;
           tdMap.forEach((td, colName) => {
             td.classList.toggle('cell-selected', Boolean(cellSet && cellSet.has(colName)));
-            td.classList.toggle('cell-selected-current-origin', Boolean(range && rowKey === originRowKey && colName === originColName));
+            const isOrigin = range
+              ? (rowKey === originRowKey && colName === originColName)
+              : Boolean(isSingleCellFocus && lastSelectedCell.colName === colName && cellSet && cellSet.has(colName));
+            td.classList.toggle('cell-selected-current-origin', isOrigin);
           });
         }
       });
@@ -3540,15 +3558,22 @@ export class TableDataPanelManager {
 
           /** Esses números -2, -1 são ajustes finos */
           const overlayTop = topRect.top - wrapRect.top + tableWrapEl.scrollTop - 2;
-          const overlayLeft = leftRect.left - wrapRect.left + tableWrapEl.scrollLeft;
-          const overlayWidth = (rightRect.right - leftRect.left) - 1;
+          const stickySelectionWidth = 30 + 0;
+          const minOverlayLeftPx = wrapRect.left + stickySelectionWidth;
+          const clampedOverlayLeftPx = Math.max(leftRect.left, minOverlayLeftPx);
+          const overlayLeft = clampedOverlayLeftPx - wrapRect.left + tableWrapEl.scrollLeft;
+          const overlayWidth = (rightRect.right - clampedOverlayLeftPx) - 1;
           const overlayHeight = (bottomRect.bottom - topRect.top) - 1;
 
-          rangeSelectionOverlay.style.top = overlayTop + 'px';
-          rangeSelectionOverlay.style.left = overlayLeft + 'px';
-          rangeSelectionOverlay.style.width = overlayWidth + 'px';
-          rangeSelectionOverlay.style.height = overlayHeight + 'px';
-          rangeSelectionOverlay.style.display = 'block';
+          if (overlayWidth > 0) {
+            rangeSelectionOverlay.style.top = overlayTop + 'px';
+            rangeSelectionOverlay.style.left = overlayLeft + 'px';
+            rangeSelectionOverlay.style.width = overlayWidth + 'px';
+            rangeSelectionOverlay.style.height = overlayHeight + 'px';
+            rangeSelectionOverlay.style.display = 'block';
+          } else {
+            rangeSelectionOverlay.style.display = 'none';
+          }
         } else {
           rangeSelectionOverlay.style.display = 'none';
         }
@@ -4001,18 +4026,84 @@ export class TableDataPanelManager {
             return;
           }
           event.stopPropagation();
-          currentRangeSelection = null;
 
           const displayedRows = applyLocalFilter(rows);
-          selectedCells.clear();
-          displayedRows.forEach((row, rowIndex) => {
-            const rowKey = row.__dbadmin_ctid || ('new:' + rowIndex);
-            if (!selectedCells.has(rowKey)) {
-              selectedCells.set(rowKey, new Set());
+          const currentIdx = displayedColNames.indexOf(col.name);
+
+          // Ctrl+click: alternar (toggle) coluna
+          if ((event.ctrlKey || event.metaKey) && !event.shiftKey) {
+            colSelectionAnchorName = col.name;
+            currentRangeSelection = null;
+            const isFullySelected = displayedRows.every((row, ri) => {
+              const rk = row.__dbadmin_ctid || ('new:' + ri);
+              return selectedCells.has(rk) && selectedCells.get(rk).has(col.name);
+            });
+            if (isFullySelected) {
+              displayedRows.forEach((row, ri) => {
+                const rk = row.__dbadmin_ctid || ('new:' + ri);
+                if (selectedCells.has(rk)) {
+                  selectedCells.get(rk).delete(col.name);
+                  if (selectedCells.get(rk).size === 0) {
+                    selectedCells.delete(rk);
+                  }
+                }
+              });
+            } else {
+              displayedRows.forEach((row, ri) => {
+                const rk = row.__dbadmin_ctid || ('new:' + ri);
+                if (!selectedCells.has(rk)) {
+                  selectedCells.set(rk, new Set());
+                }
+                selectedCells.get(rk).add(col.name);
+                lastSelectedCell = { rowKey: rk, colName: col.name };
+              });
             }
-            selectedCells.get(rowKey).add(col.name);
-            lastSelectedCell = { rowKey, colName: col.name };
+            syncSelectionCountsFromSelectedCells();
+            renderSelectionState();
+            return;
+          }
+
+          // Shift+click: estender range de colunas
+          if (event.shiftKey && colSelectionAnchorName !== null) {
+            const anchorIdx = displayedColNames.indexOf(colSelectionAnchorName);
+            if (anchorIdx !== -1 && currentIdx !== -1) {
+              const minC = Math.min(anchorIdx, currentIdx);
+              const maxC = Math.max(anchorIdx, currentIdx);
+              selectedCells.clear();
+              displayedRows.forEach((row, ri) => {
+                const rk = row.__dbadmin_ctid || ('new:' + ri);
+                const colSet = new Set();
+                for (let c = minC; c <= maxC; c++) {
+                  colSet.add(displayedColNames[c]);
+                }
+                selectedCells.set(rk, colSet);
+                lastSelectedCell = { rowKey: rk, colName: col.name };
+              });
+              currentRangeSelection = {
+                anchor: { rowIndex: 0, colIndex: anchorIdx },
+                focus: { rowIndex: Math.max(0, displayedRowKeys.length - 1), colIndex: currentIdx },
+              };
+              syncSelectionCountsFromSelectedCells();
+              renderSelectionState();
+              return;
+            }
+          }
+
+          // Clique normal: selecionar coluna inteira
+          colSelectionAnchorName = col.name;
+          selectedCells.clear();
+          displayedRows.forEach((row, ri) => {
+            const rk = row.__dbadmin_ctid || ('new:' + ri);
+            if (!selectedCells.has(rk)) {
+              selectedCells.set(rk, new Set());
+            }
+            selectedCells.get(rk).add(col.name);
+            lastSelectedCell = { rowKey: rk, colName: col.name };
           });
+          currentRangeSelection = currentIdx !== -1 ? {
+            anchor: { rowIndex: 0, colIndex: currentIdx },
+            focus: { rowIndex: Math.max(0, displayedRowKeys.length - 1), colIndex: currentIdx },
+          } : null;
           syncSelectionCountsFromSelectedCells();
           renderSelectionState();
         });
@@ -4219,9 +4310,17 @@ export class TableDataPanelManager {
           event.stopPropagation();
           isRowSelectionDragging = true;
           rowSelectionDragPreserve = event.ctrlKey || event.metaKey;
-          rowSelectionDragAnchorIndex = rowIndex;
-          rowSelectionDragBaseSelection = rowSelectionDragPreserve ? cloneSelectionMap(selectedCells) : new Map();
-          applyRowSelectionDragRange(rowIndex, displayColumns);
+          if (event.shiftKey && rowShiftSelectAnchorIndex !== null) {
+            // Estende range da âncora persistente até este row
+            rowSelectionDragAnchorIndex = rowShiftSelectAnchorIndex;
+            rowSelectionDragBaseSelection = new Map();
+            applyRowSelectionDragRange(rowIndex, displayColumns);
+          } else {
+            rowShiftSelectAnchorIndex = rowIndex;
+            rowSelectionDragAnchorIndex = rowIndex;
+            rowSelectionDragBaseSelection = rowSelectionDragPreserve ? cloneSelectionMap(selectedCells) : new Map();
+            applyRowSelectionDragRange(rowIndex, displayColumns);
+          }
         });
         selectTd.addEventListener('mouseenter', () => {
           if (!isRowSelectionDragging) {
@@ -5347,9 +5446,9 @@ export class TableDataPanelManager {
         currentDatabaseName = String(message.databaseName || '');
         currentSchemaName = String(message.schemaName || '');
         titleEl.innerHTML =
-          '<span class="info-item info-fixed"><span style="margin-right: 4px;">' + SVG_DB + '</span><span>' + currentDatabaseName + '</span></span>' +
-          '<span class="info-item info-fixed"><span style="margin-right: 4px;">' + SVG_SCHEMA + '</span><span>' + currentSchemaName + '</span></span>' +
-          '<span class="info-item info-conn">' + SVG_CONNECTION + '<span>' + (currentConnectionName || 'Conexão') + '</span></span>';
+        '<span class="info-item info-fixed">' + ICON_SCHEMA + '<span>' + currentSchemaName + '</span></span>' +
+          '<span class="info-item info-fixed">' + ICON_DB + '<span>' + currentDatabaseName + '</span></span>' +
+          '<span class="info-item info-conn">' + ICON_CONNECTION + '<span>' + (currentConnectionName || 'Conexão') + '</span></span>';
         queryEl.value = message.result.query;
         showQueryEditor = message.showQueryEditor !== false;
         applyQueryVisibility();
