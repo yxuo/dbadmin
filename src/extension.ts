@@ -18,6 +18,7 @@ import { SettingsPanelManager } from './settingsPanel';
 import { BackupPanelManager } from './backupPanel';
 import { RestorePanelManager } from './restorePanel';
 import { TableMetadataPanelManager } from './tableMetadataPanel';
+import { SqlBookSerializer, SqlBookController } from './sqlBookNotebook';
 
 const EXPAND_FILTER_RESULTS_SETTING = 'dbadmin.expandFilterResults';
 const FILTER_INPUT_DEBOUNCE_MS = 180;
@@ -451,7 +452,7 @@ export function activate(context: vscode.ExtensionContext): void {
             description: `${connection.user}@${connection.host}:${connection.port}/${connection.database}`,
             connection,
           })),
-          { placeHolder: 'Selecione a conexão para o SQL runner' }
+          { placeHolder: 'Selecione a conexão' }
         );
 
         if (!picked) {
@@ -465,7 +466,7 @@ export function activate(context: vscode.ExtensionContext): void {
         }
 
         const pickedDatabase = await vscode.window.showQuickPick(databases, {
-          placeHolder: 'Selecione o banco para o SQL runner',
+          placeHolder: 'Selecione o banco',
         });
 
         if (!pickedDatabase) {
@@ -483,7 +484,7 @@ export function activate(context: vscode.ExtensionContext): void {
         ];
 
         const pickedSchema = await vscode.window.showQuickPick(schemaItems, {
-          placeHolder: 'Selecione o schema (opcional) para o SQL runner',
+          placeHolder: 'Selecione o schema (opcional)',
         });
 
         if (!pickedSchema) {
@@ -1177,6 +1178,11 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     )
   );
+
+  context.subscriptions.push(
+    vscode.workspace.registerNotebookSerializer('sqlbook', new SqlBookSerializer())
+  );
+  context.subscriptions.push(new SqlBookController(store, postgresService));
 }
 
 export function deactivate(): void {}

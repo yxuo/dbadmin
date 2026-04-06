@@ -73,6 +73,14 @@ export interface ColumnInfo {
   defaultValue: string | null;
 }
 
+export interface SqlQueryResult {
+  columns: string[];
+  rows: Array<Record<string, unknown>>;
+  rowCount: number;
+  command: string;
+  results?: SqlQueryResult[];
+}
+
 export class PostgresService {
   public async getVersion(connection: PostgresConnection): Promise<string> {
     return this.testConnection(connection);
@@ -307,6 +315,62 @@ export class PostgresService {
     const client = await this.connect({ ...connection, database: databaseName });
     try {
       await client.query(trimmed);
+    } finally {
+      await client.end();
+    }
+  }
+
+  public async querySql(
+    connection: PostgresConnection,
+    databaseName: string,
+    sql: string
+  ): Promise<SqlQueryResult> {
+    const trimmed = String(sql || '').trim();
+    if (!trimmed) {
+      throw new Error('SQL vazio.');
+    }
+
+    const client = await this.connect({ ...connection, database: databaseName });
+    try {
+      const rawResult = await client.query(trimmed);
+      const result = rawResult;
+      const results = Array.isArray(rawResult)
+        ? rawResult.map((r) => ({
+            columns: r.fields?.map((f) => f.name) ?? [],
+            rows: r.rows,
+            rowCount: r.rowCount ?? r.rows.length,
+            command: r.command ?? "",
+          }))
+        : [];
+
+      if (!result) {
+        return {
+          columns: [],
+          rows: [],
+          rowCount: 0,
+          command: '',
+          results: [],
+        };
+      }
+
+      if (results.length > 1) {
+        return {
+          columns: [],
+          rows: [],
+          rowCount: 0,
+          command: '',
+          results: results,
+        };
+
+      }
+
+      return {
+        columns: result.fields?.map((f) => f.name) ?? [],
+        rows: result.rows,
+        rowCount: result.rowCount ?? result.rows.length,
+        command: result.command ?? '',
+        results: [],
+      };
     } finally {
       await client.end();
     }

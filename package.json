@@ -272,6 +272,15 @@
         "title": "SQL Runner: Selecionar Schema"
       }
     ],
+    "notebooks": [
+      {
+        "type": "sqlbook",
+        "displayName": "DBAdmin SQL Book",
+        "selector": [
+          { "filenamePattern": "*.sqlbook" }
+        ]
+      }
+    ],
     "keybindings": [
       {
         "command": "dbadmin.executeSqlFromActiveEditor",
