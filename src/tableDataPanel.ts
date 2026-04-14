@@ -703,7 +703,7 @@ export class TableDataPanelManager {
     content: string,
     options?: { preserveFocus?: boolean }
   ): Promise<void> {
-    const formatted = state.isJson ? this.tryFormatJson(String(content ?? '')) : String(content ?? '');
+    const formatted = this.tryFormatJson(String(content ?? ''));
     if (state.document.getText() === formatted) {
       return;
     }
@@ -785,23 +785,21 @@ export class TableDataPanelManager {
     content: string,
     isJson: boolean
   ): Promise<{ document: vscode.TextDocument; tmpFilePath: string; tmpFilePrefix: string }> {
-    const formattedContent = isJson ? this.tryFormatJson(String(content ?? '')) : String(content ?? '');
-    const extension = isJson ? 'json' : 'txt';
+    const formattedContent = this.tryFormatJson(String(content ?? ''));
+    const extension = 'preview';
     const tmpFilePrefix = this.getNativePreviewFilePrefix(panel);
     const tmpFilePath = path.join(os.tmpdir(), `${tmpFilePrefix}.${extension}`);
     fs.writeFileSync(tmpFilePath, formattedContent, 'utf8');
-    const document = await vscode.workspace.openTextDocument(vscode.Uri.file(tmpFilePath));
+    const openedDocument = await vscode.workspace.openTextDocument(vscode.Uri.file(tmpFilePath));
+    const document = await vscode.languages.setTextDocumentLanguage(openedDocument, 'json');
     return { document, tmpFilePath, tmpFilePrefix };
   }
 
   private isNativePreviewTempPath(fsPath: string): boolean {
     const name = path.basename(fsPath).toLowerCase();
-    const isLegacy =
-      name.startsWith('dbmanager_preview_') && (name.endsWith('.json') || name.endsWith('.txt'));
-    const isNamedByPrefix =
-      (name.includes('_dbmanaget_preview_') || name.includes('_db_manager_') || name.includes('_dbadmin_')) &&
-      (name.endsWith('.json') || name.endsWith('.txt'));
-    return isLegacy || isNamedByPrefix;
+    const isNamedByPrefix = name.includes('_dbadmin_') &&
+      (name.endsWith('.json') || name.endsWith('.txt') || name.endsWith('.preview'));
+    return isNamedByPrefix;
   }
 
   private async closeDocumentTabByUri(uri: vscode.Uri): Promise<void> {
@@ -844,6 +842,29 @@ export class TableDataPanelManager {
     });
   }
 
+  private findPreviewTabGroupViewColumn(): vscode.ViewColumn | undefined {
+    for (const tabGroup of vscode.window.tabGroups.all) {
+      for (const tab of tabGroup.tabs) {
+        const tabInput = tab.input as {
+          uri?: vscode.Uri;
+          modified?: vscode.Uri;
+          original?: vscode.Uri;
+        };
+        const candidateUris = [tabInput.uri, tabInput.modified, tabInput.original].filter(
+          (uri): uri is vscode.Uri => uri !== undefined
+        );
+
+        for (const uri of candidateUris) {
+          const pathStr = uri.fsPath || uri.path;
+          if (pathStr.includes('_dbadmin_') && pathStr.endsWith('.preview')) {
+            return tabGroup.viewColumn;
+          }
+        }
+      }
+    }
+    return undefined;
+  }
+
   private isDocumentActiveInEditor(document: vscode.TextDocument): boolean {
     return vscode.window.activeTextEditor?.document.uri.toString() === document.uri.toString();
   }
@@ -869,7 +890,6 @@ export class TableDataPanelManager {
   ): Promise<void> {
     const isJson = payload.isJson !== false;
     let state = this.panelNativePreview.get(panel);
-    let switchedTypeWithNewEditor = false;
 
     if (!state && !forceOpen && payload.open !== true) {
       return;
@@ -883,16 +903,25 @@ export class TableDataPanelManager {
       );
       this.cleanupNativePreviewTempFilesByPrefix(tmpFilePrefix, tmpFilePath);
 
-      try {
-        await vscode.commands.executeCommand('workbench.action.splitEditorDown');
-      } catch {
-        // Fallback: open beside if split command is unavailable.
+      let targetViewColumn = vscode.ViewColumn.Active;
+      const previewTabGroupViewColumn = this.findPreviewTabGroupViewColumn();
+
+      if (previewTabGroupViewColumn) {
+        // Reutiliza tab group existente com preview
+        targetViewColumn = previewTabGroupViewColumn;
+      } else {
+        // Cria novo container com split down
+        try {
+          await vscode.commands.executeCommand('workbench.action.splitEditorDown');
+        } catch {
+          // Fallback: open beside if split command is unavailable.
+        }
       }
 
       const shownEditor = await vscode.window.showTextDocument(document, {
         preview: false,
         preserveFocus: payload.preserveFocus === true,
-        viewColumn: vscode.ViewColumn.Active,
+        viewColumn: targetViewColumn,
       });
 
       state = {
@@ -915,47 +944,6 @@ export class TableDataPanelManager {
       return;
     }
 
-    if (state.isJson !== isJson) {
-      const previousDocumentUri = state.document.uri.toString();
-      const previousDocumentFileUri = state.document.uri;
-      const previousTempFilePath = state.tmpFilePath;
-      const previousEditor = vscode.window.visibleTextEditors.find(
-        (editor) => editor.document.uri.toString() === previousDocumentUri
-      );
-      const nextViewColumn = previousEditor?.viewColumn ?? vscode.ViewColumn.Active;
-
-      const { document, tmpFilePath, tmpFilePrefix } = await this.createNativePreviewTempDocument(
-        panel,
-        payload.content,
-        isJson
-      );
-
-      this.nativePreviewDocumentToPanel.delete(previousDocumentUri);
-      this.nativePreviewDocumentToPanel.set(document.uri.toString(), panel);
-
-      state.document = document;
-      state.tmpFilePath = tmpFilePath;
-      state.tmpFilePrefix = tmpFilePrefix;
-      state.isJson = isJson;
-
-      await vscode.window.showTextDocument(document, {
-        preview: false,
-        preserveFocus: false,
-        viewColumn: nextViewColumn,
-      });
-
-      await this.closeDocumentTabByUri(previousDocumentFileUri);
-
-      try {
-        fs.unlinkSync(previousTempFilePath);
-      } catch {
-        // Previous temp file may already be removed.
-      }
-      this.cleanupNativePreviewTempFilesByPrefix(tmpFilePrefix, tmpFilePath);
-
-      switchedTypeWithNewEditor = true;
-    }
-
     state.isJson = isJson;
     state.ctid = payload.ctid ?? null;
     state.rowKey = payload.rowKey ?? null;
@@ -968,11 +956,7 @@ export class TableDataPanelManager {
       this.scrollNativePreviewToTop(state.document);
     }
 
-    if (!forceOpen && switchedTypeWithNewEditor) {
-      panel.reveal(panel.viewColumn ?? vscode.ViewColumn.Active, false);
-    }
-
-    if (forceOpen && !switchedTypeWithNewEditor) {
+    if (forceOpen) {
       const existingVisibleEditor = this.getVisibleEditorForDocument(state.document);
       if (!existingVisibleEditor) {
         try {
@@ -1020,15 +1004,8 @@ export class TableDataPanelManager {
   }
 
   private handleNativePreviewDocumentClose(document: vscode.TextDocument): void {
-    if (this.isNativePreviewTempPath(document.uri.fsPath)) {
-      try {
-        fs.unlinkSync(document.uri.fsPath);
-      } catch {
-        // Temp preview file may already be removed.
-      }
-    }
-
     const panel = this.nativePreviewDocumentToPanel.get(document.uri.toString());
+
     if (!panel) {
       return;
     }
@@ -1073,15 +1050,11 @@ export class TableDataPanelManager {
       );
       const entries = fs.readdirSync(tmpDir);
       for (const entry of entries) {
-        const isLegacy = entry.startsWith('dbmanager_preview_');
-        const isNamedByPrefix =
-          entry.includes('_dbmanaget_preview_') ||
-          entry.includes('_db_manager_') ||
-          entry.includes('_dbadmin_');
-        if (!isLegacy && !isNamedByPrefix) {
+        const isNamedByPrefix = entry.includes('_dbadmin_');
+        if (!isNamedByPrefix) {
           continue;
         }
-        if (!entry.endsWith('.json') && !entry.endsWith('.txt')) {
+        if (!entry.endsWith('.json') && !entry.endsWith('.txt') && !entry.endsWith('.preview')) {
           continue;
         }
         const fullPath = path.join(tmpDir, entry);
@@ -1192,13 +1165,16 @@ export class TableDataPanelManager {
     initialHideTabHeader: boolean = false
   ): string {
     const nonce = String(Date.now());
-    const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource}; script-src 'nonce-${nonce}';`;
+    const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource}; script-src 'nonce-${nonce}'; connect-src ${webview.cspSource};`;
     const defaultPageSize = this.getDefaultPageSize();
     const codeEditorStyles = buildCodeEditorStyles();
     const codeEditorMarkup = buildCodeEditorMarkup();
     const codeEditorScript = buildCodeEditorScript();
     const codiconsCssUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, 'node_modules', '@vscode', 'codicons', 'dist', 'codicon.css')
+    );
+    const tableAdvancedFilterScriptUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, 'out', 'webview', 'tableAdvancedFilter.js')
     );
     const initialDynamicDefaultColumnWidth = this.getDynamicDefaultColumnWidth();
 
@@ -1340,17 +1316,17 @@ export class TableDataPanelManager {
       box-sizing: border-box;
       border-bottom: 0;
     }
-    th::after {
-      content: '';
-      position: absolute;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      height: 1px;
-      background: var(--vscode-panel-border);
-      pointer-events: none;
-      z-index: 5;
-    }
+    // th::after {
+    //   content: '';
+    //   position: absolute;
+    //   left: 0;
+    //   right: 0;
+    //   bottom: 0;
+    //   height: 1px;
+    //   background: var(--vscode-panel-border);
+    //   pointer-events: none;
+    //   z-index: 5;
+    // }
     th.fill-col,
     td.fill-col {
       width: auto;
@@ -1546,6 +1522,7 @@ export class TableDataPanelManager {
       content: '';
       position: absolute;
       top: 0px;
+      left: 0px;
       width: calc(100% - 1px);
       height: 100%;
       pointer-events: none;
@@ -1786,6 +1763,7 @@ export class TableDataPanelManager {
   </div>
 
   <script nonce="${nonce}">${codeEditorScript}</script>
+  <script nonce="${nonce}" src="${tableAdvancedFilterScriptUri}"></script>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     const queryContainer = document.querySelector('.query-container');
@@ -1799,6 +1777,7 @@ export class TableDataPanelManager {
     const menuBackdrop = document.getElementById('menuBackdrop');
     const errorMsgEl = document.getElementById('errorMsg');
     const tableWrapEl = document.querySelector('.table-wrap');
+    const advancedFilterApi = window.DBAdminAdvancedFilter || null;
 
     const rangeSelectionOverlay = document.createElement('div');
     rangeSelectionOverlay.className = 'range-selection-overlay';
@@ -2434,19 +2413,17 @@ export class TableDataPanelManager {
     }
 
     function isNumericColumn(column) {
-      const dataType = String(column?.dataType || '').toLowerCase();
-      const numericTypes = [
-        'smallint', 'int2',
-        'integer', 'int', 'int4',
-        'bigint', 'int8',
-        'decimal', 'numeric',
-        'real', 'float4',
-        'double precision', 'float8',
-        'money',
-        'serial', 'serial4',
-        'serial8', 'bigserial',
-      ];
-      return numericTypes.includes(dataType);
+      return advancedFilterApi ? Boolean(advancedFilterApi.isNumericColumn(column)) : false;
+    }
+
+    function isDateColumn(column) {
+      return advancedFilterApi ? Boolean(advancedFilterApi.isDateColumn(column)) : false;
+    }
+
+    function buildAdvancedFilterMatcher(column, rawValue) {
+      return advancedFilterApi
+        ? advancedFilterApi.buildAdvancedFilterMatcher(column, rawValue)
+        : null;
     }
 
     function getLongestVisibleCellLength(column, visibleRows) {
@@ -3608,15 +3585,15 @@ export class TableDataPanelManager {
         tableWrapEl.scrollTop += (tdRect.bottom - visibleBottom) + 16;
       }
 
-      if (tdRect.left < wrapRect.left + (30 + 1)) {
+      if (tdRect.left < wrapRect.left + 30) {
         const isFirstCell = colName === displayedColNames[0];
         if (isFirstCell) {
           tableWrapEl.scrollLeft = 0;
         } else {
-          tableWrapEl.scrollLeft -= (wrapRect.left - tdRect.left) + 30 + 1;
+          tableWrapEl.scrollLeft -= (wrapRect.left - tdRect.left) + 30;
         }
-      } else if (tdRect.right > wrapRect.right - 15) {
-        tableWrapEl.scrollLeft += (tdRect.right - wrapRect.right) + 15;
+      } else if (tdRect.right > wrapRect.right - (15 + 1)) {
+        tableWrapEl.scrollLeft += (tdRect.right - wrapRect.right) + 15 + 1;
       }
     }
 
@@ -4565,7 +4542,6 @@ export class TableDataPanelManager {
       }
 
       const textSuperRaw = String(state.searchText || '');
-      console.log({textSuperRaw})
       const textRaw = String(state.searchText || '').trim();
       const text = textRaw.toLowerCase();
       const columnsByName = new Map(columns.map((col) => [col.name, col]));
@@ -4584,14 +4560,26 @@ export class TableDataPanelManager {
       };
 
       const globalNullFilter = parseNullFilterToken(textSuperRaw);
+      const globalAdvancedMatchers =
+        textRaw.length > 0
+          ? columns
+              .map((col) => ({
+                column: col,
+                matcher: buildAdvancedFilterMatcher(col, textRaw),
+              }))
+              .filter((entry) => Boolean(entry.matcher))
+          : [];
+
       const columnFilters = Object.entries(state.columnFilters)
         .map(([columnName, value]) => {
           const rawValue = String(value || '').trim();
+          const column = columnsByName.get(columnName);
           return {
             columnName,
             rawValue,
             lowerValue: rawValue.toLowerCase(),
             nullFilter: parseNullFilterToken(rawValue),
+            advancedMatcher: column ? buildAdvancedFilterMatcher(column, rawValue) : null,
           };
         })
         .filter((entry) => entry.rawValue.length > 0);
@@ -4605,6 +4593,10 @@ export class TableDataPanelManager {
               ? columns.some((col) =>
                   matchesNullFilter(getEffectiveCellValue(row, col.name, ctid), globalNullFilter)
                 )
+              : globalAdvancedMatchers.length > 0
+                ? globalAdvancedMatchers.some((entry) =>
+                    entry.matcher(getEffectiveCellValue(row, entry.column.name, ctid))
+                  )
               : columns.some((col) =>
                   toCellInputText(getEffectiveCellValue(row, col.name, ctid), col)
                     .toLowerCase()
@@ -4619,12 +4611,16 @@ export class TableDataPanelManager {
           return true;
         }
 
-        return columnFilters.every(({ columnName, lowerValue, nullFilter }) => {
+        return columnFilters.every(({ columnName, lowerValue, nullFilter, advancedMatcher }) => {
           const col = columnsByName.get(columnName);
           const cellValue = getEffectiveCellValue(row, columnName, ctid);
 
           if (nullFilter) {
             return matchesNullFilter(cellValue, nullFilter);
+          }
+
+          if (advancedMatcher) {
+            return advancedMatcher(cellValue);
           }
 
           const cellText = col
@@ -5058,6 +5054,12 @@ export class TableDataPanelManager {
 
     // Keyboard handlers for copy/paste/delete
     document.addEventListener('keydown', (event) => {
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 's') {
+        event.preventDefault();
+        save();
+        return;
+      }
+
       const target = event.target;
       if (
         !editingCellInput &&

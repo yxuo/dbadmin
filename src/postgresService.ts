@@ -1,5 +1,6 @@
 import { Client } from 'pg';
 import { PostgresConnection, PostgresConnectionInput } from './models';
+import { parseAdvancedFilterForDataType } from './advancedFilter';
 
 export interface SchemaObjectCounts {
   tables: number;
@@ -336,7 +337,7 @@ export class PostgresService {
       const result = rawResult;
       const results = Array.isArray(rawResult)
         ? rawResult.map((r) => ({
-            columns: r.fields?.map((f) => f.name) ?? [],
+            columns: (r.fields ?? []).map((f: { name: string }) => f.name),
             rows: r.rows,
             rowCount: r.rowCount ?? r.rows.length,
             command: r.command ?? "",
@@ -365,7 +366,7 @@ export class PostgresService {
       }
 
       return {
-        columns: result.fields?.map((f) => f.name) ?? [],
+        columns: (result.fields ?? []).map((f: { name: string }) => f.name),
         rows: result.rows,
         rowCount: result.rowCount ?? result.rows.length,
         command: result.command ?? '',
@@ -906,6 +907,14 @@ export class PostgresService {
       }
 
       const columnMeta = columnsByName.get(columnName);
+      if (columnMeta) {
+        const advancedCondition = this.buildAdvancedFilterCondition(columnMeta, filterValue, params);
+        if (advancedCondition) {
+          whereParts.push(advancedCondition);
+          continue;
+        }
+      }
+
       const shouldUseExactMatch = columnMeta?.isPrimaryKey === true || columnMeta?.isForeignKey === true;
       params.push(shouldUseExactMatch ? filterValue : `%${filterValue}%`);
       whereParts.push(`${this.quoteIdentifier(columnName)}::text ILIKE $${params.length}`);
@@ -922,12 +931,20 @@ export class PostgresService {
             .join(' OR ');
           whereParts.push(`(${globalSearch})`);
         } else {
-          params.push(`%${searchText}%`);
-          const searchParamIndex = params.length;
-          const globalSearch = columnNames
-            .map((columnName) => `CAST(${this.quoteIdentifier(columnName)} AS TEXT) ILIKE $${searchParamIndex}`)
-            .join(' OR ');
-          whereParts.push(`(${globalSearch})`);
+          const advancedGlobalConditions = columns
+            .map((column) => this.buildAdvancedFilterCondition(column, searchText, params))
+            .filter((condition): condition is string => Boolean(condition));
+
+          if (advancedGlobalConditions.length > 0) {
+            whereParts.push(`(${advancedGlobalConditions.join(' OR ')})`);
+          } else {
+            params.push(`%${searchText}%`);
+            const searchParamIndex = params.length;
+            const globalSearch = columnNames
+              .map((columnName) => `CAST(${this.quoteIdentifier(columnName)} AS TEXT) ILIKE $${searchParamIndex}`)
+              .join(' OR ');
+            whereParts.push(`(${globalSearch})`);
+          }
         }
       }
     }
@@ -1101,6 +1118,43 @@ VALUES (${insertValuesSql.join(', ')})`;
     return undefined;
   }
 
+  private buildAdvancedFilterCondition(
+    column: TableColumnMeta,
+    rawFilterValue: string,
+    params: unknown[]
+  ): string | undefined {
+    const parsed = parseAdvancedFilterForDataType(column.dataType, rawFilterValue);
+    if (!parsed) {
+      return undefined;
+    }
+
+    if (parsed.valueType === 'number') {
+      const columnSql = `${this.quoteIdentifier(column.name)}::numeric`;
+      if (parsed.kind === 'comparison') {
+        params.push(parsed.operand);
+        return `(${columnSql} ${parsed.operator} $${params.length})`;
+      }
+
+      params.push(parsed.start);
+      const startPlaceholder = `$${params.length}`;
+      params.push(parsed.end);
+      const endPlaceholder = `$${params.length}`;
+      return `(${columnSql} BETWEEN ${startPlaceholder} AND ${endPlaceholder})`;
+    }
+
+    const columnSql = `${this.quoteIdentifier(column.name)}::date`;
+    if (parsed.kind === 'comparison') {
+      params.push(parsed.operand);
+      return `(${columnSql} ${parsed.operator} $${params.length}::date)`;
+    }
+
+    params.push(parsed.start);
+    const startPlaceholder = `$${params.length}`;
+    params.push(parsed.end);
+    const endPlaceholder = `$${params.length}`;
+    return `(${columnSql} BETWEEN ${startPlaceholder}::date AND ${endPlaceholder}::date)`;
+  }
+
   private async getRoutineDefinitionRow(
     connection: PostgresConnection,
     databaseName: string,
@@ -1224,7 +1278,8 @@ VALUES (${insertValuesSql.join(', ')})`;
     if (typeof value === 'string') {
       const trimmed = value.trim();
       try {
-        return JSON.parse(trimmed);
+        // Keep JSON payload as text so pg does not coerce JS arrays to postgres arrays.
+        return JSON.stringify(JSON.parse(trimmed));
       } catch {
         throw new Error(
           `Valor invalido para a coluna "${column.name}" (${column.dataType}). Informe um JSON valido.`
@@ -1232,7 +1287,13 @@ VALUES (${insertValuesSql.join(', ')})`;
       }
     }
 
-    return value;
+    try {
+      return JSON.stringify(value);
+    } catch {
+      throw new Error(
+        `Valor invalido para a coluna "${column.name}" (${column.dataType}). Informe um JSON valido.`
+      );
+    }
   }
 
   private async connect(connection: PostgresConnectionInput): Promise<Client> {
