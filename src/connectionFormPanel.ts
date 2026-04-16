@@ -81,10 +81,11 @@ export async function showConnectionForm(
             message: `Conexão OK. ${version}`,
           });
         } catch (error) {
+          const errorMessage = getErrorMessage(error);
           panel.webview.postMessage({
             type: 'testResult',
             ok: false,
-            message: getErrorMessage(error),
+            message: errorMessage,
           });
         }
         return;
@@ -132,7 +133,28 @@ function validateDraft(draft: ConnectionDraft): void {
 }
 
 function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : 'Erro inesperado';
+  if (error instanceof Error) {
+    const message = error.message?.trim();
+    return message || 'Erro inesperado';
+  }
+
+  if (typeof error === 'string') {
+    const message = error.trim();
+    return message || 'Erro inesperado';
+  }
+
+  if (error && typeof error === 'object' && 'message' in error) {
+    const maybeMessage = (error as { message?: unknown }).message;
+    if (typeof maybeMessage === 'string' && maybeMessage.trim()) {
+      return maybeMessage;
+    }
+  }
+
+  try {
+    return JSON.stringify(error) || 'Erro inesperado';
+  } catch {
+    return 'Erro inesperado';
+  }
 }
 
 function getHtml(

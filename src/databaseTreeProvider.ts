@@ -50,6 +50,8 @@ interface ConnectionSnapshot {
 export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef> {
   private readonly onDidChangeTreeDataEmitter = new vscode.EventEmitter<TreeNodeRef | undefined>();
   public readonly onDidChangeTreeData = this.onDidChangeTreeDataEmitter.event;
+  private readonly connectionProbeTimeoutMs = 10000;
+  private readonly databaseLoadTimeoutMs = 15000;
 
   private readonly versions = new Map<string, string>();
   private readonly connectionSnapshots = new Map<string, ConnectionSnapshot>();
@@ -917,7 +919,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
   private ensureConnectionSnapshotLoaded(connection: PostgresConnection): void {
     const existingSnapshot = this.connectionSnapshots.get(connection.id);
     const hasActiveLoad = (this.connectionLoadGeneration.get(connection.id) ?? 0) > 0;
-    if (existingSnapshot?.status === 'ready' || (existingSnapshot?.status === 'loading' && hasActiveLoad)) {
+    if (existingSnapshot?.status === 'ready' || hasActiveLoad) {
       return;
     }
 
@@ -949,6 +951,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
       status: 'loading',
       databaseByName: preservedDatabaseByName,
     });
+    this.logConnectionEvent(connection, `status=loading generation=${nextGeneration} seq=${expectedSeq}`);
     this.refresh();
 
     void this.loadConnectionIncrementalWithRetries(connection, expectedSeq, nextGeneration);
@@ -964,15 +967,36 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
 
     for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
       if (!this.isLoadCurrent(connection.id, expectedSeq, generation)) {
+        this.logConnectionEvent(
+          connection,
+          `cancelado: geração/seq mudou (generation=${generation}, seq=${expectedSeq})`
+        );
         return;
       }
 
       try {
-        await this.loadConnectionIncremental(connection, expectedSeq, generation);
+        this.logConnectionEvent(
+          connection,
+          `tentativa ${attempt + 1}/${retryDelaysMs.length + 1}: iniciando teste/listagem`
+        );
+        await this.loadConnectionIncremental(connection, expectedSeq, generation, attempt);
+        this.logConnectionEvent(connection, `tentativa ${attempt + 1}: sucesso`);
         return;
       } catch (error) {
         lastError = error;
+        const message = error instanceof Error ? error.message : 'Erro desconhecido';
+        this.logConnectionEvent(connection, `tentativa ${attempt + 1}: falhou - ${message}`);
+        const snapshot = this.ensureConnectionSnapshot(connection);
+        snapshot.status = 'error';
+        snapshot.errorMessage = `Erro ao conectar: ${message}`;
+        this.versions.set(connection.id, 'Não conectado');
+        this.logConnectionEvent(connection, `status=error motivo="${snapshot.errorMessage}"`);
+        this.refresh();
         if (attempt < retryDelaysMs.length) {
+          this.logConnectionEvent(
+            connection,
+            `aguardando ${retryDelaysMs[attempt]}ms para nova tentativa`
+          );
           await this.delay(retryDelaysMs[attempt]);
           continue;
         }
@@ -988,31 +1012,52 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
     snapshot.status = 'error';
     snapshot.errorMessage = `Erro ao conectar: ${message}`;
     this.versions.set(connection.id, 'Não conectado');
+    this.logConnectionEvent(connection, `status=error motivo="${snapshot.errorMessage}"`);
     this.refresh();
   }
 
   private async loadConnectionIncremental(
     connection: PostgresConnection,
     expectedSeq: number,
-    generation: number
+    generation: number,
+    attempt: number
   ): Promise<void> {
     const snapshot = this.ensureConnectionSnapshot(connection);
-    snapshot.status = 'loading';
-    snapshot.errorMessage = undefined;
-    this.refresh();
+    if (attempt === 0) {
+      snapshot.status = 'loading';
+      snapshot.errorMessage = undefined;
+      this.logConnectionEvent(connection, 'iniciando carregamento incremental');
+      this.refresh();
+    } else {
+      this.logConnectionEvent(connection, `retry em background (tentativa ${attempt + 1})`);
+    }
 
-    const version = await this.postgresService.getVersion(connection);
+    this.logConnectionEvent(connection, 'executando teste de conexão');
+    const version = await this.withTimeout(
+      this.postgresService.testConnection(connection),
+      this.connectionProbeTimeoutMs,
+      'testar conexão'
+    );
     if (!this.isLoadCurrent(connection.id, expectedSeq, generation)) {
+      this.logConnectionEvent(connection, 'teste concluído, mas carga ficou obsoleta');
       return;
     }
 
     this.versions.set(connection.id, version);
+    this.logConnectionEvent(connection, `teste de conexão OK: ${version}`);
     this.refresh();
 
-    const databaseNames = await this.postgresService.listDatabases(connection);
+    this.logConnectionEvent(connection, 'listando bancos');
+    const databaseNames = await this.withTimeout(
+      this.postgresService.listDatabases(connection),
+      this.databaseLoadTimeoutMs,
+      'listar bancos'
+    );
     if (!this.isLoadCurrent(connection.id, expectedSeq, generation)) {
+      this.logConnectionEvent(connection, 'listagem concluída, mas carga ficou obsoleta');
       return;
     }
+    this.logConnectionEvent(connection, `bancos carregados: ${databaseNames.length}`);
 
     const validDatabaseNames = new Set(databaseNames);
     for (const databaseName of Array.from(snapshot.databaseByName.keys())) {
@@ -1039,11 +1084,13 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
     );
 
     if (!this.isLoadCurrent(connection.id, expectedSeq, generation)) {
+      this.logConnectionEvent(connection, 'carregamento de bancos concluído, mas carga ficou obsoleta');
       return;
     }
 
     snapshot.status = 'ready';
     snapshot.errorMessage = undefined;
+    this.logConnectionEvent(connection, 'status=ready carregamento finalizado');
     this.refresh();
   }
 
@@ -1284,6 +1331,32 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
 
   private delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private async withTimeout<T>(
+    operation: Promise<T>,
+    timeoutMs: number,
+    operationName: string
+  ): Promise<T> {
+    return await new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`Timeout ao ${operationName} após ${timeoutMs}ms`));
+      }, timeoutMs);
+
+      operation
+        .then((result) => {
+          clearTimeout(timer);
+          resolve(result);
+        })
+        .catch((error) => {
+          clearTimeout(timer);
+          reject(error);
+        });
+    });
+  }
+
+  private logConnectionEvent(connection: PostgresConnection, message: string): void {
+    // console.log(`[dbadmin][tree][${connection.nickname}][${connection.host}:${connection.port}/${connection.database}] ${message}`);
   }
 
 }
