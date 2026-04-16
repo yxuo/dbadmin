@@ -1306,7 +1306,7 @@ export class TableDataPanelManager {
     .table-wrap:focus { outline: none; }
     table { width: 100%; border-collapse: collapse; }
     .table-cells-body { user-select: none; }
-    th, td { border-bottom: 1px solid color-mix(in srgb, var(--vscode-foreground) 15%, transparent); padding: 2px 6px; vertical-align: top; }
+    th, td { border-bottom: 1px solid color-mix(in srgb, var(--vscode-foreground) 15%, transparent); padding: 2px 6px 1px 6px; vertical-align: top; }
     th {
       position: sticky;
       top: 0;
@@ -1316,17 +1316,17 @@ export class TableDataPanelManager {
       box-sizing: border-box;
       border-bottom: 0;
     }
-    // th::after {
-    //   content: '';
-    //   position: absolute;
-    //   left: 0;
-    //   right: 0;
-    //   bottom: 0;
-    //   height: 1px;
-    //   background: var(--vscode-panel-border);
-    //   pointer-events: none;
-    //   z-index: 5;
-    // }
+    th::after {
+      content: '';
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 1px;
+      background: var(--vscode-panel-border);
+      pointer-events: none;
+      z-index: 5;
+    }
     th.fill-col,
     td.fill-col {
       width: auto;
@@ -1337,6 +1337,19 @@ export class TableDataPanelManager {
     th.fill-col {
       background: var(--vscode-sideBar-background);
       z-index: 1;
+    }
+    td:not(.fill-col):has(+ td.fill-col) {
+      position: relative;
+    }
+    td:not(.fill-col):has(+ td.fill-col)::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 1px;
+      height: 100%;
+      background: var(--vscode-panel-border);
+      pointer-events: none;
     }
     .th-title { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 0px 5px 0px 0px; cursor: grab; }
     .th-name { font-weight: 600; font-size: 12px; cursor: inherit; flex: 1 1 auto; min-width: 0; text-align: left; border-radius: 4px; padding-left: 5px; }
@@ -1562,16 +1575,22 @@ export class TableDataPanelManager {
       pointer-events: none;
     }
     .cell-input:not(:focus):not(.editing) { background: transparent !important; border-color: transparent !important; cursor: pointer; pointer-events: none; }
-    .cell-input.editing { pointer-events: auto; }
+    .cell-input.editing {
+      pointer-events: auto;
+      cursor: text;
+      user-select: text;
+      -webkit-user-select: text;
+    }
     td.cell-selected { box-shadow: inset 0 0 0 1000px color-mix(in srgb, var(--vscode-foreground) 10%, transparent); }
     td.cell-selected-current-origin::before {
       content: "";
       position: absolute;
       inset: 0;
       border: 2px solid color-mix(in srgb, var(--vscode-focusBorder) 70%, var(--vscode-panel-border));
-      top: -1px;
+      top: 0px;
       bottom: -1px;
-      right: -1px;
+      right: 0px;
+      pointer-events: none;
     }
     tr.row-marked-delete td { background: rgba(220, 53, 69, 0.16); border-bottom-color: color-mix(in srgb, var(--vscode-foreground) 15%, rgba(220, 53, 69, 0.16)) !important; }
     td:has(.cell-input.dirty) { background: rgba(70, 130, 255, 0.16); border-bottom-color: color-mix(in srgb, var(--vscode-foreground) 15%, rgba(70, 130, 255, 0.16)) !important; }
@@ -1579,7 +1598,6 @@ export class TableDataPanelManager {
     @media (max-height: 500px) {
       .header { display: none; }
       .query-container { display: none; }
-      body.header-hidden #toolbarMenuBtn { display: none; }
     }
     @media (max-width: 500px) {
       body.header-hidden #toolbarMenuBtn { display: none; }
@@ -1736,8 +1754,8 @@ export class TableDataPanelManager {
         <div class="export-group-title">Dados</div>
         <div class="export-group">
           <label class="export-option"><input type="radio" name="exportDataScope" id="exportDataResult" value="result" checked /><span>Resultado</span></label>
-          <label class="export-option"><input type="radio" name="exportDataScope" id="exportDataAll" value="all" /><span>Tudo (sem paginacao)</span></label>
-          <label class="export-option" id="exportSelectedOption"><input type="radio" name="exportDataScope" id="exportDataSelected" value="selected" /><span>Celulas selecionadas</span></label>
+          <label class="export-option"><input type="radio" name="exportDataScope" id="exportDataAll" value="all" /><span>Tudo (sem paginação)</span></label>
+          <label class="export-option" id="exportSelectedOption"><input type="radio" name="exportDataScope" id="exportDataSelected" value="selected" /><span>Células selecionadas</span></label>
         </div>
       </div>
     </div>
@@ -1785,7 +1803,6 @@ export class TableDataPanelManager {
     rangeSelectionOverlay.style.pointerEvents = 'none';
     rangeSelectionOverlay.style.display = 'none';
     rangeSelectionOverlay.style.border = '1px solid color-mix(in srgb, var(--vscode-focusBorder) 70%, var(--vscode-panel-border))';
-    rangeSelectionOverlay.style.borderRadius = '1px';
     rangeSelectionOverlay.style.zIndex = '0';
     tableWrapEl.style.position = 'relative';
     tableWrapEl.appendChild(rangeSelectionOverlay);
@@ -2114,6 +2131,32 @@ export class TableDataPanelManager {
       return Date.now() <= focusGuardUntil;
     }
 
+    function isTextEditingElement(element) {
+      return (
+        element instanceof HTMLInputElement ||
+        element instanceof HTMLTextAreaElement ||
+        element instanceof HTMLSelectElement ||
+        (element instanceof HTMLElement && element.isContentEditable)
+      );
+    }
+
+    function shouldHandleGridSelectAllShortcut(event) {
+      if (editingCellInput) {
+        return false;
+      }
+
+      const active = document.activeElement;
+      const activeInGrid = active instanceof Element && tableWrapEl.contains(active);
+      const pointerInGrid = lastPointerTarget instanceof Element && tableWrapEl.contains(lastPointerTarget);
+      const activeIsNeutral = !active || active === document.body || active === document.documentElement;
+
+      if (isTextEditingElement(event.target) || isTextEditingElement(active)) {
+        return false;
+      }
+
+      return activeInGrid || (activeIsNeutral && pointerInGrid);
+    }
+
     function clearStickyFocus() {
       if (stickyFocusTimer) {
         clearTimeout(stickyFocusTimer);
@@ -2274,8 +2317,8 @@ export class TableDataPanelManager {
       }
 
       const hasSearchText = String(searchInputEl.value || '').length > 0;
-      const isCompactHeight = window.innerHeight <= 500;
-      const canShowContext = hideTabHeader && !hasSearchText && !isCompactHeight;
+      // const isCompactHeight = window.innerHeight <= 500;
+      const canShowContext = hideTabHeader && !hasSearchText;
 
       searchInputEl.placeholder = canShowContext ? '' : 'Pesquisar tudo';
 
@@ -3230,6 +3273,36 @@ export class TableDataPanelManager {
       }
     }
 
+    function selectAllDisplayedCells() {
+      keyboardSelectionAnchor = displayedRowKeys.length > 0 && displayedColNames.length > 0
+        ? { rowIndex: 0, colIndex: 0 }
+        : null;
+      keyboardSelectionAdditive = false;
+      keyboardSelectionBase = new Map();
+      selectedCells.clear();
+
+      displayedRowKeys.forEach((rowKey) => {
+        selectedCells.set(rowKey, new Set(displayedColNames));
+      });
+
+      if (displayedRowKeys.length > 0 && displayedColNames.length > 0) {
+        currentRangeSelection = {
+          anchor: { rowIndex: 0, colIndex: 0 },
+          focus: {
+            rowIndex: displayedRowKeys.length - 1,
+            colIndex: displayedColNames.length - 1,
+          },
+        };
+        lastSelectedCell = { rowKey: displayedRowKeys[0], colName: displayedColNames[0] };
+      } else {
+        currentRangeSelection = null;
+        lastSelectedCell = null;
+      }
+
+      syncSelectionCountsFromSelectedCells();
+      renderSelectionState();
+    }
+
     function cloneSelectionMap(source) {
       const clone = new Map();
       source.forEach((set, rowKey) => {
@@ -3534,13 +3607,13 @@ export class TableDataPanelManager {
           const rightRect = rightTd.getBoundingClientRect();
 
           /** Esses números -2, -1 são ajustes finos */
-          const overlayTop = topRect.top - wrapRect.top + tableWrapEl.scrollTop - 2;
+          const overlayTop = topRect.top - wrapRect.top + tableWrapEl.scrollTop - 1;
           const stickySelectionWidth = 30 + 0;
           const minOverlayLeftPx = wrapRect.left + stickySelectionWidth;
           const clampedOverlayLeftPx = Math.max(leftRect.left, minOverlayLeftPx);
           const overlayLeft = clampedOverlayLeftPx - wrapRect.left + tableWrapEl.scrollLeft;
-          const overlayWidth = (rightRect.right - clampedOverlayLeftPx) - 1;
-          const overlayHeight = (bottomRect.bottom - topRect.top) - 1;
+          const overlayWidth = (rightRect.right - clampedOverlayLeftPx) - 2;
+          const overlayHeight = (bottomRect.bottom - topRect.top) - 2;
 
           if (overlayWidth > 0) {
             rangeSelectionOverlay.style.top = overlayTop + 'px';
@@ -3592,8 +3665,8 @@ export class TableDataPanelManager {
         } else {
           tableWrapEl.scrollLeft -= (wrapRect.left - tdRect.left) + 30;
         }
-      } else if (tdRect.right > wrapRect.right - (15 + 1)) {
-        tableWrapEl.scrollLeft += (tdRect.right - wrapRect.right) + 15 + 1;
+      } else if (tdRect.right > wrapRect.right - (15)) {
+        tableWrapEl.scrollLeft += (tdRect.right - wrapRect.right) + 15;
       }
     }
 
@@ -3963,14 +4036,7 @@ export class TableDataPanelManager {
       selectTh.textContent = '';
       selectTh.style.cursor = 'pointer';
       selectTh.addEventListener('click', () => {
-        currentRangeSelection = null;
-        selectedCells.clear();
-        visibleRows.forEach((row, rowIndex) => {
-          const rk = row.__dbadmin_ctid || ('new:' + rowIndex);
-          selectedCells.set(rk, new Set(displayColumns.map((c) => c.name)));
-        });
-        syncSelectionCountsFromSelectedCells();
-        renderSelectionState();
+        selectAllDisplayedCells();
       });
       headRow.appendChild(selectTh);
 
@@ -4218,6 +4284,7 @@ export class TableDataPanelManager {
           th.style.width = defaultWidth + 'px';
           th.style.minWidth = defaultWidth + 'px';
           th.style.maxWidth = defaultWidth + 'px';
+          renderSelectionState();
           notifyLayoutChanged();
         });
 
@@ -4446,6 +4513,13 @@ export class TableDataPanelManager {
           input.addEventListener('blur', () => {
             if (input === editingCellInput) {
               disableCellEditing(input);
+            }
+          });
+
+          input.addEventListener('mousedown', (event) => {
+            if (input.classList.contains('editing')) {
+              // Keep text-selection interactions inside the input without triggering td drag-selection.
+              event.stopPropagation();
             }
           });
 
@@ -4987,6 +5061,7 @@ export class TableDataPanelManager {
         columnResizeState.th.style.width = nextWidth + 'px';
         columnResizeState.th.style.minWidth = nextWidth + 'px';
         columnResizeState.th.style.maxWidth = nextWidth + 'px';
+        renderSelectionState();
         return;
       }
 
@@ -5057,6 +5132,19 @@ export class TableDataPanelManager {
       if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 's') {
         event.preventDefault();
         save();
+        return;
+      }
+
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'a') {
+        if (shouldHandleGridSelectAllShortcut(event)) {
+          event.preventDefault();
+          event.stopPropagation();
+          const selection = window.getSelection ? window.getSelection() : null;
+          if (selection && typeof selection.removeAllRanges === 'function') {
+            selection.removeAllRanges();
+          }
+          selectAllDisplayedCells();
+        }
         return;
       }
 
