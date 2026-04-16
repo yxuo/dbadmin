@@ -236,9 +236,10 @@ function buildBackupHtml(webview: vscode.Webview, node: SchemaNodeRef): string {
       <div class="field">
         <label for="format">Formato</label>
         <select id="format">
-          <option value="custom" selected>Custom ou tar</option>
-          <option value="tar">Custom ou tar (tar)</option>
-          <option value="directory">Diret&oacute;rio</option>
+          <option value="custom" selected>Custom</option>
+          <option value="tar">Tar</option>
+          <option value="plain">Plain</option>
+          <option value="directory">Directory</option>
         </select>
       </div>
       <div class="field">
