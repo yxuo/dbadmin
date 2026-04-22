@@ -171,6 +171,22 @@ export class PostgresService {
     }
   }
 
+  public async truncateTable(
+    connection: PostgresConnection,
+    databaseName: string,
+    schemaName: string,
+    tableName: string
+  ): Promise<void> {
+    const client = await this.connect({ ...connection, database: databaseName });
+    try {
+      await client.query(
+        `TRUNCATE TABLE ${this.quoteIdentifier(schemaName)}.${this.quoteIdentifier(tableName)} CASCADE`
+      );
+    } finally {
+      await client.end();
+    }
+  }
+
   public async listSchemas(connection: PostgresConnection, databaseName: string): Promise<string[]> {
     const client = await this.connect({ ...connection, database: databaseName });
     try {

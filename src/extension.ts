@@ -600,6 +600,36 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand('dbadmin.refreshConnection', (node?: ConnectionNodeRef) => {
+      if (!node || node.type !== 'connection') {
+        return;
+      }
+
+      treeProvider.reloadConnection(node.connection);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('dbadmin.refreshDatabase', (node?: DatabaseNodeRef) => {
+      if (!node || node.type !== 'database') {
+        return;
+      }
+
+      treeProvider.reloadDatabase(node.connection, node.databaseName);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('dbadmin.refreshSchema', (node?: SchemaNodeRef) => {
+      if (!node || node.type !== 'schema') {
+        return;
+      }
+
+      treeProvider.reloadSchema(node.connection, node.databaseName, node.schemaName);
+    })
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand('dbadmin.openSettings', async () => {
       try {
         settingsPanel.show();
@@ -632,6 +662,40 @@ export function activate(context: vscode.ExtensionContext): void {
         node,
         newTab: true,
       });
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('dbadmin.truncateTable', async (node?: DbObjectNodeRef) => {
+      try {
+        if (!node || node.type !== 'dbObject' || node.kind !== 'table') {
+          return;
+        }
+
+        const confirmation = await vscode.window.showWarningMessage(
+          `Deseja esvaziar a tabela "${node.schemaName}.${node.objectName}"? Esta ação remove todos os registros e também pode esvaziar tabelas relacionadas por chave estrangeira (CASCADE).`,
+          { modal: true },
+          'Esvaziar'
+        );
+
+        if (confirmation !== 'Esvaziar') {
+          return;
+        }
+
+        await postgresService.truncateTable(
+          node.connection,
+          node.databaseName,
+          node.schemaName,
+          node.objectName
+        );
+
+        await treeProvider.reloadAllMetadata();
+        vscode.window.showInformationMessage(
+          `Tabela "${node.schemaName}.${node.objectName}" esvaziada com sucesso.`
+        );
+      } catch (error) {
+        showError(error);
+      }
     })
   );
 

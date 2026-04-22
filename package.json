@@ -123,6 +123,21 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "dbadmin.refreshConnection",
+        "title": "Atualizar Conexão",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "dbadmin.refreshDatabase",
+        "title": "Atualizar Banco de Dados",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "dbadmin.refreshSchema",
+        "title": "Atualizar Schema",
+        "icon": "$(refresh)"
+      },
+      {
         "command": "dbadmin.openSettings",
         "title": "Configurações",
         "icon": "$(settings-gear)"
@@ -135,6 +150,11 @@
         "command": "dbadmin.openTableInNewTab",
         "title": "Abrir em nova aba",
         "icon": "$(diff-renamed)"
+      },
+      {
+        "command": "dbadmin.truncateTable",
+        "title": "Esvaziar tabela",
+        "icon": "$(trash)"
       },
       {
         "command": "dbadmin.createDatabase",
@@ -349,6 +369,11 @@
           "group": "navigation"
         },
         {
+          "command": "dbadmin.truncateTable",
+          "when": "view == databaseExplorer && viewItem == dbObject:table",
+          "group": "navigation@1"
+        },
+        {
           "command": "dbadmin.createDatabase",
           "when": "view == databaseExplorer && viewItem == connection",
           "group": "inline@2"
@@ -364,6 +389,16 @@
           "group": "navigation@2"
         },
         {
+          "command": "dbadmin.refreshConnection",
+          "when": "view == databaseExplorer && viewItem == connection",
+          "group": "inline@3"
+        },
+        {
+          "command": "dbadmin.refreshConnection",
+          "when": "view == databaseExplorer && viewItem == connection",
+          "group": "navigation@3"
+        },
+        {
           "command": "dbadmin.renameDatabase",
           "when": "view == databaseExplorer && viewItem == database",
           "group": "navigation"
@@ -377,6 +412,16 @@
           "command": "dbadmin.expandNode",
           "when": "view == databaseExplorer && viewItem == database",
           "group": "navigation@2"
+        },
+        {
+          "command": "dbadmin.refreshDatabase",
+          "when": "view == databaseExplorer && viewItem == database",
+          "group": "inline"
+        },
+        {
+          "command": "dbadmin.refreshDatabase",
+          "when": "view == databaseExplorer && viewItem == database",
+          "group": "navigation@3"
         },
         {
           "command": "dbadmin.backupSchema",
@@ -397,6 +442,16 @@
           "command": "dbadmin.restoreSchema",
           "when": "view == databaseExplorer && viewItem == schema",
           "group": "navigation@2"
+        },
+        {
+          "command": "dbadmin.refreshSchema",
+          "when": "view == databaseExplorer && viewItem == schema",
+          "group": "inline@1"
+        },
+        {
+          "command": "dbadmin.refreshSchema",
+          "when": "view == databaseExplorer && viewItem == schema",
+          "group": "navigation@3"
         },
         {
           "command": "dbadmin.createSchema",

@@ -106,6 +106,44 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
     this.refresh();
   }
 
+  public reloadConnection(connection: PostgresConnection): void {
+    this.startConnectionLoad(connection, this.metadataLoadSeq);
+  }
+
+  public reloadDatabase(connection: PostgresConnection, databaseName: string): void {
+    const snapshot = this.connectionSnapshots.get(connection.id);
+    if (!snapshot) {
+      return;
+    }
+
+    const generation = this.connectionLoadGeneration.get(connection.id) ?? 0;
+    const db = snapshot.databaseByName.get(databaseName);
+    if (db) {
+      db.status = 'loading';
+      db.errorMessage = undefined;
+    }
+
+    this.refresh();
+    void this.loadDatabaseIncremental(connection, databaseName, this.metadataLoadSeq, generation);
+  }
+
+  public reloadSchema(connection: PostgresConnection, databaseName: string, schemaName: string): void {
+    const snapshot = this.connectionSnapshots.get(connection.id);
+    if (!snapshot) {
+      return;
+    }
+
+    const generation = this.connectionLoadGeneration.get(connection.id) ?? 0;
+    const schema = this.getSchemaSnapshot(connection.id, databaseName, schemaName);
+    if (schema) {
+      schema.status = 'loading';
+      schema.errorMessage = undefined;
+    }
+
+    this.refresh();
+    void this.loadSchemaIncremental(connection, databaseName, schemaName, this.metadataLoadSeq, generation);
+  }
+
   public clearConnectionCache(connectionId: string): void {
     this.versions.delete(connectionId);
     this.connectionSnapshots.delete(connectionId);
@@ -301,6 +339,15 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
         if (element.kind === 'schemas') {
           const schemas = Array.from(database.schemaByName.keys()).sort((a, b) => a.localeCompare(b));
           if (schemas.length === 0) {
+            if (database.status === 'error') {
+              return [
+                {
+                  type: 'placeholder',
+                  message: database.errorMessage ?? 'Erro ao carregar schemas.',
+                } satisfies PlaceholderNodeRef,
+              ];
+            }
+
             if (database.status === 'created' || database.status === 'loading') {
               return [
                 {
@@ -328,6 +375,15 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
 
         const extensions = [...database.extensionNames];
         if (extensions.length === 0) {
+          if (database.status === 'error') {
+            return [
+              {
+                type: 'placeholder',
+                message: database.errorMessage ?? 'Erro ao carregar extensions.',
+              } satisfies PlaceholderNodeRef,
+            ];
+          }
+
           if (database.status === 'created' || database.status === 'loading') {
             return [
               {
@@ -364,13 +420,25 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
           ];
         }
 
+        const hasObjects =
+          schema.tableNames.length > 0 ||
+          schema.viewNames.length > 0 ||
+          schema.functionNames.length > 0 ||
+          schema.procedureNames.length > 0 ||
+          schema.triggerNames.length > 0;
+
+        if (!hasObjects && schema.status === 'error') {
+          return [
+            {
+              type: 'placeholder',
+              message: schema.errorMessage ?? 'Erro ao carregar objetos do schema.',
+            } satisfies PlaceholderNodeRef,
+          ];
+        }
+
         if (
-          schema.status !== 'ready' &&
-          schema.tableNames.length === 0 &&
-          schema.viewNames.length === 0 &&
-          schema.functionNames.length === 0 &&
-          schema.procedureNames.length === 0 &&
-          schema.triggerNames.length === 0
+          !hasObjects &&
+          (schema.status === 'created' || schema.status === 'loading')
         ) {
           return [
             {
@@ -447,6 +515,15 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
         const tableCountByName = schemaSnapshot.tableCountByName;
 
         if (filteredObjectNames.length === 0) {
+          if (schemaSnapshot.status === 'error') {
+            return [
+              {
+                type: 'placeholder',
+                message: schemaSnapshot.errorMessage ?? 'Erro ao carregar objetos.',
+              } satisfies PlaceholderNodeRef,
+            ];
+          }
+
           if (schemaSnapshot.status === 'created' || schemaSnapshot.status === 'loading') {
             return [
               {
@@ -1203,55 +1280,54 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
     };
 
     let failed = false;
+    const failureMessages: string[] = [];
+    const registerFailure = (label: string, error: unknown): void => {
+      failed = true;
+      failureMessages.push(`${label}: ${this.describeError(error)}`);
+    };
 
     const tasks: Promise<void>[] = [
-      this.postgresService
-        .listTables(connection, databaseName, schemaName)
+      this.postgresService.listTables(connection, databaseName, schemaName)
         .then((items) => safeUpdate((target) => {
           target.tableNames = [...items].sort((a, b) => a.localeCompare(b));
         }))
-        .catch(() => {
-          failed = true;
+        .catch((error) => {
+          registerFailure('Tabelas', error);
         }),
-      this.postgresService
-        .listViews(connection, databaseName, schemaName)
+      this.postgresService.listViews(connection, databaseName, schemaName)
         .then((items) => safeUpdate((target) => {
           target.viewNames = [...items].sort((a, b) => a.localeCompare(b));
         }))
-        .catch(() => {
-          failed = true;
+        .catch((error) => {
+          registerFailure('Views', error);
         }),
-      this.postgresService
-        .listFunctions(connection, databaseName, schemaName)
+      this.postgresService.listFunctions(connection, databaseName, schemaName)
         .then((items) => safeUpdate((target) => {
           target.functionNames = [...items].sort((a, b) => a.localeCompare(b));
         }))
-        .catch(() => {
-          failed = true;
+        .catch((error) => {
+          registerFailure('Functions', error);
         }),
-      this.postgresService
-        .listProcedures(connection, databaseName, schemaName)
+      this.postgresService.listProcedures(connection, databaseName, schemaName)
         .then((items) => safeUpdate((target) => {
           target.procedureNames = [...items].sort((a, b) => a.localeCompare(b));
         }))
-        .catch(() => {
-          failed = true;
+        .catch((error) => {
+          registerFailure('Procedures', error);
         }),
-      this.postgresService
-        .listTriggers(connection, databaseName, schemaName)
+      this.postgresService.listTriggers(connection, databaseName, schemaName)
         .then((items) => safeUpdate((target) => {
           target.triggerNames = [...items].sort((a, b) => a.localeCompare(b));
         }))
-        .catch(() => {
-          failed = true;
+        .catch((error) => {
+          registerFailure('Triggers', error);
         }),
-      this.postgresService
-        .listTableEstimatedCounts(connection, databaseName, schemaName)
+      this.postgresService.listTableEstimatedCounts(connection, databaseName, schemaName)
         .then((items) => safeUpdate((target) => {
           target.tableCountByName = new Map(items.map((item) => [item.tableName, item.count]));
         }))
-        .catch(() => {
-          failed = true;
+        .catch((error) => {
+          registerFailure('Contagem de tabelas', error);
         }),
     ];
 
@@ -1267,7 +1343,9 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
     }
 
     target.status = failed ? 'error' : 'ready';
-    target.errorMessage = failed ? 'Parte dos metadados falhou ao carregar' : undefined;
+    target.errorMessage = failed
+      ? `Falha ao carregar o schema ${schemaName}: ${failureMessages.join(' | ')}`
+      : undefined;
     this.refresh();
   }
 
@@ -1353,6 +1431,10 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
           reject(error);
         });
     });
+  }
+
+  private describeError(error: unknown): string {
+    return error instanceof Error ? error.message : 'Erro desconhecido';
   }
 
   private logConnectionEvent(connection: PostgresConnection, message: string): void {
