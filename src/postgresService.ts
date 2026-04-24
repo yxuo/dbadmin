@@ -1312,6 +1312,270 @@ VALUES (${insertValuesSql.join(', ')})`;
     }
   }
 
+  public async getTableDiagramData(
+    connection: PostgresConnection,
+    databaseName: string,
+    schemaName: string,
+    tableName: string,
+    mainColumns?: TableColumnMeta[]
+  ): Promise<DiagramDataResult> {
+    const client = await this.connect({ ...connection, database: databaseName });
+    try {
+      // Use provided columns (already loaded from table panel) or fetch fresh
+      const resolvedMainColumns = mainColumns ?? (await this.queryColumnsWithClient(client, schemaName, tableName));
+
+      // Fetch reverse FKs (other tables pointing TO this table) via pg_catalog (fast)
+      const reverseResult = await client.query<{
+        from_schema: string;
+        from_table: string;
+        from_column: string;
+        to_column: string;
+      }>(
+        `SELECT
+           n.nspname       AS from_schema,
+           c.relname       AS from_table,
+           a.attname       AS from_column,
+           ta.attname      AS to_column
+         FROM pg_constraint con
+         JOIN pg_class c       ON c.oid  = con.conrelid
+         JOIN pg_namespace n   ON n.oid  = c.relnamespace
+         JOIN pg_class tc      ON tc.oid = con.confrelid
+         JOIN pg_namespace tn  ON tn.oid = tc.relnamespace
+         CROSS JOIN LATERAL (
+           SELECT unnest(con.conkey) AS la, unnest(con.confkey) AS ra
+         ) AS cols
+         JOIN pg_attribute a   ON a.attrelid  = c.oid  AND a.attnum = cols.la
+         JOIN pg_attribute ta  ON ta.attrelid = tc.oid AND ta.attnum = cols.ra
+         WHERE con.contype = 'f'
+           AND tn.nspname = $1
+           AND tc.relname = $2`,
+        [schemaName, tableName]
+      );
+      const reverseFks = reverseResult.rows;
+
+      // Collect all related table keys
+      const relatedKeySet = new Set<string>();
+      for (const col of resolvedMainColumns) {
+        if (col.isForeignKey && col.foreignKeyTargetTable && col.foreignKeyTargetSchema) {
+          relatedKeySet.add(`${col.foreignKeyTargetSchema}.${col.foreignKeyTargetTable}`);
+        }
+      }
+      for (const fk of reverseFks) {
+        relatedKeySet.add(`${fk.from_schema}.${fk.from_table}`);
+      }
+      const relatedTablesList = [...relatedKeySet]
+        .filter((k) => k !== `${schemaName}.${tableName}`)
+        .map((key) => {
+          const dotIdx = key.indexOf('.');
+          return { schema: key.substring(0, dotIdx), name: key.substring(dotIdx + 1) };
+        });
+
+      // Fetch ALL related table columns in a single query (one round-trip)
+      const relatedColumnsMap = await this.queryMultipleTablesColumnsWithClient(client, relatedTablesList);
+
+      const tables: DiagramTableInfo[] = [
+        { schemaName, tableName, columns: resolvedMainColumns, isMain: true },
+      ];
+      for (const { schema, name } of relatedTablesList) {
+        tables.push({
+          schemaName: schema,
+          tableName: name,
+          columns: relatedColumnsMap.get(`${schema}.${name}`) ?? [],
+          isMain: false,
+        });
+      }
+
+      const foreignKeys: DiagramDataResult['foreignKeys'] = [];
+      for (const col of resolvedMainColumns) {
+        if (
+          col.isForeignKey &&
+          col.foreignKeyTargetTable &&
+          col.foreignKeyTargetSchema &&
+          col.foreignKeyTargetColumn
+        ) {
+          foreignKeys.push({
+            fromSchema: schemaName,
+            fromTable: tableName,
+            fromColumn: col.name,
+            toSchema: col.foreignKeyTargetSchema,
+            toTable: col.foreignKeyTargetTable,
+            toColumn: col.foreignKeyTargetColumn,
+          });
+        }
+      }
+      for (const fk of reverseFks) {
+        foreignKeys.push({
+          fromSchema: fk.from_schema,
+          fromTable: fk.from_table,
+          fromColumn: fk.from_column,
+          toSchema: schemaName,
+          toTable: tableName,
+          toColumn: fk.to_column,
+        });
+      }
+
+      return { tables, foreignKeys };
+    } finally {
+      await client.end();
+    }
+  }
+
+  private async queryColumnsWithClient(
+    client: Client,
+    schemaName: string,
+    tableName: string
+  ): Promise<TableColumnMeta[]> {
+    const result = await client.query<{
+      name: string;
+      data_type: string;
+      is_nullable: boolean;
+      column_default: string | null;
+      is_primary_key: boolean;
+      is_foreign_key: boolean;
+      foreign_key_target_schema: string | null;
+      foreign_key_target_table: string | null;
+      foreign_key_target_column: string | null;
+    }>(
+      `SELECT
+         a.attname      AS name,
+         pg_catalog.format_type(a.atttypid, a.atttypmod) AS data_type,
+         NOT a.attnotnull                                 AS is_nullable,
+         pg_catalog.pg_get_expr(ad.adbin, ad.adrelid)    AS column_default,
+         EXISTS (
+           SELECT 1 FROM pg_constraint pk
+           WHERE pk.conrelid = a.attrelid AND pk.contype = 'p'
+             AND a.attnum = ANY(pk.conkey)
+         ) AS is_primary_key,
+         fk.fk_target_schema IS NOT NULL AS is_foreign_key,
+         fk.fk_target_schema             AS foreign_key_target_schema,
+         fk.fk_target_table              AS foreign_key_target_table,
+         fk.fk_target_column             AS foreign_key_target_column
+       FROM pg_attribute a
+       JOIN pg_class     c  ON c.oid = a.attrelid
+       JOIN pg_namespace n  ON n.oid = c.relnamespace
+       LEFT JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
+       LEFT JOIN (
+         SELECT
+           con.conrelid,
+           cols.la                 AS fk_attnum,
+           tn.nspname              AS fk_target_schema,
+           tc.relname              AS fk_target_table,
+           ta.attname              AS fk_target_column
+         FROM pg_constraint con
+         JOIN pg_class     tc ON tc.oid = con.confrelid
+         JOIN pg_namespace tn ON tn.oid = tc.relnamespace
+         CROSS JOIN LATERAL (
+           SELECT unnest(con.conkey) AS la, unnest(con.confkey) AS ra
+         ) AS cols
+         JOIN pg_attribute ta ON ta.attrelid = con.confrelid AND ta.attnum = cols.ra
+         WHERE con.contype = 'f'
+       ) fk ON fk.conrelid = a.attrelid AND fk.fk_attnum = a.attnum
+       WHERE a.attnum > 0 AND NOT a.attisdropped
+         AND n.nspname = $1
+         AND c.relname = $2
+       ORDER BY a.attnum`,
+      [schemaName, tableName]
+    );
+    return result.rows.map((row) => ({
+      name: row.name,
+      dataType: row.data_type,
+      isNullable: Boolean(row.is_nullable),
+      hasDefault: row.column_default !== null,
+      isPrimaryKey: Boolean(row.is_primary_key),
+      isForeignKey: Boolean(row.is_foreign_key),
+      foreignKeyTargetSchema: row.foreign_key_target_schema,
+      foreignKeyTargetTable: row.foreign_key_target_table,
+      foreignKeyTargetColumn: row.foreign_key_target_column,
+    }));
+  }
+
+  private async queryMultipleTablesColumnsWithClient(
+    client: Client,
+    tables: Array<{ schema: string; name: string }>
+  ): Promise<Map<string, TableColumnMeta[]>> {
+    if (tables.length === 0) return new Map();
+    const schemas = tables.map((t) => t.schema);
+    const names = tables.map((t) => t.name);
+    const result = await client.query<{
+      table_schema: string;
+      table_name: string;
+      name: string;
+      data_type: string;
+      is_nullable: boolean;
+      column_default: string | null;
+      is_primary_key: boolean;
+      is_foreign_key: boolean;
+      foreign_key_target_schema: string | null;
+      foreign_key_target_table: string | null;
+      foreign_key_target_column: string | null;
+    }>(
+      `SELECT
+         n.nspname      AS table_schema,
+         c.relname      AS table_name,
+         a.attname      AS name,
+         pg_catalog.format_type(a.atttypid, a.atttypmod) AS data_type,
+         NOT a.attnotnull                                 AS is_nullable,
+         pg_catalog.pg_get_expr(ad.adbin, ad.adrelid)    AS column_default,
+         EXISTS (
+           SELECT 1 FROM pg_constraint pk
+           WHERE pk.conrelid = a.attrelid AND pk.contype = 'p'
+             AND a.attnum = ANY(pk.conkey)
+         ) AS is_primary_key,
+         fk.fk_target_schema IS NOT NULL AS is_foreign_key,
+         fk.fk_target_schema             AS foreign_key_target_schema,
+         fk.fk_target_table              AS foreign_key_target_table,
+         fk.fk_target_column             AS foreign_key_target_column
+       FROM pg_attribute a
+       JOIN pg_class     c  ON c.oid = a.attrelid
+       JOIN pg_namespace n  ON n.oid = c.relnamespace
+       LEFT JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
+       LEFT JOIN (
+         SELECT
+           con.conrelid,
+           cols.la                 AS fk_attnum,
+           tn.nspname              AS fk_target_schema,
+           tc.relname              AS fk_target_table,
+           ta.attname              AS fk_target_column
+         FROM pg_constraint con
+         JOIN pg_class     c2 ON c2.oid = con.conrelid
+         JOIN pg_namespace n2 ON n2.oid = c2.relnamespace
+         JOIN pg_class     tc ON tc.oid = con.confrelid
+         JOIN pg_namespace tn ON tn.oid = tc.relnamespace
+         CROSS JOIN LATERAL (
+           SELECT unnest(con.conkey) AS la, unnest(con.confkey) AS ra
+         ) AS cols
+         JOIN pg_attribute ta ON ta.attrelid = con.confrelid AND ta.attnum = cols.ra
+         WHERE con.contype = 'f'
+           AND (n2.nspname, c2.relname) IN (
+             SELECT unnest($1::text[]), unnest($2::text[])
+           )
+       ) fk ON fk.conrelid = a.attrelid AND fk.fk_attnum = a.attnum
+       WHERE a.attnum > 0 AND NOT a.attisdropped
+         AND (n.nspname, c.relname) IN (
+           SELECT unnest($1::text[]), unnest($2::text[])
+         )
+       ORDER BY n.nspname, c.relname, a.attnum`,
+      [schemas, names]
+    );
+    const map = new Map<string, TableColumnMeta[]>();
+    for (const row of result.rows) {
+      const key = `${row.table_schema}.${row.table_name}`;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push({
+        name: row.name,
+        dataType: row.data_type,
+        isNullable: Boolean(row.is_nullable),
+        hasDefault: row.column_default !== null,
+        isPrimaryKey: Boolean(row.is_primary_key),
+        isForeignKey: Boolean(row.is_foreign_key),
+        foreignKeyTargetSchema: row.foreign_key_target_schema,
+        foreignKeyTargetTable: row.foreign_key_target_table,
+        foreignKeyTargetColumn: row.foreign_key_target_column,
+      });
+    }
+    return map;
+  }
+
   private async connect(connection: PostgresConnectionInput): Promise<Client> {
     const client = new Client({
       host: connection.host,
@@ -1326,4 +1590,23 @@ VALUES (${insertValuesSql.join(', ')})`;
     await client.connect();
     return client;
   }
+}
+
+export interface DiagramTableInfo {
+  schemaName: string;
+  tableName: string;
+  columns: TableColumnMeta[];
+  isMain: boolean;
+}
+
+export interface DiagramDataResult {
+  tables: DiagramTableInfo[];
+  foreignKeys: Array<{
+    fromSchema: string;
+    fromTable: string;
+    fromColumn: string;
+    toSchema: string;
+    toTable: string;
+    toColumn: string;
+  }>;
 }

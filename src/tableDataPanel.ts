@@ -3,7 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { DbObjectNodeRef } from './models';
-import { PostgresService, TableSavePayload, TableSortDirection } from './postgresService';
+import { DiagramDataResult, PostgresService, TableColumnMeta, TableSavePayload, TableSortDirection } from './postgresService';
 import { ConnectionStore } from './connectionStore';
 import {
   buildCodeEditorMarkup,
@@ -84,7 +84,10 @@ type WebviewMessage =
     }
   | { type: 'toggleQueryVisibility' }
   | { type: 'toggleHeaderVisibility' }
-  | { type: 'updateLayout'; layout: TableLayoutState };
+  | { type: 'updateLayout'; layout: TableLayoutState }
+  | { type: 'loadDiagram'; mainColumns?: TableColumnMeta[] }
+  | { type: 'exportDiagram'; format: 'png' | 'drawio'; target: 'file' | 'clipboard'; data: string; tableName: string }
+  | { type: 'openDiagramTableInNewTab'; schemaName: string; tableName: string };
 
 interface NativeJsonPreviewState {
   document: vscode.TextDocument;
@@ -383,6 +386,92 @@ export class TableDataPanelManager {
           await this.persistLayout(currentNode, message.layout);
         }
         this.saveOpenTabs();
+        return;
+      }
+
+      if (message.type === 'openDiagramTableInNewTab') {
+        const schemaName = String(message.schemaName || '').trim();
+        const tableName = String(message.tableName || '').trim();
+        if (!schemaName || !tableName) {
+          panel.webview.postMessage({
+            type: 'status',
+            kind: 'error',
+            message: 'Nome de schema ou tabela invalido para abrir em nova aba.',
+          });
+          return;
+        }
+        await this.openTable({
+          node: {
+            type: 'dbObject',
+            connection: currentNode.connection,
+            databaseName: currentNode.databaseName,
+            schemaName,
+            kind: 'table',
+            objectName: tableName,
+          },
+          newTab: true,
+        });
+        return;
+      }
+
+      if (message.type === 'loadDiagram') {
+        try {
+          const diagramData = await this.postgresService.getTableDiagramData(
+            currentNode.connection,
+            currentNode.databaseName,
+            currentNode.schemaName,
+            currentNode.objectName,
+            message.mainColumns
+          );
+          panel.webview.postMessage({ type: 'diagramData', data: diagramData });
+        } catch (error) {
+          panel.webview.postMessage({
+            type: 'status',
+            kind: 'error',
+            message: this.errorMessage(error),
+          });
+        }
+        return;
+      }
+
+      if (message.type === 'exportDiagram') {
+        try {
+          if (message.format === 'png' && message.target === 'file') {
+            const uri = await vscode.window.showSaveDialog({
+              defaultUri: vscode.Uri.file(`${message.tableName}.png`),
+              filters: { 'PNG Image': ['png'] },
+            });
+            if (uri) {
+              const base64 = message.data.replace(/^data:image\/png;base64,/, '');
+              const buffer = Buffer.from(base64, 'base64');
+              await vscode.workspace.fs.writeFile(uri, buffer);
+              vscode.window.showInformationMessage(`Diagrama exportado: ${uri.fsPath}`);
+            }
+          } else if (message.format === 'drawio' && message.target === 'file') {
+            const uri = await vscode.window.showSaveDialog({
+              defaultUri: vscode.Uri.file(`${message.tableName}.drawio`),
+              filters: { 'Draw.io Diagram': ['drawio', 'xml'] },
+            });
+            if (uri) {
+              await vscode.workspace.fs.writeFile(uri, Buffer.from(message.data, 'utf-8'));
+              vscode.window.showInformationMessage(`Diagrama exportado: ${uri.fsPath}`);
+            }
+          } else if (message.format === 'drawio' && message.target === 'clipboard') {
+            await vscode.env.clipboard.writeText(message.data);
+            panel.webview.postMessage({
+              type: 'status',
+              kind: 'ok',
+              message: 'XML do diagrama copiado para a área de transferência.',
+            });
+          }
+        } catch (error) {
+          panel.webview.postMessage({
+            type: 'status',
+            kind: 'error',
+            message: this.errorMessage(error),
+          });
+        }
+        return;
       }
     });
 
@@ -1278,10 +1367,91 @@ export class TableDataPanelManager {
     #pageInfo { white-space: nowrap; font-size: 12px; color: var(--vscode-descriptionForeground); line-height: 28px; }
     .mode-select { position: relative; display: inline-flex; }
     .header-menu { z-index: 40; min-width: 180px; }
+    .header-menu hr.menu-separator { border: none; border-top: 1px solid var(--vscode-panel-border); margin: 4px 0; }
     .header-menu button:last-child,
     .mode-dropdown button:last-child,
     .menu > button:last-child,
     .menu-submenu > button:last-child { border-bottom: 0; }
+    .header-view-btn.active { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); font-weight: 600; }
+    .diagram-view { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+    .diagram-toolbar { display: flex; align-items: center; gap: 6px; padding: 0px 4px 2px 4px; flex: 0 0 auto; border-bottom: 1px solid var(--vscode-panel-border); flex-wrap: wrap; }
+    .diagram-zoom-group { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+    .diagram-zoom-group .input { width: 56px; }
+    .diagram-toolbar-label { font-size: 12px; color: var(--vscode-descriptionForeground); margin-right: 4px; }
+    .diagram-toolbar-sep { width: 1px; height: 16px; background: var(--vscode-panel-border); margin: 0 2px; }
+    .diagram-canvas { flex: 1 1 auto; overflow: hidden; position: relative; cursor: grab; background: var(--vscode-editor-background); }
+    .diagram-canvas.panning { cursor: grabbing; }
+    .diagram-canvas svg { display: block; width: 100%; height: 100%; overflow: visible; }
+    /* Diagram ER: theme tokens only (no baked rgb) so colors track theme switches live */
+    #diagramSvg {
+      /* FK em destaque: verde do tema, depois “added” git, depois aviso (âmbar), último verde fixo */
+      --diagram-fk-accent: var(
+        --vscode-charts-green,
+        var(--vscode-gitDecoration-addedResourceForeground, var(--vscode-editorWarning-foreground, #73c991))
+      );
+    }
+    #diagramSvg .diagram-fk-edge { fill: none; stroke: var(--vscode-textLink-foreground); stroke-width: 1.5; opacity: 0.85; }
+    #diagramSvg .diagram-fk-edge.diagram-fk-edge--selected {
+      stroke: var(--diagram-fk-accent);
+      stroke-width: 3;
+      opacity: 1;
+    }
+    #diagramSvg .diagram-fk-edge-dot { fill: var(--vscode-textLink-foreground); }
+    #diagramSvg .diagram-fk-edge-dot.diagram-fk-edge-dot--selected { fill: var(--diagram-fk-accent); }
+    #diagramSvg .diagram-fk-hit { fill: none; stroke: transparent; pointer-events: stroke; }
+    #diagramSvg .diagram-card-bg.diagram-card-bg--selected {
+      stroke: var(--vscode-focusBorder);
+      stroke-width: 3;
+    }
+    #diagramSvg .diagram-col-highlight {
+      fill: color-mix(in srgb, var(--diagram-fk-accent) 38%, transparent);
+    }
+    #diagramSvg .diagram-header-drag { fill: transparent; cursor: move; }
+    #diagramSvg .diagram-arrow-head { fill: var(--vscode-textLink-foreground); }
+    #diagramSvg .diagram-arrow-head--accent { fill: var(--diagram-fk-accent); }
+    #diagramSvg { --diagram-table-line: color-mix(in srgb, var(--vscode-foreground) 28%, var(--vscode-panel-border)); }
+    #diagramSvg .diagram-card-bg { fill: var(--vscode-editorWidget-background, var(--vscode-sideBar-background, var(--vscode-panel-background, var(--vscode-editor-background)))); }
+    #diagramSvg .diagram-card-bg.diagram-card-bg--main { stroke: var(--vscode-button-background); stroke-width: 2; }
+    #diagramSvg .diagram-card-bg.diagram-card-bg--other { stroke: var(--diagram-table-line); stroke-width: 1; }
+    #diagramSvg .diagram-card-header--main { fill: var(--vscode-button-background); }
+    #diagramSvg .diagram-card-header--other { fill: var(--vscode-sideBarSectionHeader-background, var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-button-secondaryBackground))); }
+    #diagramSvg .diagram-header-divider--main { stroke: var(--vscode-button-background); stroke-width: 1; }
+    #diagramSvg .diagram-header-divider--other { stroke: var(--diagram-table-line); stroke-width: 1; }
+    #diagramSvg .diagram-title--main { fill: var(--vscode-button-foreground); }
+    #diagramSvg .diagram-title--other { fill: var(--vscode-sideBarSectionHeader-foreground, var(--vscode-foreground)); }
+    #diagramSvg .diagram-schema--main { fill: color-mix(in srgb, var(--vscode-button-foreground) 74%, transparent); }
+    #diagramSvg .diagram-schema--other { fill: var(--vscode-descriptionForeground); }
+    #diagramSvg .diagram-row-sep {
+      stroke: var(--diagram-table-line);
+      stroke-width: 1px;
+      vector-effect: non-scaling-stroke;
+      shape-rendering: crispEdges;
+      opacity: 1;
+    }
+    #diagramSvg .diagram-icon--pk { fill: var(--vscode-editorWarning-foreground, var(--vscode-charts-yellow, var(--vscode-foreground))); }
+    #diagramSvg .diagram-icon--fk { fill: var(--vscode-textLink-foreground); }
+    #diagramSvg .diagram-icon--spacer { fill: transparent; }
+    #diagramSvg .diagram-col-name { fill: var(--vscode-foreground); }
+    #diagramSvg .diagram-col-name--pk { fill: var(--vscode-editorWarning-foreground, var(--vscode-charts-yellow, var(--vscode-foreground))); }
+    #diagramSvg .diagram-col-type { fill: var(--vscode-descriptionForeground); }
+    .diagram-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 13px; color: var(--vscode-descriptionForeground); }
+    .diagram-export-modal {
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: min(400px, calc(100vw - 24px));
+      border: 1px solid var(--vscode-panel-border);
+      background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+      border-radius: 8px;
+      box-shadow: 0 0 16px rgba(0, 0, 0, 0.28);
+      display: none;
+      flex-direction: column;
+      z-index: 71;
+      overflow: hidden;
+    }
+    .diagram-export-modal.open { display: flex; }
+    #diagramExportModalBackdrop { z-index: 70; background: rgba(0, 0, 0, 0.35); }
     .mode-dropdown { z-index: 20; min-width: 170px; }
     .columns-popup { width: 280px; max-height: 60vh; overflow: auto; z-index: 60; }
     #modeBackdrop { z-index: 19; }
@@ -1660,9 +1830,36 @@ export class TableDataPanelManager {
       <button id="toolbarMenuBtn" class="secondary btn-icon btn-icon-fix" title="Menu">☰</button>
     </div>
 
+    <div class="diagram-toolbar" style="display:none;">
+      <button id="diagramExportBtn" class="secondary" title="Exportar diagrama">Exportar</button>
+      <button id="diagramResetLayoutBtn" class="secondary" title="Redefinir posição das tabelas">Redefinir</button>
+      <div class="diagram-zoom-group" title="Ctrl+rodar: zoom. Rodar: deslocar vertical. Shift+rodar: deslocar horizontal.">
+        <label for="diagramZoomPct" class="diagram-toolbar-label">Zoom</label>
+        <input type="number" id="diagramZoomPct" class="input" min="20" max="400" step="5" value="100" />
+        <span class="diagram-toolbar-label" style="margin-right:0">%</span>
+      </div>
+      <span style="flex:1"></span>
+      <button id="diagramMenuBtn" class="secondary btn-icon btn-icon-fix" title="Menu">☰</button>
+    </div>
+
     <div id="errorMsg"></div>
     <div class="table-wrap" tabindex="-1">
       <table id="grid"></table>
+    </div>
+    <div id="diagramView" class="diagram-view" style="display:none;">
+      <div id="diagramCanvas" class="diagram-canvas">
+        <svg id="diagramSvg" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <marker id="diagramArrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+              <polygon class="diagram-arrow-head" data-diagram-themed="1" points="0 0, 8 3, 0 6" />
+            </marker>
+            <marker id="diagramArrowAccent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+              <polygon class="diagram-arrow-head--accent" data-diagram-themed="1" points="0 0, 8 3, 0 6" />
+            </marker>
+          </defs>
+        </svg>
+        <div id="diagramLoading" class="diagram-loading" style="display:none;">Carregando diagrama…</div>
+      </div>
     </div>
   </div>
 
@@ -1677,6 +1874,13 @@ export class TableDataPanelManager {
   <div class="overlay-backdrop" id="modeBackdrop"></div>
   <div class="overlay-backdrop" id="headerMenuBackdrop"></div>
   <div id="headerMenu" class="header-menu simple-menu overlay-surface overlay-scroll">
+    <button id="viewDataBtn" class="header-view-btn active" title="Ver dados da tabela">
+      <span>Dados</span>
+    </button>
+    <button id="viewDiagramBtn" class="header-view-btn" title="Ver diagrama ER">
+      <span>Diagrama</span>
+    </button>
+    <hr class="menu-separator" />
     <button id="openSettings" title="Configurações">
       <span>Configurações</span>
     </button>
@@ -1762,6 +1966,31 @@ export class TableDataPanelManager {
     <div class="export-modal-actions">
       <button id="exportModalCancel" class="secondary">Cancelar</button>
       <button id="exportModalConfirm" class="primary">Exportar</button>
+    </div>
+  </div>
+
+  <div class="overlay-backdrop" id="diagramExportModalBackdrop"></div>
+  <div class="diagram-export-modal" id="diagramExportModal" role="dialog" aria-label="Exportar diagrama">
+    <div class="export-modal-head">Exportar diagrama</div>
+    <div class="export-modal-body">
+      <div>
+        <div class="export-group-title">Formato</div>
+        <div class="export-group">
+          <label class="export-option"><input type="radio" name="diagramExportFormat" id="diagramExportFormatPng" value="png" checked /><span>PNG (imagem)</span></label>
+          <label class="export-option"><input type="radio" name="diagramExportFormat" id="diagramExportFormatDrawio" value="drawio" /><span>Draw.io (.drawio / XML)</span></label>
+        </div>
+      </div>
+      <div>
+        <div class="export-group-title">Destino</div>
+        <div class="export-group">
+          <label class="export-option"><input type="radio" name="diagramExportTarget" id="diagramExportTargetFile" value="file" checked /><span>Salvar como arquivo</span></label>
+          <label class="export-option"><input type="radio" name="diagramExportTarget" id="diagramExportTargetClipboard" value="clipboard" /><span>Copiar para clipboard</span></label>
+        </div>
+      </div>
+    </div>
+    <div class="export-modal-actions">
+      <button id="diagramExportModalCancel" class="secondary">Cancelar</button>
+      <button id="diagramExportModalConfirm" class="primary">Exportar</button>
     </div>
   </div>
 
@@ -5589,7 +5818,808 @@ export class TableDataPanelManager {
       if (message.type === 'restoreGridFocus') {
         tableWrapEl?.focus({ preventScroll: true });
       }
+
+      if (message.type === 'diagramData') {
+        diagramLoading = false;
+        document.getElementById('diagramLoading').style.display = 'none';
+        diagramData = message.data;
+        diagramLayout = null;
+        diagramSelectedFkIndex = null;
+        const mainT = message.data.tables.find((t) => t.isMain);
+        diagramSelectedKey = mainT ? mainT.schemaName + '.' + mainT.tableName : null;
+        renderDiagram();
+      }
     });
+
+    // ─── Diagram view ──────────────────────────────────────────────────────────
+
+    const diagramViewEl = document.getElementById('diagramView');
+    const tableWrapDataEl = document.querySelector('.table-wrap');
+    const viewDataBtnEl = document.getElementById('viewDataBtn');
+    const viewDiagramBtnEl = document.getElementById('viewDiagramBtn');
+    const diagramCanvasEl = document.getElementById('diagramCanvas');
+    const diagramSvgEl = document.getElementById('diagramSvg');
+    const diagramLoadingEl = document.getElementById('diagramLoading');
+    const mainToolbarEl = document.querySelector('.toolbar');
+    const diagramToolbarEl = document.querySelector('.diagram-toolbar');
+    const diagramZoomPctEl = document.getElementById('diagramZoomPct');
+
+    let currentView = 'data';
+    let diagramData = null;
+    let diagramLayout = null;
+    let diagramLoading = false;
+    let diagramSelectedKey = null;
+    let diagramSelectedFkIndex = null;
+    let diagramSuppressCardClick = false;
+    // SVG pan state
+    let diagramPanX = 0;
+    let diagramPanY = 0;
+    let diagramScale = 1;
+    let diagramIsPanning = false;
+    let diagramPanStartX = 0;
+    let diagramPanStartY = 0;
+
+    const CARD_WIDTH = 220;
+    const CARD_HEADER_H = 30;
+    const CARD_ROW_H = 24;
+    const CARD_GAP_X = 80;
+    const CARD_GAP_Y = 30;
+
+    function diagramWheelPanDelta(e) {
+      if (e.deltaMode === 1) return e.deltaY * 16;
+      if (e.deltaMode === 2) return e.deltaY * 400;
+      return e.deltaY;
+    }
+
+    function diagramBuildRootTransformString() {
+      return 'translate(' + diagramPanX + ',' + diagramPanY + ') scale(' + diagramScale + ')';
+    }
+
+    function diagramSyncZoomControls() {
+      if (!diagramZoomPctEl) return;
+      if (document.activeElement === diagramZoomPctEl) return;
+      diagramZoomPctEl.value = String(Math.round(diagramScale * 100));
+    }
+
+    function diagramApplyRootTransform() {
+      const root = document.getElementById('diagramRoot');
+      if (root) {
+        root.setAttribute('transform', diagramBuildRootTransformString());
+      }
+      diagramSyncZoomControls();
+    }
+
+    function diagramZoomSetScaleAtPoint(newScale, px, py) {
+      const clamped = Math.max(0.2, Math.min(4, newScale));
+      const factor = clamped / diagramScale;
+      diagramPanX = px - (px - diagramPanX) * factor;
+      diagramPanY = py - (py - diagramPanY) * factor;
+      diagramScale = clamped;
+      diagramApplyRootTransform();
+    }
+
+    function diagramZoomSetScaleCentered(newScale) {
+      const rect = diagramCanvasEl.getBoundingClientRect();
+      diagramZoomSetScaleAtPoint(newScale, rect.width / 2, rect.height / 2);
+    }
+
+    function diagramZoomPctCommit() {
+      if (!diagramZoomPctEl) return;
+      let pct = parseInt(diagramZoomPctEl.value, 10);
+      if (!Number.isFinite(pct)) pct = Math.round(diagramScale * 100);
+      pct = Math.max(20, Math.min(400, pct));
+      diagramZoomPctEl.value = String(pct);
+      diagramZoomSetScaleCentered(pct / 100);
+    }
+
+    if (diagramZoomPctEl) {
+      diagramZoomPctEl.addEventListener('change', diagramZoomPctCommit);
+      diagramZoomPctEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          diagramZoomPctCommit();
+          diagramZoomPctEl.blur();
+        }
+      });
+    }
+
+    function switchView(view) {
+      currentView = view;
+      const isData = view === 'data';
+      tableWrapDataEl.style.display = isData ? '' : 'none';
+      document.getElementById('errorMsg').style.display = isData ? '' : 'none';
+      diagramViewEl.style.display = isData ? 'none' : '';
+      mainToolbarEl.style.display = isData ? '' : 'none';
+      diagramToolbarEl.style.display = isData ? 'none' : '';
+      viewDataBtnEl.classList.toggle('active', isData);
+      viewDiagramBtnEl.classList.toggle('active', !isData);
+      if (!isData && !diagramData && !diagramLoading) {
+        diagramLoading = true;
+        diagramLoadingEl.style.display = '';
+        vscode.postMessage({ type: 'loadDiagram', mainColumns: columns });
+      }
+    }
+
+    viewDataBtnEl.addEventListener('click', () => {
+      headerMenuOverlay.close();
+      switchView('data');
+    });
+    viewDiagramBtnEl.addEventListener('click', () => {
+      headerMenuOverlay.close();
+      switchView('diagram');
+    });
+
+    document.getElementById('diagramResetLayoutBtn').addEventListener('click', () => {
+      diagramLayout = null;
+      diagramPanX = 0;
+      diagramPanY = 0;
+      diagramScale = 1;
+      if (diagramData) {
+        renderDiagram();
+      }
+    });
+
+    const diagramExportModal = document.getElementById('diagramExportModal');
+    const diagramExportModalBackdrop = document.getElementById('diagramExportModalBackdrop');
+
+    function openDiagramExportModal() {
+      diagramExportModal.classList.add('open');
+      diagramExportModalBackdrop.classList.add('open');
+    }
+    function closeDiagramExportModal() {
+      diagramExportModal.classList.remove('open');
+      diagramExportModalBackdrop.classList.remove('open');
+    }
+
+    document.getElementById('diagramExportBtn').addEventListener('click', () => {
+      openDiagramExportModal();
+    });
+    document.getElementById('diagramExportModalCancel').addEventListener('click', closeDiagramExportModal);
+    diagramExportModalBackdrop.addEventListener('click', closeDiagramExportModal);
+    document.getElementById('diagramExportModalConfirm').addEventListener('click', () => {
+      const format = document.querySelector('input[name="diagramExportFormat"]:checked').value;
+      const target = document.querySelector('input[name="diagramExportTarget"]:checked').value;
+      closeDiagramExportModal();
+      if (format === 'png') {
+        exportDiagramPng(target);
+      } else {
+        exportDiagramDrawio(target);
+      }
+    });
+
+    document.getElementById('diagramMenuBtn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      headerMenuOverlay.toggle({ anchorEl: document.getElementById('diagramMenuBtn') });
+    });
+
+    function tableCardHeight(colCount) {
+      return CARD_HEADER_H + colCount * CARD_ROW_H + 4;
+    }
+
+    function computeInitialLayout(data) {
+      const positions = {};
+      const mainTable = data.tables.find((t) => t.isMain);
+      if (!mainTable) return positions;
+
+      // Classify tables
+      const outgoing = new Set();
+      const incoming = new Set();
+      for (const fk of data.foreignKeys) {
+        const fromKey = fk.fromSchema + '.' + fk.fromTable;
+        const toKey = fk.toSchema + '.' + fk.toTable;
+        const mainKey = mainTable.schemaName + '.' + mainTable.tableName;
+        if (fromKey === mainKey) outgoing.add(toKey);
+        else if (toKey === mainKey) incoming.add(fromKey);
+      }
+
+      // Place main table in center
+      const mainH = tableCardHeight(mainTable.columns.length);
+      const canvasW = diagramCanvasEl.clientWidth || 800;
+      const canvasH = diagramCanvasEl.clientHeight || 600;
+      let cx = Math.max(60, canvasW / 2 - CARD_WIDTH / 2);
+      const mainKey = mainTable.schemaName + '.' + mainTable.tableName;
+      positions[mainKey] = { x: cx, y: Math.max(40, canvasH / 2 - mainH / 2) };
+
+      const placeGroup = (keys, xOffset) => {
+        const arr = [...keys];
+        const totalH = arr.reduce((sum, k) => {
+          const t = data.tables.find((t2) => t2.schemaName + '.' + t2.tableName === k);
+          return sum + (t ? tableCardHeight(t.columns.length) : 150) + CARD_GAP_Y;
+        }, 0);
+        let y = positions[mainKey].y + mainH / 2 - totalH / 2;
+        for (const k of arr) {
+          const t = data.tables.find((t2) => t2.schemaName + '.' + t2.tableName === k);
+          const h = t ? tableCardHeight(t.columns.length) : 150;
+          positions[k] = { x: positions[mainKey].x + xOffset, y };
+          y += h + CARD_GAP_Y;
+        }
+      };
+
+      placeGroup(outgoing, CARD_WIDTH + CARD_GAP_X);
+      placeGroup(incoming, -(CARD_WIDTH + CARD_GAP_X));
+
+      // Place any remaining related tables below
+      let fallbackY = positions[mainKey].y + mainH + CARD_GAP_Y;
+      for (const t of data.tables) {
+        const k = t.schemaName + '.' + t.tableName;
+        if (!positions[k]) {
+          positions[k] = { x: positions[mainKey].x, y: fallbackY };
+          fallbackY += tableCardHeight(t.columns.length) + CARD_GAP_Y;
+        }
+      }
+
+      return positions;
+    }
+
+    /** Inline computed fill/stroke for PNG (data URL SVG has no access to host theme variables). */
+    function diagramInlineComputedSvgStyles(sourceSvg, cloneSvg) {
+      const themed = '[data-diagram-themed]';
+      const srcNodes = sourceSvg.querySelectorAll(themed);
+      const dstNodes = cloneSvg.querySelectorAll(themed);
+      const n = Math.min(srcNodes.length, dstNodes.length);
+      for (let i = 0; i < n; i++) {
+        const src = srcNodes[i];
+        const dst = dstNodes[i];
+        const cs = getComputedStyle(src);
+        const fill = cs.fill;
+        const stroke = cs.stroke;
+        if (fill && fill !== 'none' && fill !== 'rgba(0, 0, 0, 0)') dst.setAttribute('fill', fill);
+        else dst.removeAttribute('fill');
+        if (stroke && stroke !== 'none' && stroke !== 'rgba(0, 0, 0, 0)') {
+          dst.setAttribute('stroke', stroke);
+          const sw = cs.strokeWidth;
+          if (sw && sw !== '0px') dst.setAttribute('stroke-width', sw);
+          const op = cs.opacity;
+          if (op && op !== '1') dst.setAttribute('opacity', op);
+        } else dst.removeAttribute('stroke');
+        dst.removeAttribute('data-diagram-themed');
+      }
+    }
+
+    function renderDiagram() {
+      if (!diagramData) return;
+
+      if (!diagramLayout) {
+        diagramLayout = computeInitialLayout(diagramData);
+      }
+
+      // Clear SVG (keep defs)
+      const defs = diagramSvgEl.querySelector('defs');
+      while (diagramSvgEl.firstChild) {
+        diagramSvgEl.removeChild(diagramSvgEl.firstChild);
+      }
+      if (defs) diagramSvgEl.appendChild(defs);
+
+      const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      g.setAttribute('id', 'diagramRoot');
+      g.setAttribute('transform', diagramBuildRootTransformString());
+      diagramSvgEl.appendChild(g);
+
+      // Draw FK lines (behind cards)
+      const linesG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      g.appendChild(linesG);
+
+      const fkGeoms = [];
+      diagramData.foreignKeys.forEach((fk, fkIdx) => {
+        const fromKey = fk.fromSchema + '.' + fk.fromTable;
+        const toKey = fk.toSchema + '.' + fk.toTable;
+        const fromPos = diagramLayout[fromKey];
+        const toPos = diagramLayout[toKey];
+        if (!fromPos || !toPos) return;
+
+        const fromTable = diagramData.tables.find((t) => t.schemaName + '.' + t.tableName === fromKey);
+        const toTable = diagramData.tables.find((t) => t.schemaName + '.' + t.tableName === toKey);
+        if (!fromTable || !toTable) return;
+
+        const fromColIdx = fromTable.columns.findIndex((c) => c.name === fk.fromColumn);
+        const toColIdx = toTable.columns.findIndex((c) => c.name === fk.toColumn);
+        const fromY = fromPos.y + CARD_HEADER_H + (fromColIdx >= 0 ? fromColIdx * CARD_ROW_H + CARD_ROW_H / 2 : CARD_HEADER_H / 2);
+        const toY = toPos.y + CARD_HEADER_H + (toColIdx >= 0 ? toColIdx * CARD_ROW_H + CARD_ROW_H / 2 : CARD_HEADER_H / 2);
+
+        const fromRight = fromPos.x + CARD_WIDTH;
+        const toRight = toPos.x + CARD_WIDTH;
+        let x1, x2, cx1, cx2;
+        if (fromPos.x > toPos.x + CARD_WIDTH) {
+          x1 = fromPos.x; cx1 = fromPos.x - 60;
+          x2 = toRight; cx2 = toRight + 60;
+        } else if (toPos.x > fromRight) {
+          x1 = fromRight; cx1 = fromRight + 60;
+          x2 = toPos.x; cx2 = toPos.x - 60;
+        } else {
+          x1 = fromPos.x; cx1 = fromPos.x - 60;
+          x2 = toPos.x; cx2 = toPos.x - 60;
+        }
+
+        const pathD = 'M ' + x1 + ' ' + fromY + ' C ' + cx1 + ' ' + fromY + ', ' + cx2 + ' ' + toY + ', ' + x2 + ' ' + toY;
+        fkGeoms.push({ fkIdx, pathD, x1, fromY });
+      });
+
+      fkGeoms.forEach((geo) => {
+        const edgeSelected = diagramSelectedFkIndex === geo.fkIdx;
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('class', 'diagram-fk-edge' + (edgeSelected ? ' diagram-fk-edge--selected' : ''));
+        path.setAttribute('data-diagram-themed', '1');
+        path.setAttribute('d', geo.pathD);
+        path.setAttribute('marker-end', edgeSelected ? 'url(#diagramArrowAccent)' : 'url(#diagramArrow)');
+        linesG.appendChild(path);
+
+        const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        dot.setAttribute('class', 'diagram-fk-edge-dot' + (edgeSelected ? ' diagram-fk-edge-dot--selected' : ''));
+        dot.setAttribute('data-diagram-themed', '1');
+        dot.setAttribute('cx', String(geo.x1));
+        dot.setAttribute('cy', String(geo.fromY));
+        dot.setAttribute('r', '3');
+        linesG.appendChild(dot);
+      });
+
+      const hitsG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      g.appendChild(hitsG);
+      fkGeoms.forEach((geo) => {
+        const hit = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        hit.setAttribute('class', 'diagram-fk-hit');
+        hit.setAttribute('d', geo.pathD);
+        hit.setAttribute('stroke-width', '14');
+        hit.setAttribute('vector-effect', 'non-scaling-stroke');
+        hit.setAttribute('fill', 'none');
+        hit.style.cursor = 'pointer';
+        hit.addEventListener('mousedown', (e) => {
+          e.stopPropagation();
+        });
+        hit.addEventListener('click', (e) => {
+          e.stopPropagation();
+          diagramSelectedFkIndex = geo.fkIdx;
+          renderDiagram();
+        });
+        hitsG.appendChild(hit);
+      });
+
+      const selFk = diagramSelectedFkIndex !== null ? diagramData.foreignKeys[diagramSelectedFkIndex] : null;
+
+      // Draw table cards
+      for (const table of diagramData.tables) {
+        const key = table.schemaName + '.' + table.tableName;
+        const pos = diagramLayout[key] || { x: 40, y: 40 };
+        const cardH = tableCardHeight(table.columns.length);
+
+        const cardG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        cardG.setAttribute('class', 'diagram-card');
+        cardG.setAttribute('data-key', key);
+        cardG.setAttribute('transform', 'translate(' + pos.x + ',' + pos.y + ')');
+        g.appendChild(cardG);
+
+        // Card background
+        const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        bg.setAttribute(
+          'class',
+          'diagram-card-bg ' +
+            (table.isMain ? 'diagram-card-bg--main' : 'diagram-card-bg--other') +
+            (diagramSelectedKey === key ? ' diagram-card-bg--selected' : '')
+        );
+        bg.setAttribute('data-diagram-themed', '1');
+        bg.setAttribute('width', String(CARD_WIDTH));
+        bg.setAttribute('height', String(cardH));
+        bg.setAttribute('rx', '6');
+        cardG.appendChild(bg);
+
+        // Header background
+        const header = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        header.setAttribute('class', table.isMain ? 'diagram-card-header--main' : 'diagram-card-header--other');
+        header.setAttribute('data-diagram-themed', '1');
+        header.setAttribute('width', String(CARD_WIDTH));
+        header.setAttribute('height', String(CARD_HEADER_H));
+        header.setAttribute('rx', '6');
+        cardG.appendChild(header);
+
+        // Fix rounded corners only at top
+        const headerFix = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        headerFix.setAttribute('class', table.isMain ? 'diagram-card-header--main' : 'diagram-card-header--other');
+        headerFix.setAttribute('data-diagram-themed', '1');
+        headerFix.setAttribute('y', String(CARD_HEADER_H / 2));
+        headerFix.setAttribute('width', String(CARD_WIDTH));
+        headerFix.setAttribute('height', String(CARD_HEADER_H / 2));
+        cardG.appendChild(headerFix);
+
+        // Table name
+        const title = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        title.setAttribute('class', table.isMain ? 'diagram-title--main' : 'diagram-title--other');
+        title.setAttribute('data-diagram-themed', '1');
+        title.setAttribute('x', '10');
+        title.setAttribute('y', String(CARD_HEADER_H / 2 + 5));
+        title.setAttribute('font-size', '12');
+        title.setAttribute('font-weight', 'bold');
+        title.setAttribute('font-family', 'var(--vscode-font-family, sans-serif)');
+        title.textContent = table.tableName;
+        cardG.appendChild(title);
+
+        // Schema name (small)
+        if (table.schemaName !== 'public') {
+          const schema = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          schema.setAttribute('class', table.isMain ? 'diagram-schema--main' : 'diagram-schema--other');
+          schema.setAttribute('data-diagram-themed', '1');
+          schema.setAttribute('x', String(CARD_WIDTH - 8));
+          schema.setAttribute('y', String(CARD_HEADER_H / 2 + 5));
+          schema.setAttribute('font-size', '10');
+          schema.setAttribute('text-anchor', 'end');
+          schema.setAttribute('font-family', 'var(--vscode-font-family, sans-serif)');
+          schema.textContent = table.schemaName;
+          cardG.appendChild(schema);
+        }
+
+        const headerDrag = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        headerDrag.setAttribute('class', 'diagram-header-drag');
+        headerDrag.setAttribute('x', '0');
+        headerDrag.setAttribute('y', '0');
+        headerDrag.setAttribute('width', String(CARD_WIDTH));
+        headerDrag.setAttribute('height', String(CARD_HEADER_H));
+        headerDrag.setAttribute('rx', '6');
+        cardG.appendChild(headerDrag);
+
+        // Divider
+        const divider = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        divider.setAttribute('class', table.isMain ? 'diagram-header-divider--main' : 'diagram-header-divider--other');
+        divider.setAttribute('data-diagram-themed', '1');
+        divider.setAttribute('x1', '0');
+        divider.setAttribute('y1', String(CARD_HEADER_H));
+        divider.setAttribute('x2', String(CARD_WIDTH));
+        divider.setAttribute('y2', String(CARD_HEADER_H));
+        cardG.appendChild(divider);
+
+        // Columns
+        table.columns.forEach((col, i) => {
+          const rowY = CARD_HEADER_H + i * CARD_ROW_H;
+          const rowG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+          rowG.setAttribute('transform', 'translate(0,' + rowY + ')');
+
+          let rowFkHighlight = false;
+          if (selFk) {
+            if (
+              (table.schemaName === selFk.fromSchema &&
+                table.tableName === selFk.fromTable &&
+                col.name === selFk.fromColumn) ||
+              (table.schemaName === selFk.toSchema && table.tableName === selFk.toTable && col.name === selFk.toColumn)
+            ) {
+              rowFkHighlight = true;
+            }
+          }
+          if (rowFkHighlight) {
+            const hl = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            hl.setAttribute('class', 'diagram-col-highlight');
+            hl.setAttribute('x', '0');
+            hl.setAttribute('y', '0');
+            hl.setAttribute('width', String(CARD_WIDTH));
+            hl.setAttribute('height', String(CARD_ROW_H));
+            rowG.appendChild(hl);
+          }
+
+          // Row separator
+          if (i > 0) {
+            const sep = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            sep.setAttribute('class', 'diagram-row-sep');
+            sep.setAttribute('data-diagram-themed', '1');
+            sep.setAttribute('x1', '0');
+            sep.setAttribute('y1', '0');
+            sep.setAttribute('x2', String(CARD_WIDTH));
+            sep.setAttribute('y2', '0');
+            rowG.appendChild(sep);
+          }
+
+          // Icon
+          let iconText = '  ';
+          if (col.isPrimaryKey) iconText = 'PK';
+          else if (col.isForeignKey) iconText = 'FK';
+          const icon = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          icon.setAttribute(
+            'class',
+            col.isPrimaryKey ? 'diagram-icon--pk' : col.isForeignKey ? 'diagram-icon--fk' : 'diagram-icon--spacer'
+          );
+          icon.setAttribute('data-diagram-themed', '1');
+          icon.setAttribute('x', '6');
+          icon.setAttribute('y', String(CARD_ROW_H / 2 + 4));
+          icon.setAttribute('font-size', '9');
+          icon.setAttribute('font-weight', 'bold');
+          icon.setAttribute('font-family', 'var(--vscode-font-family, sans-serif)');
+          icon.textContent = iconText;
+          rowG.appendChild(icon);
+
+          // Column name
+          const colName = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          colName.setAttribute('class', col.isPrimaryKey ? 'diagram-col-name diagram-col-name--pk' : 'diagram-col-name');
+          colName.setAttribute('data-diagram-themed', '1');
+          colName.setAttribute('x', '32');
+          colName.setAttribute('y', String(CARD_ROW_H / 2 + 4));
+          colName.setAttribute('font-size', '11');
+          colName.setAttribute('font-family', 'var(--vscode-font-family, sans-serif)');
+          // Truncate long names
+          const maxNameW = 100;
+          let nameText = col.name;
+          colName.textContent = nameText;
+          rowG.appendChild(colName);
+
+          // Data type (right aligned)
+          const colType = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          colType.setAttribute('class', 'diagram-col-type');
+          colType.setAttribute('data-diagram-themed', '1');
+          colType.setAttribute('x', String(CARD_WIDTH - 6));
+          colType.setAttribute('y', String(CARD_ROW_H / 2 + 4));
+          colType.setAttribute('font-size', '10');
+          colType.setAttribute('text-anchor', 'end');
+          colType.setAttribute('font-family', 'var(--vscode-font-family, sans-serif)');
+          // Shorten common types
+          let typeText = col.dataType;
+          if (typeText === 'character varying') typeText = 'varchar';
+          else if (typeText === 'timestamp without time zone') typeText = 'timestamp';
+          else if (typeText === 'timestamp with time zone') typeText = 'timestamptz';
+          else if (typeText === 'double precision') typeText = 'float8';
+          colType.textContent = typeText;
+          rowG.appendChild(colType);
+
+          cardG.appendChild(rowG);
+        });
+
+        let dragOffX = 0, dragOffY = 0, isDragging = false, dragMoved = false, dragStartSX = 0, dragStartSY = 0;
+        headerDrag.addEventListener('mousedown', (e) => {
+          if (e.button !== 0) return;
+          e.stopPropagation();
+          isDragging = true;
+          dragMoved = false;
+          dragStartSX = e.clientX;
+          dragStartSY = e.clientY;
+          const rect = diagramSvgEl.getBoundingClientRect();
+          dragOffX = (e.clientX - rect.left) / diagramScale - diagramPanX / diagramScale - pos.x;
+          dragOffY = (e.clientY - rect.top) / diagramScale - diagramPanY / diagramScale - pos.y;
+
+          const onMove = (me) => {
+            if (!isDragging) return;
+            if (Math.hypot(me.clientX - dragStartSX, me.clientY - dragStartSY) > 4) {
+              dragMoved = true;
+            }
+            const r = diagramSvgEl.getBoundingClientRect();
+            const nx = (me.clientX - r.left) / diagramScale - diagramPanX / diagramScale - dragOffX;
+            const ny = (me.clientY - r.top) / diagramScale - diagramPanY / diagramScale - dragOffY;
+            diagramLayout[key] = { x: nx, y: ny };
+            pos.x = nx; pos.y = ny;
+            renderDiagram();
+          };
+          const onUp = () => {
+            if (dragMoved) {
+              diagramSuppressCardClick = true;
+            }
+            isDragging = false;
+            window.removeEventListener('mousemove', onMove);
+            window.removeEventListener('mouseup', onUp);
+          };
+          window.addEventListener('mousemove', onMove);
+          window.addEventListener('mouseup', onUp);
+        });
+
+        headerDrag.addEventListener('dblclick', (e) => {
+          e.stopPropagation();
+          if (!table.isMain) {
+            vscode.postMessage({
+              type: 'openDiagramTableInNewTab',
+              schemaName: table.schemaName,
+              tableName: table.tableName,
+            });
+          }
+        });
+
+        cardG.addEventListener('click', (e) => {
+          if (diagramSuppressCardClick) {
+            diagramSuppressCardClick = false;
+            return;
+          }
+          diagramSelectedKey = key;
+          diagramSelectedFkIndex = null;
+          renderDiagram();
+        });
+      }
+
+      diagramSyncZoomControls();
+    }
+
+    // Pan diagram canvas
+    diagramCanvasEl.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      if (e.target.closest('.diagram-fk-hit')) return;
+      if (e.target.closest('.diagram-card')) return;
+      if (diagramSelectedFkIndex !== null) {
+        diagramSelectedFkIndex = null;
+        renderDiagram();
+      }
+      diagramIsPanning = true;
+      diagramPanStartX = e.clientX - diagramPanX;
+      diagramPanStartY = e.clientY - diagramPanY;
+      diagramCanvasEl.classList.add('panning');
+    });
+    window.addEventListener('mousemove', (e) => {
+      if (!diagramIsPanning) return;
+      diagramPanX = e.clientX - diagramPanStartX;
+      diagramPanY = e.clientY - diagramPanStartY;
+      diagramApplyRootTransform();
+    });
+    window.addEventListener('mouseup', () => {
+      if (diagramIsPanning) {
+        diagramIsPanning = false;
+        diagramCanvasEl.classList.remove('panning');
+      }
+    });
+
+    // Diagram canvas: Ctrl+wheel = zoom; wheel = pan vertical; Shift+wheel = pan horizontal
+    diagramCanvasEl.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const rect = diagramCanvasEl.getBoundingClientRect();
+      const zoomMod = e.ctrlKey || e.metaKey;
+      if (zoomMod) {
+        const factor = e.deltaY < 0 ? 1.1 : 0.9;
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        diagramZoomSetScaleAtPoint(diagramScale * factor, mx, my);
+        return;
+      }
+      const d = diagramWheelPanDelta(e);
+      if (e.shiftKey) {
+        diagramPanX -= d;
+      } else {
+        diagramPanY -= d;
+      }
+      diagramApplyRootTransform();
+    }, { passive: false });
+
+    function exportDiagramPng(target) {
+      if (!diagramData) return;
+      // Snapshot the current layout to get bounds
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const t of diagramData.tables) {
+        const k = t.schemaName + '.' + t.tableName;
+        const p = diagramLayout && diagramLayout[k];
+        if (!p) continue;
+        const h = tableCardHeight(t.columns.length);
+        minX = Math.min(minX, p.x);
+        minY = Math.min(minY, p.y);
+        maxX = Math.max(maxX, p.x + CARD_WIDTH);
+        maxY = Math.max(maxY, p.y + h);
+      }
+      const pad = 40;
+      const W = (maxX - minX) + pad * 2;
+      const H = (maxY - minY) + pad * 2;
+
+      // Serialize SVG with a fresh transform centering the diagram
+      const svgClone = diagramSvgEl.cloneNode(true);
+      svgClone.querySelectorAll('.diagram-fk-hit').forEach((n) => n.remove());
+      const rootG = svgClone.getElementById('diagramRoot');
+      if (rootG) {
+        rootG.setAttribute('transform', 'translate(' + (pad - minX) + ',' + (pad - minY) + ')');
+      }
+      svgClone.setAttribute('width', String(W));
+      svgClone.setAttribute('height', String(H));
+      svgClone.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+      // Apply background (resolved so PNG matches canvas outside the diagram)
+      const bgRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      bgRect.setAttribute('width', String(W));
+      bgRect.setAttribute('height', String(H));
+      bgRect.setAttribute(
+        'fill',
+        getComputedStyle(document.body).backgroundColor || '#1e1e1e'
+      );
+      svgClone.insertBefore(bgRect, svgClone.firstChild);
+      diagramInlineComputedSvgStyles(diagramSvgEl, svgClone);
+
+      const svgData = new XMLSerializer().serializeToString(svgClone);
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = W * 2;
+        canvas.height = H * 2;
+        const ctx = canvas.getContext('2d');
+        ctx.scale(2, 2);
+        ctx.drawImage(img, 0, 0);
+        if (target === 'file') {
+          canvas.toBlob((blob) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              vscode.postMessage({
+                type: 'exportDiagram',
+                format: 'png',
+                target: 'file',
+                data: reader.result,
+                tableName: diagramData.tables.find((t) => t.isMain)?.tableName || 'diagram',
+              });
+            };
+            reader.readAsDataURL(blob);
+          }, 'image/png');
+        } else {
+          canvas.toBlob(async (blob) => {
+            try {
+              await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+            } catch {
+              // Fallback: export as file
+              const reader = new FileReader();
+              reader.onload = () => {
+                vscode.postMessage({
+                  type: 'exportDiagram',
+                  format: 'png',
+                  target: 'file',
+                  data: reader.result,
+                  tableName: diagramData.tables.find((t) => t.isMain)?.tableName || 'diagram',
+                });
+              };
+              reader.readAsDataURL(blob);
+            }
+          }, 'image/png');
+        }
+      };
+      img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgData);
+    }
+
+    function buildDrawioXml() {
+      if (!diagramData || !diagramLayout) return '';
+      const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      let cells = '';
+      let edgeCells = '';
+      let idCounter = 10;
+      const cellIds = {};
+
+      for (const table of diagramData.tables) {
+        const key = table.schemaName + '.' + table.tableName;
+        const pos = diagramLayout[key] || { x: 0, y: 0 };
+        const h = tableCardHeight(table.columns.length);
+        const tId = 't_' + (idCounter++);
+        cellIds[key] = { tableId: tId, colIds: {} };
+
+        const headerStyle = table.isMain
+          ? 'shape=table;startSize=30;container=1;collapsible=0;childLayout=tableLayout;fixedRows=1;rowLines=0;fontStyle=1;align=center;resizeLast=1;fontSize=12;fillColor=#094771;strokeColor=#4db6f4;fontColor=#ffffff;'
+          : 'shape=table;startSize=30;container=1;collapsible=0;childLayout=tableLayout;fixedRows=1;rowLines=0;fontStyle=1;align=center;resizeLast=1;fontSize=12;fillColor=#3c3c3c;strokeColor=#555555;fontColor=#cccccc;';
+        cells += '<mxCell id="' + tId + '" value="' + esc(table.tableName) + '" style="' + headerStyle + '" vertex="1" parent="1"><mxGeometry x="' + Math.round(pos.x) + '" y="' + Math.round(pos.y) + '" width="' + CARD_WIDTH + '" height="' + h + '" as="geometry"/></mxCell>';
+
+        table.columns.forEach((col, i) => {
+          const cId = 'c_' + (idCounter++);
+          cellIds[key].colIds[col.name] = cId;
+          let prefix = '';
+          if (col.isPrimaryKey) prefix = 'PK  ';
+          else if (col.isForeignKey) prefix = 'FK  ';
+          let typeText = col.dataType;
+          if (typeText === 'character varying') typeText = 'varchar';
+          else if (typeText === 'timestamp without time zone') typeText = 'timestamp';
+          else if (typeText === 'timestamp with time zone') typeText = 'timestamptz';
+          else if (typeText === 'double precision') typeText = 'float8';
+          const label = prefix + col.name + '  ' + typeText;
+          // horizontal=1: draw.io uses horizontal=0 for vertical label text (see style reference).
+          const rowStyle =
+            'shape=tableRow;horizontal=1;startSize=0;swimlaneHead=0;swimlaneBody=0;fillColor=none;collapsible=0;dropTarget=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;align=left;verticalAlign=middle;spacingLeft=6;spacingRight=6;top=0;left=0;right=0;bottom=1;';
+          cells += '<mxCell id="' + cId + '" value="' + esc(label) + '" style="' + rowStyle + '" vertex="1" parent="' + tId + '"><mxGeometry x="0" y="' + (CARD_HEADER_H + i * CARD_ROW_H) + '" width="' + CARD_WIDTH + '" height="' + CARD_ROW_H + '" as="geometry"/></mxCell>';
+        });
+      }
+
+      for (const fk of diagramData.foreignKeys) {
+        const fromKey = fk.fromSchema + '.' + fk.fromTable;
+        const toKey = fk.toSchema + '.' + fk.toTable;
+        const fromInfo = cellIds[fromKey];
+        const toInfo = cellIds[toKey];
+        if (!fromInfo || !toInfo) continue;
+        const srcId = fromInfo.colIds[fk.fromColumn];
+        const tgtId = toInfo.colIds[fk.toColumn];
+        if (!srcId || !tgtId) continue;
+        const eId = 'e_' + (idCounter++);
+        edgeCells += '<mxCell id="' + eId + '" style="edgeStyle=entityRelationEdgeStyle;endArrow=ERzeroToOne;startArrow=ERmandOne;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" source="' + srcId + '" target="' + tgtId + '" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>';
+      }
+
+      return '<?xml version="1.0" encoding="UTF-8"?><mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>' + cells + edgeCells + '</root></mxGraphModel></diagram></mxfile>';
+    }
+
+    function exportDiagramDrawio(target) {
+      if (!diagramData) return;
+      if (!diagramLayout) {
+        diagramLayout = computeInitialLayout(diagramData);
+      }
+      const xml = buildDrawioXml();
+      if (target === 'clipboard') {
+        vscode.postMessage({ type: 'exportDiagram', format: 'drawio', target: 'clipboard', data: xml, tableName: diagramData.tables.find((t) => t.isMain)?.tableName || 'diagram' });
+      } else {
+        vscode.postMessage({ type: 'exportDiagram', format: 'drawio', target: 'file', data: xml, tableName: diagramData.tables.find((t) => t.isMain)?.tableName || 'diagram' });
+      }
+    }
+
+    // ─── End diagram view ───────────────────────────────────────────────────────
 
     updateModeIcon();
     applyQueryVisibility();
