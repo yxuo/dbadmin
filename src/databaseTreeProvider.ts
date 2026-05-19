@@ -51,7 +51,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
   private readonly onDidChangeTreeDataEmitter = new vscode.EventEmitter<TreeNodeRef | undefined>();
   public readonly onDidChangeTreeData = this.onDidChangeTreeDataEmitter.event;
   private readonly connectionProbeTimeoutMs = 10000;
-  private readonly databaseLoadTimeoutMs = 15000;
+  private readonly databaseLoadTimeoutMs = 30000;
 
   private readonly versions = new Map<string, string>();
   private readonly connectionSnapshots = new Map<string, ConnectionSnapshot>();

@@ -1,6 +1,6 @@
-import { Client } from 'pg';
-import { PostgresConnection, PostgresConnectionInput } from './models';
-import { parseAdvancedFilterForDataType } from './advancedFilter';
+import { Client } from "pg";
+import { PostgresConnection, PostgresConnectionInput } from "./models";
+import { parseAdvancedFilterForDataType } from "./advancedFilter";
 
 export interface SchemaObjectCounts {
   tables: number;
@@ -22,11 +22,11 @@ export interface TableColumnMeta {
   foreignKeyTargetColumn: string | null;
 }
 
-export type TableSortDirection = 'asc' | 'desc';
+export type TableSortDirection = "asc" | "desc";
 
 export interface TableDataQuery {
   searchText: string;
-  searchMode: 'local' | 'query';
+  searchMode: "local" | "query";
   sortColumn?: string;
   sortDirection?: TableSortDirection;
   columnFilters: Record<string, string>;
@@ -87,24 +87,30 @@ export class PostgresService {
     return this.testConnection(connection);
   }
 
-  public async testConnection(connection: PostgresConnectionInput): Promise<string> {
+  public async testConnection(
+    connection: PostgresConnectionInput,
+  ): Promise<string> {
     const client = await this.connect(connection);
     try {
-      const versionResult = await client.query<{ version: string }>('SELECT version() AS version');
-      return versionResult.rows[0]?.version ?? 'Unknown version';
+      const versionResult = await client.query<{ version: string }>(
+        "SELECT version() AS version",
+      );
+      return versionResult.rows[0]?.version ?? "Unknown version";
     } finally {
       await client.end();
     }
   }
 
-  public async listDatabases(connection: PostgresConnection): Promise<string[]> {
+  public async listDatabases(
+    connection: PostgresConnection,
+  ): Promise<string[]> {
     const client = await this.connect(connection);
     try {
       const result = await client.query<{ datname: string }>(
         `SELECT datname
          FROM pg_database
          WHERE datistemplate = false
-         ORDER BY datname`
+         ORDER BY datname`,
       );
       return result.rows.map((row) => row.datname);
     } finally {
@@ -112,10 +118,28 @@ export class PostgresService {
     }
   }
 
-  public async createDatabase(connection: PostgresConnection, name: string): Promise<void> {
-    const client = await this.connect({ ...connection, database: 'postgres' });
+  public async createDatabase(
+    connection: PostgresConnection,
+    name: string,
+  ): Promise<void> {
+    const client = await this.connect({ ...connection, database: "postgres" });
     try {
       await client.query(`CREATE DATABASE ${this.quoteIdentifier(name)}`);
+    } finally {
+      await client.end();
+    }
+  }
+
+  public async duplicateDatabase(
+    connection: PostgresConnection,
+    sourceName: string,
+    targetName: string,
+  ): Promise<void> {
+    const client = await this.connect({ ...connection, database: "postgres" });
+    try {
+      await client.query(
+        `CREATE DATABASE ${this.quoteIdentifier(targetName)} WITH TEMPLATE ${this.quoteIdentifier(sourceName)}`,
+      );
     } finally {
       await client.end();
     }
@@ -124,20 +148,23 @@ export class PostgresService {
   public async renameDatabase(
     connection: PostgresConnection,
     oldName: string,
-    newName: string
+    newName: string,
   ): Promise<void> {
-    const client = await this.connect({ ...connection, database: 'postgres' });
+    const client = await this.connect({ ...connection, database: "postgres" });
     try {
       await client.query(
-        `ALTER DATABASE ${this.quoteIdentifier(oldName)} RENAME TO ${this.quoteIdentifier(newName)}`
+        `ALTER DATABASE ${this.quoteIdentifier(oldName)} RENAME TO ${this.quoteIdentifier(newName)}`,
       );
     } finally {
       await client.end();
     }
   }
 
-  public async dropDatabase(connection: PostgresConnection, name: string): Promise<void> {
-    const client = await this.connect({ ...connection, database: 'postgres' });
+  public async dropDatabase(
+    connection: PostgresConnection,
+    name: string,
+  ): Promise<void> {
+    const client = await this.connect({ ...connection, database: "postgres" });
     try {
       await client.query(`DROP DATABASE ${this.quoteIdentifier(name)}`);
     } finally {
@@ -148,9 +175,12 @@ export class PostgresService {
   public async createSchema(
     connection: PostgresConnection,
     databaseName: string,
-    schemaName: string
+    schemaName: string,
   ): Promise<void> {
-    const client = await this.connect({ ...connection, database: databaseName });
+    const client = await this.connect({
+      ...connection,
+      database: databaseName,
+    });
     try {
       await client.query(`CREATE SCHEMA ${this.quoteIdentifier(schemaName)}`);
     } finally {
@@ -161,11 +191,16 @@ export class PostgresService {
   public async dropSchema(
     connection: PostgresConnection,
     databaseName: string,
-    schemaName: string
+    schemaName: string,
   ): Promise<void> {
-    const client = await this.connect({ ...connection, database: databaseName });
+    const client = await this.connect({
+      ...connection,
+      database: databaseName,
+    });
     try {
-      await client.query(`DROP SCHEMA ${this.quoteIdentifier(schemaName)} CASCADE`);
+      await client.query(
+        `DROP SCHEMA ${this.quoteIdentifier(schemaName)} CASCADE`,
+      );
     } finally {
       await client.end();
     }
@@ -175,26 +210,35 @@ export class PostgresService {
     connection: PostgresConnection,
     databaseName: string,
     schemaName: string,
-    tableName: string
+    tableName: string,
   ): Promise<void> {
-    const client = await this.connect({ ...connection, database: databaseName });
+    const client = await this.connect({
+      ...connection,
+      database: databaseName,
+    });
     try {
       await client.query(
-        `TRUNCATE TABLE ${this.quoteIdentifier(schemaName)}.${this.quoteIdentifier(tableName)} CASCADE`
+        `TRUNCATE TABLE ${this.quoteIdentifier(schemaName)}.${this.quoteIdentifier(tableName)} CASCADE`,
       );
     } finally {
       await client.end();
     }
   }
 
-  public async listSchemas(connection: PostgresConnection, databaseName: string): Promise<string[]> {
-    const client = await this.connect({ ...connection, database: databaseName });
+  public async listSchemas(
+    connection: PostgresConnection,
+    databaseName: string,
+  ): Promise<string[]> {
+    const client = await this.connect({
+      ...connection,
+      database: databaseName,
+    });
     try {
       const result = await client.query<{ schema_name: string }>(
         `SELECT schema_name
          FROM information_schema.schemata
          WHERE schema_name NOT IN ('pg_catalog', 'information_schema')
-         ORDER BY schema_name`
+         ORDER BY schema_name`,
       );
       return result.rows.map((row) => row.schema_name);
     } finally {
@@ -202,13 +246,19 @@ export class PostgresService {
     }
   }
 
-  public async listExtensions(connection: PostgresConnection, databaseName: string): Promise<string[]> {
-    const client = await this.connect({ ...connection, database: databaseName });
+  public async listExtensions(
+    connection: PostgresConnection,
+    databaseName: string,
+  ): Promise<string[]> {
+    const client = await this.connect({
+      ...connection,
+      database: databaseName,
+    });
     try {
       const result = await client.query<{ extname: string }>(
         `SELECT extname
          FROM pg_extension
-         ORDER BY extname`
+         ORDER BY extname`,
       );
       return result.rows.map((row) => row.extname);
     } finally {
@@ -219,9 +269,12 @@ export class PostgresService {
   public async listTables(
     connection: PostgresConnection,
     databaseName: string,
-    schemaName: string
+    schemaName: string,
   ): Promise<string[]> {
-    const client = await this.connect({ ...connection, database: databaseName });
+    const client = await this.connect({
+      ...connection,
+      database: databaseName,
+    });
     try {
       const result = await client.query<{ table_name: string }>(
         `SELECT table_name
@@ -229,7 +282,7 @@ export class PostgresService {
          WHERE table_schema = $1
            AND table_type = 'BASE TABLE'
          ORDER BY table_name`,
-        [schemaName]
+        [schemaName],
       );
       return result.rows.map((row) => row.table_name);
     } finally {
@@ -240,16 +293,19 @@ export class PostgresService {
   public async listViews(
     connection: PostgresConnection,
     databaseName: string,
-    schemaName: string
+    schemaName: string,
   ): Promise<string[]> {
-    const client = await this.connect({ ...connection, database: databaseName });
+    const client = await this.connect({
+      ...connection,
+      database: databaseName,
+    });
     try {
       const result = await client.query<{ table_name: string }>(
         `SELECT table_name
          FROM information_schema.views
          WHERE table_schema = $1
          ORDER BY table_name`,
-        [schemaName]
+        [schemaName],
       );
       return result.rows.map((row) => row.table_name);
     } finally {
@@ -260,9 +316,12 @@ export class PostgresService {
   public async listFunctions(
     connection: PostgresConnection,
     databaseName: string,
-    schemaName: string
+    schemaName: string,
   ): Promise<string[]> {
-    const client = await this.connect({ ...connection, database: databaseName });
+    const client = await this.connect({
+      ...connection,
+      database: databaseName,
+    });
     try {
       const result = await client.query<{ routine_name: string }>(
         `SELECT routine_name
@@ -270,7 +329,7 @@ export class PostgresService {
          WHERE routine_schema = $1
            AND routine_type = 'FUNCTION'
          ORDER BY routine_name`,
-        [schemaName]
+        [schemaName],
       );
       return result.rows.map((row) => row.routine_name);
     } finally {
@@ -281,9 +340,12 @@ export class PostgresService {
   public async listProcedures(
     connection: PostgresConnection,
     databaseName: string,
-    schemaName: string
+    schemaName: string,
   ): Promise<string[]> {
-    const client = await this.connect({ ...connection, database: databaseName });
+    const client = await this.connect({
+      ...connection,
+      database: databaseName,
+    });
     try {
       const result = await client.query<{ routine_name: string }>(
         `SELECT routine_name
@@ -291,7 +353,7 @@ export class PostgresService {
          WHERE routine_schema = $1
            AND routine_type = 'PROCEDURE'
          ORDER BY routine_name`,
-        [schemaName]
+        [schemaName],
       );
       return result.rows.map((row) => row.routine_name);
     } finally {
@@ -302,16 +364,19 @@ export class PostgresService {
   public async listTriggers(
     connection: PostgresConnection,
     databaseName: string,
-    schemaName: string
+    schemaName: string,
   ): Promise<string[]> {
-    const client = await this.connect({ ...connection, database: databaseName });
+    const client = await this.connect({
+      ...connection,
+      database: databaseName,
+    });
     try {
       const result = await client.query<{ trigger_name: string }>(
         `SELECT DISTINCT trigger_name
          FROM information_schema.triggers
          WHERE trigger_schema = $1
          ORDER BY trigger_name`,
-        [schemaName]
+        [schemaName],
       );
       return result.rows.map((row) => row.trigger_name);
     } finally {
@@ -322,14 +387,17 @@ export class PostgresService {
   public async executeSql(
     connection: PostgresConnection,
     databaseName: string,
-    sql: string
+    sql: string,
   ): Promise<void> {
-    const trimmed = String(sql || '').trim();
+    const trimmed = String(sql || "").trim();
     if (!trimmed) {
-      throw new Error('SQL vazio.');
+      throw new Error("SQL vazio.");
     }
 
-    const client = await this.connect({ ...connection, database: databaseName });
+    const client = await this.connect({
+      ...connection,
+      database: databaseName,
+    });
     try {
       await client.query(trimmed);
     } finally {
@@ -340,14 +408,17 @@ export class PostgresService {
   public async querySql(
     connection: PostgresConnection,
     databaseName: string,
-    sql: string
+    sql: string,
   ): Promise<SqlQueryResult> {
-    const trimmed = String(sql || '').trim();
+    const trimmed = String(sql || "").trim();
     if (!trimmed) {
-      throw new Error('SQL vazio.');
+      throw new Error("SQL vazio.");
     }
 
-    const client = await this.connect({ ...connection, database: databaseName });
+    const client = await this.connect({
+      ...connection,
+      database: databaseName,
+    });
     try {
       const rawResult = await client.query(trimmed);
       const result = rawResult;
@@ -365,7 +436,7 @@ export class PostgresService {
           columns: [],
           rows: [],
           rowCount: 0,
-          command: '',
+          command: "",
           results: [],
         };
       }
@@ -375,17 +446,16 @@ export class PostgresService {
           columns: [],
           rows: [],
           rowCount: 0,
-          command: '',
+          command: "",
           results: results,
         };
-
       }
 
       return {
         columns: (result.fields ?? []).map((f: { name: string }) => f.name),
         rows: result.rows,
         rowCount: result.rowCount ?? result.rows.length,
-        command: result.command ?? '',
+        command: result.command ?? "",
         results: [],
       };
     } finally {
@@ -397,15 +467,15 @@ export class PostgresService {
     connection: PostgresConnection,
     databaseName: string,
     schemaName: string,
-    functionName: string
+    functionName: string,
   ): Promise<string> {
     const row = await this.getRoutineDefinitionRow(
       connection,
       databaseName,
       schemaName,
       functionName,
-      'f',
-      'function'
+      "f",
+      "function",
     );
     return row.definition;
   }
@@ -414,15 +484,15 @@ export class PostgresService {
     connection: PostgresConnection,
     databaseName: string,
     schemaName: string,
-    procedureName: string
+    procedureName: string,
   ): Promise<string> {
     const row = await this.getRoutineDefinitionRow(
       connection,
       databaseName,
       schemaName,
       procedureName,
-      'p',
-      'procedure'
+      "p",
+      "procedure",
     );
     return row.definition;
   }
@@ -431,18 +501,21 @@ export class PostgresService {
     connection: PostgresConnection,
     databaseName: string,
     schemaName: string,
-    functionName: string
+    functionName: string,
   ): Promise<void> {
     const row = await this.getRoutineDefinitionRow(
       connection,
       databaseName,
       schemaName,
       functionName,
-      'f',
-      'function'
+      "f",
+      "function",
     );
 
-    const client = await this.connect({ ...connection, database: databaseName });
+    const client = await this.connect({
+      ...connection,
+      database: databaseName,
+    });
     try {
       await client.query(`DROP FUNCTION ${row.signature}`);
     } finally {
@@ -454,18 +527,21 @@ export class PostgresService {
     connection: PostgresConnection,
     databaseName: string,
     schemaName: string,
-    procedureName: string
+    procedureName: string,
   ): Promise<void> {
     const row = await this.getRoutineDefinitionRow(
       connection,
       databaseName,
       schemaName,
       procedureName,
-      'p',
-      'procedure'
+      "p",
+      "procedure",
     );
 
-    const client = await this.connect({ ...connection, database: databaseName });
+    const client = await this.connect({
+      ...connection,
+      database: databaseName,
+    });
     try {
       await client.query(`DROP PROCEDURE ${row.signature}`);
     } finally {
@@ -477,22 +553,24 @@ export class PostgresService {
     connection: PostgresConnection,
     databaseName: string,
     schemaName: string,
-    triggerName: string
+    triggerName: string,
   ): Promise<{ tableName: string; definition: string }> {
     const rows = await this.getTriggerDefinitionRows(
       connection,
       databaseName,
       schemaName,
-      triggerName
+      triggerName,
     );
 
     if (rows.length === 0) {
-      throw new Error(`Trigger "${triggerName}" não encontrada em ${schemaName}.`);
+      throw new Error(
+        `Trigger "${triggerName}" não encontrada em ${schemaName}.`,
+      );
     }
 
     if (rows.length > 1) {
       throw new Error(
-        `Há mais de uma trigger chamada "${triggerName}" em ${schemaName}. Remoção/edição ambígua.`
+        `Há mais de uma trigger chamada "${triggerName}" em ${schemaName}. Remoção/edição ambígua.`,
       );
     }
 
@@ -506,14 +584,22 @@ export class PostgresService {
     connection: PostgresConnection,
     databaseName: string,
     schemaName: string,
-    triggerName: string
+    triggerName: string,
   ): Promise<void> {
-    const trigger = await this.getTriggerDefinition(connection, databaseName, schemaName, triggerName);
+    const trigger = await this.getTriggerDefinition(
+      connection,
+      databaseName,
+      schemaName,
+      triggerName,
+    );
 
-    const client = await this.connect({ ...connection, database: databaseName });
+    const client = await this.connect({
+      ...connection,
+      database: databaseName,
+    });
     try {
       await client.query(
-        `DROP TRIGGER ${this.quoteIdentifier(triggerName)} ON ${this.quoteIdentifier(schemaName)}.${this.quoteIdentifier(trigger.tableName)}`
+        `DROP TRIGGER ${this.quoteIdentifier(triggerName)} ON ${this.quoteIdentifier(schemaName)}.${this.quoteIdentifier(trigger.tableName)}`,
       );
     } finally {
       await client.end();
@@ -524,9 +610,12 @@ export class PostgresService {
     connection: PostgresConnection,
     databaseName: string,
     schemaName: string,
-    tableName: string
+    tableName: string,
   ): Promise<TableSectionCounts> {
-    const client = await this.connect({ ...connection, database: databaseName });
+    const client = await this.connect({
+      ...connection,
+      database: databaseName,
+    });
     try {
       const result = await client.query<TableSectionCounts>(
         `SELECT
@@ -550,7 +639,7 @@ export class PostgresService {
            (SELECT COUNT(DISTINCT trigger_name)::int
             FROM information_schema.triggers t
             WHERE t.trigger_schema = $1 AND t.event_object_table = $2) AS triggers`,
-        [schemaName, tableName]
+        [schemaName, tableName],
       );
 
       return (
@@ -572,14 +661,17 @@ export class PostgresService {
     connection: PostgresConnection,
     databaseName: string,
     schemaName: string,
-    tableName: string
+    tableName: string,
   ): Promise<ColumnInfo[]> {
-    const client = await this.connect({ ...connection, database: databaseName });
+    const client = await this.connect({
+      ...connection,
+      database: databaseName,
+    });
     try {
       const result = await client.query<{
         name: string;
         data_type: string;
-        is_nullable: 'YES' | 'NO';
+        is_nullable: "YES" | "NO";
         column_default: string | null;
       }>(
         `SELECT
@@ -591,13 +683,13 @@ export class PostgresService {
          WHERE table_schema = $1
            AND table_name = $2
          ORDER BY ordinal_position`,
-        [schemaName, tableName]
+        [schemaName, tableName],
       );
 
       return result.rows.map((row) => ({
         name: row.name,
         dataType: row.data_type,
-        isNullable: row.is_nullable === 'YES',
+        isNullable: row.is_nullable === "YES",
         defaultValue: row.column_default,
       }));
     } finally {
@@ -609,9 +701,12 @@ export class PostgresService {
     connection: PostgresConnection,
     databaseName: string,
     schemaName: string,
-    tableName: string
+    tableName: string,
   ): Promise<ConstraintInfo[]> {
-    const client = await this.connect({ ...connection, database: databaseName });
+    const client = await this.connect({
+      ...connection,
+      database: databaseName,
+    });
     try {
       const result = await client.query<{
         name: string;
@@ -633,7 +728,7 @@ export class PostgresService {
            AND tc.table_name = $2
            AND (n.nspname = $1 OR n.nspname IS NULL)
          ORDER BY tc.constraint_name`,
-        [schemaName, tableName]
+        [schemaName, tableName],
       );
 
       return result.rows.map((row) => ({
@@ -651,9 +746,14 @@ export class PostgresService {
     databaseName: string,
     schemaName: string,
     tableName: string,
-    columnName: string
+    columnName: string,
   ): Promise<ColumnInfo | undefined> {
-    const columns = await this.listTableColumnsDetailed(connection, databaseName, schemaName, tableName);
+    const columns = await this.listTableColumnsDetailed(
+      connection,
+      databaseName,
+      schemaName,
+      tableName,
+    );
     return columns.find((column) => column.name === columnName);
   }
 
@@ -662,9 +762,14 @@ export class PostgresService {
     databaseName: string,
     schemaName: string,
     tableName: string,
-    constraintName: string
+    constraintName: string,
   ): Promise<ConstraintInfo | undefined> {
-    const constraints = await this.listTableConstraints(connection, databaseName, schemaName, tableName);
+    const constraints = await this.listTableConstraints(
+      connection,
+      databaseName,
+      schemaName,
+      tableName,
+    );
     return constraints.find((constraint) => constraint.name === constraintName);
   }
 
@@ -674,31 +779,42 @@ export class PostgresService {
     schemaName: string,
     tableName: string,
     columnName: string,
-    payload: { isNullable: boolean; defaultValue: string }
+    payload: { isNullable: boolean; defaultValue: string },
   ): Promise<void> {
-    const client = await this.connect({ ...connection, database: databaseName });
+    const client = await this.connect({
+      ...connection,
+      database: databaseName,
+    });
     const tableSql = `${this.quoteIdentifier(schemaName)}.${this.quoteIdentifier(tableName)}`;
     const columnSql = this.quoteIdentifier(columnName);
 
     try {
-      await client.query('BEGIN');
+      await client.query("BEGIN");
 
       if (payload.isNullable) {
-        await client.query(`ALTER TABLE ${tableSql} ALTER COLUMN ${columnSql} DROP NOT NULL`);
+        await client.query(
+          `ALTER TABLE ${tableSql} ALTER COLUMN ${columnSql} DROP NOT NULL`,
+        );
       } else {
-        await client.query(`ALTER TABLE ${tableSql} ALTER COLUMN ${columnSql} SET NOT NULL`);
+        await client.query(
+          `ALTER TABLE ${tableSql} ALTER COLUMN ${columnSql} SET NOT NULL`,
+        );
       }
 
       const trimmedDefault = payload.defaultValue.trim();
       if (!trimmedDefault) {
-        await client.query(`ALTER TABLE ${tableSql} ALTER COLUMN ${columnSql} DROP DEFAULT`);
+        await client.query(
+          `ALTER TABLE ${tableSql} ALTER COLUMN ${columnSql} DROP DEFAULT`,
+        );
       } else {
-        await client.query(`ALTER TABLE ${tableSql} ALTER COLUMN ${columnSql} SET DEFAULT ${trimmedDefault}`);
+        await client.query(
+          `ALTER TABLE ${tableSql} ALTER COLUMN ${columnSql} SET DEFAULT ${trimmedDefault}`,
+        );
       }
 
-      await client.query('COMMIT');
+      await client.query("COMMIT");
     } catch (error) {
-      await client.query('ROLLBACK');
+      await client.query("ROLLBACK");
       throw error;
     } finally {
       await client.end();
@@ -708,11 +824,17 @@ export class PostgresService {
   public async listTableEstimatedCounts(
     connection: PostgresConnection,
     databaseName: string,
-    schemaName: string
+    schemaName: string,
   ): Promise<TableEstimatedCount[]> {
-    const client = await this.connect({ ...connection, database: databaseName });
+    const client = await this.connect({
+      ...connection,
+      database: databaseName,
+    });
     try {
-      const result = await client.query<{ table_name: string; row_count: number }>(
+      const result = await client.query<{
+        table_name: string;
+        row_count: number;
+      }>(
         `SELECT
            t.table_name,
            COALESCE(
@@ -733,7 +855,7 @@ export class PostgresService {
          WHERE t.table_schema = $1
            AND t.table_type = 'BASE TABLE'
          ORDER BY t.table_name`,
-        [schemaName]
+        [schemaName],
       );
 
       return result.rows.map((row) => ({
@@ -748,9 +870,12 @@ export class PostgresService {
   public async getSchemaObjectCounts(
     connection: PostgresConnection,
     databaseName: string,
-    schemaName: string
+    schemaName: string,
   ): Promise<SchemaObjectCounts> {
-    const client = await this.connect({ ...connection, database: databaseName });
+    const client = await this.connect({
+      ...connection,
+      database: databaseName,
+    });
     try {
       const result = await client.query<SchemaObjectCounts>(
         `SELECT
@@ -772,7 +897,7 @@ export class PostgresService {
            (SELECT COUNT(DISTINCT trigger_name)::int
             FROM information_schema.triggers
             WHERE trigger_schema = $1) AS triggers`,
-        [schemaName]
+        [schemaName],
       );
 
       return (
@@ -793,14 +918,17 @@ export class PostgresService {
     connection: PostgresConnection,
     databaseName: string,
     schemaName: string,
-    tableName: string
+    tableName: string,
   ): Promise<TableColumnMeta[]> {
-    const client = await this.connect({ ...connection, database: databaseName });
+    const client = await this.connect({
+      ...connection,
+      database: databaseName,
+    });
     try {
       const result = await client.query<{
         name: string;
         data_type: string;
-        is_nullable: 'YES' | 'NO';
+        is_nullable: "YES" | "NO";
         column_default: string | null;
         is_primary_key: boolean;
         is_foreign_key: boolean;
@@ -865,13 +993,13 @@ export class PostgresService {
          WHERE c.table_schema = $1
            AND c.table_name = $2
          ORDER BY c.ordinal_position`,
-        [schemaName, tableName]
+        [schemaName, tableName],
       );
 
       return result.rows.map((row) => ({
         name: row.name,
         dataType: row.data_type,
-        isNullable: row.is_nullable === 'YES',
+        isNullable: row.is_nullable === "YES",
         hasDefault: row.column_default !== null,
         isPrimaryKey: Boolean(row.is_primary_key),
         isForeignKey: Boolean(row.is_foreign_key),
@@ -889,20 +1017,32 @@ export class PostgresService {
     databaseName: string,
     schemaName: string,
     tableName: string,
-    queryInput: TableDataQuery
+    queryInput: TableDataQuery,
   ): Promise<TableDataResult> {
-    const columns = await this.getTableColumns(connection, databaseName, schemaName, tableName);
+    const columns = await this.getTableColumns(
+      connection,
+      databaseName,
+      schemaName,
+      tableName,
+    );
     const columnNames = columns.map((column) => column.name);
     const validColumns = new Set(columnNames);
-    const columnsByName = new Map(columns.map((column) => [column.name, column]));
+    const columnsByName = new Map(
+      columns.map((column) => [column.name, column]),
+    );
 
-    const safeLimit = Math.max(1, Math.min(500, Math.trunc(queryInput.limit || 100)));
+    const safeLimit = Math.max(
+      1,
+      Math.min(500, Math.trunc(queryInput.limit || 100)),
+    );
     const safePage = Math.max(1, Math.trunc(queryInput.page || 1));
     const safeOffset = (safePage - 1) * safeLimit;
     const params: unknown[] = [];
     const whereParts: string[] = [];
 
-    for (const [columnName, filterValueRaw] of Object.entries(queryInput.columnFilters)) {
+    for (const [columnName, filterValueRaw] of Object.entries(
+      queryInput.columnFilters,
+    )) {
       if (!validColumns.has(columnName)) {
         continue;
       }
@@ -913,69 +1053,86 @@ export class PostgresService {
       }
 
       const nullFilter = this.parseNullFilterToken(filterValue);
-      if (nullFilter === 'null') {
+      if (nullFilter === "null") {
         whereParts.push(`${this.quoteIdentifier(columnName)} IS NULL`);
         continue;
       }
-      if (nullFilter === 'not-null') {
+      if (nullFilter === "not-null") {
         whereParts.push(`${this.quoteIdentifier(columnName)} IS NOT NULL`);
         continue;
       }
 
       const columnMeta = columnsByName.get(columnName);
       if (columnMeta) {
-        const advancedCondition = this.buildAdvancedFilterCondition(columnMeta, filterValue, params);
+        const advancedCondition = this.buildAdvancedFilterCondition(
+          columnMeta,
+          filterValue,
+          params,
+        );
         if (advancedCondition) {
           whereParts.push(advancedCondition);
           continue;
         }
       }
 
-      const shouldUseExactMatch = columnMeta?.isPrimaryKey === true || columnMeta?.isForeignKey === true;
+      const shouldUseExactMatch =
+        columnMeta?.isPrimaryKey === true || columnMeta?.isForeignKey === true;
       params.push(shouldUseExactMatch ? filterValue : `%${filterValue}%`);
-      whereParts.push(`${this.quoteIdentifier(columnName)}::text ILIKE $${params.length}`);
+      whereParts.push(
+        `${this.quoteIdentifier(columnName)}::text ILIKE $${params.length}`,
+      );
     }
 
-    if (queryInput.searchMode === 'query') {
+    if (queryInput.searchMode === "query") {
       const searchText = queryInput.searchText.trim();
       if (searchText && columnNames.length > 0) {
         const nullFilter = this.parseNullFilterToken(searchText);
-        if (nullFilter === 'null' || nullFilter === 'not-null') {
-          const nullSql = nullFilter === 'null' ? 'IS NULL' : 'IS NOT NULL';
+        if (nullFilter === "null" || nullFilter === "not-null") {
+          const nullSql = nullFilter === "null" ? "IS NULL" : "IS NOT NULL";
           const globalSearch = columnNames
-            .map((columnName) => `${this.quoteIdentifier(columnName)} ${nullSql}`)
-            .join(' OR ');
+            .map(
+              (columnName) => `${this.quoteIdentifier(columnName)} ${nullSql}`,
+            )
+            .join(" OR ");
           whereParts.push(`(${globalSearch})`);
         } else {
           const advancedGlobalConditions = columns
-            .map((column) => this.buildAdvancedFilterCondition(column, searchText, params))
+            .map((column) =>
+              this.buildAdvancedFilterCondition(column, searchText, params),
+            )
             .filter((condition): condition is string => Boolean(condition));
 
           if (advancedGlobalConditions.length > 0) {
-            whereParts.push(`(${advancedGlobalConditions.join(' OR ')})`);
+            whereParts.push(`(${advancedGlobalConditions.join(" OR ")})`);
           } else {
             params.push(`%${searchText}%`);
             const searchParamIndex = params.length;
             const globalSearch = columnNames
-              .map((columnName) => `CAST(${this.quoteIdentifier(columnName)} AS TEXT) ILIKE $${searchParamIndex}`)
-              .join(' OR ');
+              .map(
+                (columnName) =>
+                  `CAST(${this.quoteIdentifier(columnName)} AS TEXT) ILIKE $${searchParamIndex}`,
+              )
+              .join(" OR ");
             whereParts.push(`(${globalSearch})`);
           }
         }
       }
     }
 
-    const whereClause = whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : '';
+    const whereClause =
+      whereParts.length > 0 ? `WHERE ${whereParts.join(" AND ")}` : "";
 
-    const baseColumns = columnNames.map((name) => this.quoteIdentifier(name)).join(', ');
+    const baseColumns = columnNames
+      .map((name) => this.quoteIdentifier(name))
+      .join(", ");
     const selectColumns =
       baseColumns.length > 0
         ? `ctid::text AS "__dbadmin_ctid", ${baseColumns}`
         : `ctid::text AS "__dbadmin_ctid"`;
 
-    let orderClause = '';
+    let orderClause = "";
     if (queryInput.sortColumn && validColumns.has(queryInput.sortColumn)) {
-      const direction = queryInput.sortDirection === 'desc' ? 'DESC' : 'ASC';
+      const direction = queryInput.sortDirection === "desc" ? "DESC" : "ASC";
       orderClause = `ORDER BY ${this.quoteIdentifier(queryInput.sortColumn)} ${direction}`;
     }
 
@@ -983,7 +1140,12 @@ export class PostgresService {
 FROM ${this.quoteIdentifier(schemaName)}.${this.quoteIdentifier(tableName)}
 ${whereClause}`.trim();
 
-    const countResult = await this.runCountQuery(connection, databaseName, countSql, params);
+    const countResult = await this.runCountQuery(
+      connection,
+      databaseName,
+      countSql,
+      params,
+    );
 
     const dataParams = [...params, safeLimit, safeOffset];
     const limitPlaceholder = `$${dataParams.length - 1}`;
@@ -996,7 +1158,12 @@ ${orderClause}
 LIMIT ${limitPlaceholder}
 OFFSET ${offsetPlaceholder}`.trim();
 
-    const rows = await this.runTableDataQuery(connection, databaseName, sql, dataParams);
+    const rows = await this.runTableDataQuery(
+      connection,
+      databaseName,
+      sql,
+      dataParams,
+    );
 
     return {
       query: `${sql}\n-- params: ${JSON.stringify(dataParams)}`,
@@ -1011,21 +1178,34 @@ OFFSET ${offsetPlaceholder}`.trim();
     databaseName: string,
     schemaName: string,
     tableName: string,
-    payload: TableSavePayload
+    payload: TableSavePayload,
   ): Promise<void> {
-    const client = await this.connect({ ...connection, database: databaseName });
+    const client = await this.connect({
+      ...connection,
+      database: databaseName,
+    });
 
     try {
-      const columns = await this.getTableColumns(connection, databaseName, schemaName, tableName);
+      const columns = await this.getTableColumns(
+        connection,
+        databaseName,
+        schemaName,
+        tableName,
+      );
       const validColumns = new Set(columns.map((column) => column.name));
-      const columnsByName = new Map(columns.map((column) => [column.name, column]));
+      const columnsByName = new Map(
+        columns.map((column) => [column.name, column]),
+      );
       const qualifiedTable = `${this.quoteIdentifier(schemaName)}.${this.quoteIdentifier(tableName)}`;
       const deleteSet = new Set((payload.deletes ?? []).filter(Boolean));
 
-      await client.query('BEGIN');
+      await client.query("BEGIN");
 
       for (const ctid of deleteSet) {
-        await client.query(`DELETE FROM ${qualifiedTable} WHERE ctid::text = $1`, [ctid]);
+        await client.query(
+          `DELETE FROM ${qualifiedTable} WHERE ctid::text = $1`,
+          [ctid],
+        );
       }
 
       for (const update of payload.updates) {
@@ -1052,13 +1232,18 @@ OFFSET ${offsetPlaceholder}`.trim();
 
           const quotedColumn = this.quoteIdentifier(columnName);
 
-          if (value === '__DBADMIN_DEFAULT__') {
+          if (value === "__DBADMIN_DEFAULT__") {
             assignments.push(`${quotedColumn} = DEFAULT`);
           } else {
-            const normalizedValue = this.normalizeValueForColumn(value, columnMeta);
+            const normalizedValue = this.normalizeValueForColumn(
+              value,
+              columnMeta,
+            );
             params.push(normalizedValue);
             const placeholder = `$${params.length}`;
-            assignments.push(`${quotedColumn} = ${this.castValuePlaceholder(placeholder, columnMeta)}`);
+            assignments.push(
+              `${quotedColumn} = ${this.castValuePlaceholder(placeholder, columnMeta)}`,
+            );
           }
         }
 
@@ -1070,7 +1255,7 @@ OFFSET ${offsetPlaceholder}`.trim();
         const ctidParam = `$${params.length}`;
 
         const sql = `UPDATE ${qualifiedTable}
-SET ${assignments.join(', ')}
+SET ${assignments.join(", ")}
 WHERE ctid::text = ${ctidParam}`;
 
         await client.query(sql, params);
@@ -1093,13 +1278,18 @@ WHERE ctid::text = ${ctidParam}`;
 
           insertColumns.push(this.quoteIdentifier(columnName));
 
-          if (value === '__DBADMIN_DEFAULT__') {
-            insertValuesSql.push('DEFAULT');
+          if (value === "__DBADMIN_DEFAULT__") {
+            insertValuesSql.push("DEFAULT");
           } else {
-            const normalizedValue = this.normalizeValueForColumn(value, columnMeta);
+            const normalizedValue = this.normalizeValueForColumn(
+              value,
+              columnMeta,
+            );
             params.push(normalizedValue);
             const placeholder = `$${params.length}`;
-            insertValuesSql.push(this.castValuePlaceholder(placeholder, columnMeta));
+            insertValuesSql.push(
+              this.castValuePlaceholder(placeholder, columnMeta),
+            );
           }
         }
 
@@ -1108,28 +1298,28 @@ WHERE ctid::text = ${ctidParam}`;
           continue;
         }
 
-        const sql = `INSERT INTO ${qualifiedTable} (${insertColumns.join(', ')})
-VALUES (${insertValuesSql.join(', ')})`;
+        const sql = `INSERT INTO ${qualifiedTable} (${insertColumns.join(", ")})
+VALUES (${insertValuesSql.join(", ")})`;
 
         await client.query(sql, params);
       }
 
-      await client.query('COMMIT');
+      await client.query("COMMIT");
     } catch (error: unknown) {
-      await client.query('ROLLBACK');
+      await client.query("ROLLBACK");
       throw error;
     } finally {
       await client.end();
     }
   }
 
-  private parseNullFilterToken(value: string): 'null' | 'not-null' | undefined {
-    const normalized = String(value || '');
-    if (normalized === 'NULL') {
-      return 'null';
+  private parseNullFilterToken(value: string): "null" | "not-null" | undefined {
+    const normalized = String(value || "");
+    if (normalized === "NULL") {
+      return "null";
     }
-    if (normalized === 'NOT NULL') {
-      return 'not-null';
+    if (normalized === "NOT NULL") {
+      return "not-null";
     }
     return undefined;
   }
@@ -1137,16 +1327,19 @@ VALUES (${insertValuesSql.join(', ')})`;
   private buildAdvancedFilterCondition(
     column: TableColumnMeta,
     rawFilterValue: string,
-    params: unknown[]
+    params: unknown[],
   ): string | undefined {
-    const parsed = parseAdvancedFilterForDataType(column.dataType, rawFilterValue);
+    const parsed = parseAdvancedFilterForDataType(
+      column.dataType,
+      rawFilterValue,
+    );
     if (!parsed) {
       return undefined;
     }
 
-    if (parsed.valueType === 'number') {
+    if (parsed.valueType === "number") {
       const columnSql = `${this.quoteIdentifier(column.name)}::numeric`;
-      if (parsed.kind === 'comparison') {
+      if (parsed.kind === "comparison") {
         params.push(parsed.operand);
         return `(${columnSql} ${parsed.operator} $${params.length})`;
       }
@@ -1159,7 +1352,7 @@ VALUES (${insertValuesSql.join(', ')})`;
     }
 
     const columnSql = `${this.quoteIdentifier(column.name)}::date`;
-    if (parsed.kind === 'comparison') {
+    if (parsed.kind === "comparison") {
       params.push(parsed.operand);
       return `(${columnSql} ${parsed.operator} $${params.length}::date)`;
     }
@@ -1176,12 +1369,18 @@ VALUES (${insertValuesSql.join(', ')})`;
     databaseName: string,
     schemaName: string,
     routineName: string,
-    routineKind: 'f' | 'p',
-    routineLabel: 'function' | 'procedure'
+    routineKind: "f" | "p",
+    routineLabel: "function" | "procedure",
   ): Promise<{ signature: string; definition: string }> {
-    const client = await this.connect({ ...connection, database: databaseName });
+    const client = await this.connect({
+      ...connection,
+      database: databaseName,
+    });
     try {
-      const result = await client.query<{ signature: string; definition: string }>(
+      const result = await client.query<{
+        signature: string;
+        definition: string;
+      }>(
         `SELECT
            p.oid::regprocedure::text AS signature,
            pg_get_functiondef(p.oid) AS definition
@@ -1191,16 +1390,18 @@ VALUES (${insertValuesSql.join(', ')})`;
            AND p.proname = $2
            AND p.prokind = $3
          ORDER BY p.oid`,
-        [schemaName, routineName, routineKind]
+        [schemaName, routineName, routineKind],
       );
 
       if (result.rows.length === 0) {
-        throw new Error(`${routineLabel} "${routineName}" não encontrada em ${schemaName}.`);
+        throw new Error(
+          `${routineLabel} "${routineName}" não encontrada em ${schemaName}.`,
+        );
       }
 
       if (result.rows.length > 1) {
         throw new Error(
-          `Há mais de uma ${routineLabel} chamada "${routineName}" em ${schemaName}. Operação ambígua.`
+          `Há mais de uma ${routineLabel} chamada "${routineName}" em ${schemaName}. Operação ambígua.`,
         );
       }
 
@@ -1214,11 +1415,17 @@ VALUES (${insertValuesSql.join(', ')})`;
     connection: PostgresConnection,
     databaseName: string,
     schemaName: string,
-    triggerName: string
+    triggerName: string,
   ): Promise<Array<{ table_name: string; definition: string }>> {
-    const client = await this.connect({ ...connection, database: databaseName });
+    const client = await this.connect({
+      ...connection,
+      database: databaseName,
+    });
     try {
-      const result = await client.query<{ table_name: string; definition: string }>(
+      const result = await client.query<{
+        table_name: string;
+        definition: string;
+      }>(
         `SELECT
            c.relname AS table_name,
            pg_get_triggerdef(t.oid, true) AS definition
@@ -1229,7 +1436,7 @@ VALUES (${insertValuesSql.join(', ')})`;
            AND t.tgname = $2
            AND NOT t.tgisinternal
          ORDER BY c.relname`,
-        [schemaName, triggerName]
+        [schemaName, triggerName],
       );
 
       return result.rows;
@@ -1242,9 +1449,12 @@ VALUES (${insertValuesSql.join(', ')})`;
     connection: PostgresConnection,
     databaseName: string,
     sql: string,
-    params: unknown[]
+    params: unknown[],
   ): Promise<Array<Record<string, unknown>>> {
-    const client = await this.connect({ ...connection, database: databaseName });
+    const client = await this.connect({
+      ...connection,
+      database: databaseName,
+    });
     try {
       const result = await client.query<Record<string, unknown>>(sql, params);
       return result.rows;
@@ -1257,9 +1467,12 @@ VALUES (${insertValuesSql.join(', ')})`;
     connection: PostgresConnection,
     databaseName: string,
     sql: string,
-    params: unknown[]
+    params: unknown[],
   ): Promise<number> {
-    const client = await this.connect({ ...connection, database: databaseName });
+    const client = await this.connect({
+      ...connection,
+      database: databaseName,
+    });
     try {
       const result = await client.query<{ total: number }>(sql, params);
       return result.rows[0]?.total ?? 0;
@@ -1272,33 +1485,39 @@ VALUES (${insertValuesSql.join(', ')})`;
     return `"${identifier.replace(/"/g, '""')}"`;
   }
 
-  private castValuePlaceholder(placeholder: string, column: TableColumnMeta): string {
+  private castValuePlaceholder(
+    placeholder: string,
+    column: TableColumnMeta,
+  ): string {
     const dataType = column.dataType.toLowerCase();
-    if (dataType === 'json' || dataType === 'jsonb') {
+    if (dataType === "json" || dataType === "jsonb") {
       return `${placeholder}::${dataType}`;
     }
 
     return placeholder;
   }
 
-  private normalizeValueForColumn(value: unknown, column: TableColumnMeta): unknown {
+  private normalizeValueForColumn(
+    value: unknown,
+    column: TableColumnMeta,
+  ): unknown {
     if (value === null || value === undefined) {
       return value;
     }
 
     const dataType = column.dataType.toLowerCase();
-    if (dataType !== 'json' && dataType !== 'jsonb') {
+    if (dataType !== "json" && dataType !== "jsonb") {
       return value;
     }
 
-    if (typeof value === 'string') {
+    if (typeof value === "string") {
       const trimmed = value.trim();
       try {
         // Keep JSON payload as text so pg does not coerce JS arrays to postgres arrays.
         return JSON.stringify(JSON.parse(trimmed));
       } catch {
         throw new Error(
-          `Valor invalido para a coluna "${column.name}" (${column.dataType}). Informe um JSON valido.`
+          `Valor invalido para a coluna "${column.name}" (${column.dataType}). Informe um JSON valido.`,
         );
       }
     }
@@ -1307,7 +1526,7 @@ VALUES (${insertValuesSql.join(', ')})`;
       return JSON.stringify(value);
     } catch {
       throw new Error(
-        `Valor invalido para a coluna "${column.name}" (${column.dataType}). Informe um JSON valido.`
+        `Valor invalido para a coluna "${column.name}" (${column.dataType}). Informe um JSON valido.`,
       );
     }
   }
@@ -1317,12 +1536,17 @@ VALUES (${insertValuesSql.join(', ')})`;
     databaseName: string,
     schemaName: string,
     tableName: string,
-    mainColumns?: TableColumnMeta[]
+    mainColumns?: TableColumnMeta[],
   ): Promise<DiagramDataResult> {
-    const client = await this.connect({ ...connection, database: databaseName });
+    const client = await this.connect({
+      ...connection,
+      database: databaseName,
+    });
     try {
       // Use provided columns (already loaded from table panel) or fetch fresh
-      const resolvedMainColumns = mainColumns ?? (await this.queryColumnsWithClient(client, schemaName, tableName));
+      const resolvedMainColumns =
+        mainColumns ??
+        (await this.queryColumnsWithClient(client, schemaName, tableName));
 
       // Fetch reverse FKs (other tables pointing TO this table) via pg_catalog (fast)
       const reverseResult = await client.query<{
@@ -1349,15 +1573,21 @@ VALUES (${insertValuesSql.join(', ')})`;
          WHERE con.contype = 'f'
            AND tn.nspname = $1
            AND tc.relname = $2`,
-        [schemaName, tableName]
+        [schemaName, tableName],
       );
       const reverseFks = reverseResult.rows;
 
       // Collect all related table keys
       const relatedKeySet = new Set<string>();
       for (const col of resolvedMainColumns) {
-        if (col.isForeignKey && col.foreignKeyTargetTable && col.foreignKeyTargetSchema) {
-          relatedKeySet.add(`${col.foreignKeyTargetSchema}.${col.foreignKeyTargetTable}`);
+        if (
+          col.isForeignKey &&
+          col.foreignKeyTargetTable &&
+          col.foreignKeyTargetSchema
+        ) {
+          relatedKeySet.add(
+            `${col.foreignKeyTargetSchema}.${col.foreignKeyTargetTable}`,
+          );
         }
       }
       for (const fk of reverseFks) {
@@ -1366,12 +1596,18 @@ VALUES (${insertValuesSql.join(', ')})`;
       const relatedTablesList = [...relatedKeySet]
         .filter((k) => k !== `${schemaName}.${tableName}`)
         .map((key) => {
-          const dotIdx = key.indexOf('.');
-          return { schema: key.substring(0, dotIdx), name: key.substring(dotIdx + 1) };
+          const dotIdx = key.indexOf(".");
+          return {
+            schema: key.substring(0, dotIdx),
+            name: key.substring(dotIdx + 1),
+          };
         });
 
       // Fetch ALL related table columns in a single query (one round-trip)
-      const relatedColumnsMap = await this.queryMultipleTablesColumnsWithClient(client, relatedTablesList);
+      const relatedColumnsMap = await this.queryMultipleTablesColumnsWithClient(
+        client,
+        relatedTablesList,
+      );
 
       const tables: DiagramTableInfo[] = [
         { schemaName, tableName, columns: resolvedMainColumns, isMain: true },
@@ -1385,7 +1621,7 @@ VALUES (${insertValuesSql.join(', ')})`;
         });
       }
 
-      const foreignKeys: DiagramDataResult['foreignKeys'] = [];
+      const foreignKeys: DiagramDataResult["foreignKeys"] = [];
       for (const col of resolvedMainColumns) {
         if (
           col.isForeignKey &&
@@ -1423,7 +1659,7 @@ VALUES (${insertValuesSql.join(', ')})`;
   private async queryColumnsWithClient(
     client: Client,
     schemaName: string,
-    tableName: string
+    tableName: string,
   ): Promise<TableColumnMeta[]> {
     const result = await client.query<{
       name: string;
@@ -1474,7 +1710,7 @@ VALUES (${insertValuesSql.join(', ')})`;
          AND n.nspname = $1
          AND c.relname = $2
        ORDER BY a.attnum`,
-      [schemaName, tableName]
+      [schemaName, tableName],
     );
     return result.rows.map((row) => ({
       name: row.name,
@@ -1491,7 +1727,7 @@ VALUES (${insertValuesSql.join(', ')})`;
 
   private async queryMultipleTablesColumnsWithClient(
     client: Client,
-    tables: Array<{ schema: string; name: string }>
+    tables: Array<{ schema: string; name: string }>,
   ): Promise<Map<string, TableColumnMeta[]>> {
     if (tables.length === 0) return new Map();
     const schemas = tables.map((t) => t.schema);
@@ -1555,7 +1791,7 @@ VALUES (${insertValuesSql.join(', ')})`;
            SELECT unnest($1::text[]), unnest($2::text[])
          )
        ORDER BY n.nspname, c.relname, a.attnum`,
-      [schemas, names]
+      [schemas, names],
     );
     const map = new Map<string, TableColumnMeta[]>();
     for (const row of result.rows) {

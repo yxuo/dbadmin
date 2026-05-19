@@ -1,24 +1,30 @@
-import * as vscode from 'vscode';
-import { SchemaNodeRef } from './models';
-import { RestoreOptions, runRestoreByMode, truncateInsertTablesFromScript } from './backupRestoreService';
+import * as vscode from "vscode";
+import { SchemaNodeRef } from "./models";
+import {
+  RestoreOptions,
+  runRestoreByMode,
+  truncateInsertTablesFromScript,
+  clearSchema,
+} from "./backupRestoreService";
 
 type RestoreWebviewMessage =
-  | { type: 'ready' }
-  | { type: 'execute'; options: RestoreOptions }
-  | { type: 'browse' }
-  | { type: 'clearTables'; filename: string }
-  | { type: 'rememberFilename'; provider: 'dbadmin' | 'pgadmin'; path: string }
-  | { type: 'abort' }
-  | { type: 'cancel' };
+  | { type: "ready" }
+  | { type: "execute"; options: RestoreOptions }
+  | { type: "browse" }
+  | { type: "clearTables"; filename: string }
+  | { type: "clearSchema" }
+  | { type: "rememberFilename"; provider: "dbadmin" | "pgadmin"; path: string }
+  | { type: "abort" }
+  | { type: "cancel" };
 
-const RESTORE_LAST_FILENAMES_KEY = 'dbadmin.restore.lastFilenames';
+const RESTORE_LAST_FILENAMES_KEY = "dbadmin.restore.lastFilenames";
 
 export class RestorePanelManager {
   private readonly panels = new Map<string, vscode.WebviewPanel>();
 
   public constructor(
     private readonly context: vscode.ExtensionContext,
-    private readonly onRestoreCompleted?: () => Promise<void>
+    private readonly onRestoreCompleted?: () => Promise<void>,
   ) {}
 
   public show(context: vscode.ExtensionContext, node: SchemaNodeRef): void {
@@ -31,73 +37,82 @@ export class RestorePanelManager {
     }
 
     const panel = vscode.window.createWebviewPanel(
-      'dbadmin.restore',
+      "dbadmin.restore",
       `Restaurar — ${node.schemaName}`,
       { viewColumn: vscode.ViewColumn.Active, preserveFocus: false },
-      { enableScripts: true, retainContextWhenHidden: true }
+      { enableScripts: true, retainContextWhenHidden: true },
     );
 
-    panel.iconPath = new vscode.ThemeIcon('cloud-upload');
+    panel.iconPath = new vscode.ThemeIcon("cloud-upload");
     panel.webview.html = buildRestoreHtml(panel.webview, node);
     this.panels.set(key, panel);
 
     let running = false;
     let abortController: AbortController | undefined;
-    const lastFilenames = this.context.workspaceState.get<{ dbadmin?: string; pgadmin?: string }>(
-      RESTORE_LAST_FILENAMES_KEY,
-      {}
-    );
+    const lastFilenames = this.context.workspaceState.get<{
+      dbadmin?: string;
+      pgadmin?: string;
+    }>(RESTORE_LAST_FILENAMES_KEY, {});
 
     const disposition = panel.webview.onDidReceiveMessage(
       async (message: RestoreWebviewMessage) => {
-        if (message.type === 'ready') {
+        if (message.type === "ready") {
           panel.webview.postMessage({
-            type: 'restoreLastFilenames',
-            dbadmin: lastFilenames.dbadmin ?? '',
-            pgadmin: lastFilenames.pgadmin ?? '',
+            type: "restoreLastFilenames",
+            dbadmin: lastFilenames.dbadmin ?? "",
+            pgadmin: lastFilenames.pgadmin ?? "",
           });
           return;
         }
 
-        if (message.type === 'rememberFilename') {
-          const nextPath = String(message.path ?? '').trim();
-          const currentPath = message.provider === 'dbadmin' ? lastFilenames.dbadmin : lastFilenames.pgadmin;
+        if (message.type === "rememberFilename") {
+          const nextPath = String(message.path ?? "").trim();
+          const currentPath =
+            message.provider === "dbadmin"
+              ? lastFilenames.dbadmin
+              : lastFilenames.pgadmin;
           if (currentPath === nextPath) {
             return;
           }
 
-          if (message.provider === 'dbadmin') {
+          if (message.provider === "dbadmin") {
             lastFilenames.dbadmin = nextPath;
           } else {
             lastFilenames.pgadmin = nextPath;
           }
 
-          await this.context.workspaceState.update(RESTORE_LAST_FILENAMES_KEY, lastFilenames);
+          await this.context.workspaceState.update(
+            RESTORE_LAST_FILENAMES_KEY,
+            lastFilenames,
+          );
           return;
         }
 
-        if (message.type === 'browse') {
+        if (message.type === "browse") {
           const uris = await vscode.window.showOpenDialog({
-            title: 'Selecionar arquivo de backup',
+            title: "Selecionar arquivo de backup",
             canSelectMany: false,
             filters: {
-              'Backup PostgreSQL': ['backup', 'dump', 'tar', 'sql'],
-              'Todos os arquivos': ['*'],
+              "Backup PostgreSQL": ["backup", "dump", "tar", "sql"],
+              "Todos os arquivos": ["*"],
             },
           });
           if (uris && uris[0]) {
-            panel.webview.postMessage({ type: 'browseResult', path: uris[0].fsPath });
+            panel.webview.postMessage({
+              type: "browseResult",
+              path: uris[0].fsPath,
+            });
           }
           return;
         }
 
-        if (message.type === 'execute') {
+        if (message.type === "execute") {
           if (running) {
             return;
           }
           running = true;
           abortController = new AbortController();
-          panel.webview.postMessage({ type: 'started' });
+          panel.webview.postMessage({ type: "started" });
 
           try {
             await runRestoreByMode(
@@ -105,16 +120,20 @@ export class RestorePanelManager {
               node.databaseName,
               node.schemaName,
               message.options,
-              (line) => panel.webview.postMessage({ type: 'line', text: line }),
-              abortController.signal
+              (line) => panel.webview.postMessage({ type: "line", text: line }),
+              abortController.signal,
             );
             if (this.onRestoreCompleted) {
               await this.onRestoreCompleted();
             }
-            panel.webview.postMessage({ type: 'done', success: true });
+            panel.webview.postMessage({ type: "done", success: true });
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            panel.webview.postMessage({ type: 'done', success: false, error: msg });
+            panel.webview.postMessage({
+              type: "done",
+              success: false,
+              error: msg,
+            });
           } finally {
             running = false;
             abortController = undefined;
@@ -122,16 +141,20 @@ export class RestorePanelManager {
           return;
         }
 
-        if (message.type === 'clearTables') {
+        if (message.type === "clearTables") {
           if (running) {
             return;
           }
           if (!message.filename?.trim()) {
-            panel.webview.postMessage({ type: 'done', success: false, error: 'Informe o arquivo SQL antes de limpar as tabelas.' });
+            panel.webview.postMessage({
+              type: "done",
+              success: false,
+              error: "Informe o arquivo SQL antes de limpar as tabelas.",
+            });
             return;
           }
           running = true;
-          panel.webview.postMessage({ type: 'started' });
+          panel.webview.postMessage({ type: "started" });
 
           try {
             await truncateInsertTablesFromScript(
@@ -139,12 +162,20 @@ export class RestorePanelManager {
               node.databaseName,
               node.schemaName,
               message.filename,
-              (line) => panel.webview.postMessage({ type: 'line', text: line })
+              (line) => panel.webview.postMessage({ type: "line", text: line }),
             );
-            panel.webview.postMessage({ type: 'done', success: true, label: 'Tabelas limpas com sucesso.' });
+            panel.webview.postMessage({
+              type: "done",
+              success: true,
+              label: "Tabelas limpas com sucesso.",
+            });
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            panel.webview.postMessage({ type: 'done', success: false, error: msg });
+            panel.webview.postMessage({
+              type: "done",
+              success: false,
+              error: msg,
+            });
           } finally {
             running = false;
             abortController = undefined;
@@ -152,20 +183,56 @@ export class RestorePanelManager {
           return;
         }
 
-        if (message.type === 'abort') {
+        if (message.type === "clearSchema") {
+          if (running) {
+            return;
+          }
+          running = true;
+          panel.webview.postMessage({ type: "started" });
+
+          try {
+            await clearSchema(
+              node.connection,
+              node.databaseName,
+              node.schemaName,
+              (line) => panel.webview.postMessage({ type: "line", text: line }),
+            );
+            panel.webview.postMessage({
+              type: "done",
+              success: true,
+              label: "Schema limpo com sucesso.",
+            });
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            panel.webview.postMessage({
+              type: "done",
+              success: false,
+              error: msg,
+            });
+          } finally {
+            running = false;
+            abortController = undefined;
+          }
+          return;
+        }
+
+        if (message.type === "abort") {
           if (!running || !abortController) {
             return;
           }
 
-          panel.webview.postMessage({ type: 'line', text: '[DbAdmin] Solicitação de abort recebida. Encerrando restore...' });
+          panel.webview.postMessage({
+            type: "line",
+            text: "[DbAdmin] Solicitação de abort recebida. Encerrando restore...",
+          });
           abortController.abort();
           return;
         }
 
-        if (message.type === 'cancel') {
+        if (message.type === "cancel") {
           panel.dispose();
         }
-      }
+      },
     );
 
     panel.onDidDispose(() => {
@@ -178,7 +245,10 @@ export class RestorePanelManager {
   }
 }
 
-function buildRestoreHtml(webview: vscode.Webview, node: SchemaNodeRef): string {
+function buildRestoreHtml(
+  webview: vscode.Webview,
+  node: SchemaNodeRef,
+): string {
   const nonce = String(Date.now());
   const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';`;
   const title = `${node.schemaName} @ ${node.databaseName}`;
@@ -338,6 +408,14 @@ function buildRestoreHtml(webview: vscode.Webview, node: SchemaNodeRef): string 
       </div>
 
       <div class="tab-pane active" id="pane-geral">
+        <div class="field">
+          <label for="format">Format</label>
+          <select id="format">
+            <option value="custom" selected>Custom</option>
+            <option value="tar">Tar</option>
+            <option value="directory">Directory</option>
+          </select>
+        </div>
         <div class="field row">
           <div>
             <label for="filename">Arquivo de backup</label>
@@ -407,7 +485,13 @@ function buildRestoreHtml(webview: vscode.Webview, node: SchemaNodeRef): string 
         <input id="dbRoleName" type="text" placeholder="Nome da role" />
       </div>
       <div class="status">O arquivo SQL inteiro é enviado ao PostgreSQL em uma única transação (BEGIN … COMMIT), como num script simples.</div>
-      <div class="check-row"><input type="checkbox" id="dbCleanBeforeRestore" /><label for="dbCleanBeforeRestore">Limpar schema antes do restore</label></div>
+      <div class="check-row" style="justify-content: space-between; gap: 12px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <input type="checkbox" id="dbCleanBeforeRestore" />
+          <label for="dbCleanBeforeRestore">Limpar schema antes do restore</label>
+        </div>
+        <button id="clearSchemaBtn" class="secondary" type="button">Limpar agora</button>
+      </div>
       <div class="status">Remove e recria o schema inteiro.</div>
       <div class="check-row"><input type="checkbox" id="dbVerbose" /><label for="dbVerbose">Verbose (estatísticas no log)</label></div>
       <div class="check-row" style="justify-content: space-between; gap: 12px; margin-top: 10px;">
@@ -436,6 +520,7 @@ function buildRestoreHtml(webview: vscode.Webview, node: SchemaNodeRef): string 
     const dbFilenameEl = document.getElementById('dbFilename');
     const pgFilenameEl = document.getElementById('filename');
     const clearTablesBtn = document.getElementById('clearTablesBtn');
+    const clearSchemaBtn = document.getElementById('clearSchemaBtn');
 
     const rememberFilename = (provider, path) => {
       vscode.postMessage({
@@ -527,6 +612,13 @@ function buildRestoreHtml(webview: vscode.Webview, node: SchemaNodeRef): string 
       vscode.postMessage({ type: 'clearTables', filename: dbFilenameEl.value });
     });
 
+    clearSchemaBtn.addEventListener('click', () => {
+      if (isRunning) {
+        return;
+      }
+      vscode.postMessage({ type: 'clearSchema' });
+    });
+
     document.getElementById('executeBtn').addEventListener('click', () => {
       if (activeProvider === 'dbadmin') {
         const options = {
@@ -557,6 +649,7 @@ function buildRestoreHtml(webview: vscode.Webview, node: SchemaNodeRef): string 
 
       const options = {
         mode: 'pgadmin',
+        format: document.getElementById('format').value,
         filename: pgFilenameEl.value,
         jobs: parseInt(document.getElementById('jobs').value, 10) || 1,
         roleName: document.getElementById('roleName').value,
@@ -617,6 +710,7 @@ function buildRestoreHtml(webview: vscode.Webview, node: SchemaNodeRef): string 
         isRunning = true;
         document.getElementById('executeBtn').disabled = true;
         clearTablesBtn.disabled = true;
+        clearSchemaBtn.disabled = true;
         document.getElementById('cancelBtn').textContent = 'Abortar';
         document.getElementById('statusMsg').textContent = 'Restaurando...';
         document.getElementById('statusMsg').className = 'status';
@@ -637,6 +731,7 @@ function buildRestoreHtml(webview: vscode.Webview, node: SchemaNodeRef): string 
         isRunning = false;
         document.getElementById('executeBtn').disabled = false;
         clearTablesBtn.disabled = false;
+        clearSchemaBtn.disabled = false;
         document.getElementById('cancelBtn').textContent = 'Fechar';
         const statusEl = document.getElementById('statusMsg');
         if (msg.success) {
@@ -658,8 +753,8 @@ function buildRestoreHtml(webview: vscode.Webview, node: SchemaNodeRef): string 
 
 function escapeHtml(text: string): string {
   return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }

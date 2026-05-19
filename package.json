@@ -158,32 +158,42 @@
       },
       {
         "command": "dbadmin.createDatabase",
-        "title": "Criar banco de dados",
+        "title": "Criar",
         "icon": "$(add)"
       },
       {
         "command": "dbadmin.renameDatabase",
-        "title": "Renomear banco de dados",
+        "title": "Renomear",
         "icon": "$(edit)"
       },
       {
+        "command": "dbadmin.duplicateDatabase",
+        "title": "Duplicar",
+        "icon": "$(copy)"
+      },
+      {
         "command": "dbadmin.dropDatabase",
-        "title": "Excluir banco de dados",
+        "title": "Excluir",
         "icon": "$(trash)"
       },
       {
         "command": "dbadmin.backupSchema",
-        "title": "Backup do schema",
+        "title": "Backup",
         "icon": "$(cloud-download)"
       },
       {
         "command": "dbadmin.restoreSchema",
-        "title": "Restaurar schema",
+        "title": "Restaurar",
         "icon": "$(cloud-upload)"
       },
       {
+        "command": "dbadmin.clearSchema",
+        "title": "Limpar schema",
+        "icon": "$(clear-all)"
+      },
+      {
         "command": "dbadmin.createSchema",
-        "title": "Criar schema",
+        "title": "Criar",
         "icon": "$(add)"
       },
       {
@@ -297,7 +307,9 @@
         "type": "sqlbook",
         "displayName": "DBAdmin SQL Book",
         "selector": [
-          { "filenamePattern": "*.sqlbook" }
+          {
+            "filenamePattern": "*.sqlbook"
+          }
         ]
       }
     ],
@@ -312,9 +324,9 @@
     "menus": {
       "view/title": [
         {
-            "command": "dbadmin.openSettings",
-            "when": "view == databaseExplorer",
-            "group": "navigation"
+          "command": "dbadmin.openSettings",
+          "when": "view == databaseExplorer",
+          "group": "navigation"
         },
         {
           "command": "dbadmin.createConnection",
@@ -404,14 +416,19 @@
           "group": "navigation"
         },
         {
-          "command": "dbadmin.dropDatabase",
+          "command": "dbadmin.duplicateDatabase",
           "when": "view == databaseExplorer && viewItem == database",
           "group": "navigation@1"
         },
         {
-          "command": "dbadmin.expandNode",
+          "command": "dbadmin.dropDatabase",
           "when": "view == databaseExplorer && viewItem == database",
           "group": "navigation@2"
+        },
+        {
+          "command": "dbadmin.expandNode",
+          "when": "view == databaseExplorer && viewItem == database",
+          "group": "navigation@3"
         },
         {
           "command": "dbadmin.refreshDatabase",
@@ -421,7 +438,7 @@
         {
           "command": "dbadmin.refreshDatabase",
           "when": "view == databaseExplorer && viewItem == database",
-          "group": "navigation@3"
+          "group": "navigation@4"
         },
         {
           "command": "dbadmin.backupSchema",
@@ -444,6 +461,11 @@
           "group": "navigation@2"
         },
         {
+          "command": "dbadmin.clearSchema",
+          "when": "view == databaseExplorer && viewItem == schema",
+          "group": "navigation@3"
+        },
+        {
           "command": "dbadmin.refreshSchema",
           "when": "view == databaseExplorer && viewItem == schema",
           "group": "inline@1"
@@ -451,7 +473,7 @@
         {
           "command": "dbadmin.refreshSchema",
           "when": "view == databaseExplorer && viewItem == schema",
-          "group": "navigation@3"
+          "group": "navigation@4"
         },
         {
           "command": "dbadmin.createSchema",

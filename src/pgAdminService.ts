@@ -1,18 +1,18 @@
-import * as childProcess from 'child_process';
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
-import { Client } from 'pg';
-import * as vscode from 'vscode';
-import { PostgresConnection } from './models';
+import * as childProcess from "child_process";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
+import { Client } from "pg";
+import * as vscode from "vscode";
+import { PostgresConnection } from "./models";
 
-const PGADMIN_BIN_PATH_SETTING = 'dbadmin.pgAdminBinPath';
+const PGADMIN_BIN_PATH_SETTING = "dbadmin.pgAdminBinPath";
 
 export interface BackupOptions {
   /** Target file path */
   filename: string;
   /** custom | tar | directory | plain */
-  format: 'custom' | 'tar' | 'directory' | 'plain';
+  format: "custom" | "tar" | "directory" | "plain";
   /** Number of parallel jobs (directory format only) */
   jobs: number;
   /** Role name to set in produced dump */
@@ -20,7 +20,7 @@ export interface BackupOptions {
 
   // Dados
   /** Section: pre-data, data, post-data */
-  sections: Array<'pre-data' | 'data' | 'post-data'>;
+  sections: Array<"pre-data" | "data" | "post-data">;
   /** Object types to exclude */
   onlyData: boolean;
   onlySchema: boolean;
@@ -40,8 +40,10 @@ export interface BackupOptions {
 export interface RestoreOptions {
   /** Source file path */
   filename: string;
+  /** custom | tar | directory */
+  format: "custom" | "tar" | "directory";
   /** Restore mode (reserved for future providers) */
-  mode?: 'pgadmin';
+  mode?: "pgadmin";
   /** Number of parallel jobs */
   jobs: number;
   /** Role name override */
@@ -50,7 +52,7 @@ export interface RestoreOptions {
   // Dados
   onlyData: boolean;
   onlySchema: boolean;
-  sections: Array<'pre-data' | 'data' | 'post-data'>;
+  sections: Array<"pre-data" | "data" | "post-data">;
 
   // Query
   includeCreateDatabase: boolean;
@@ -78,7 +80,9 @@ export interface RestoreOptions {
   verbose: boolean;
 }
 
-export async function listRoles(connection: PostgresConnection): Promise<string[]> {
+export async function listRoles(
+  connection: PostgresConnection,
+): Promise<string[]> {
   const client = new Client({
     host: connection.host,
     port: connection.port,
@@ -94,7 +98,7 @@ export async function listRoles(connection: PostgresConnection): Promise<string[
     const result = await client.query<{ rolname: string }>(
       `SELECT rolname
        FROM pg_roles
-       ORDER BY rolname`
+       ORDER BY rolname`,
     );
     return result.rows.map((row) => row.rolname);
   } finally {
@@ -109,45 +113,59 @@ export async function listRoles(connection: PostgresConnection): Promise<string[
 export async function resolveBinPath(binary: string): Promise<string> {
   const configuredPath = vscode.workspace
     .getConfiguration()
-    .get<string>(PGADMIN_BIN_PATH_SETTING, '');
+    .get<string>(PGADMIN_BIN_PATH_SETTING, "");
 
   if (configuredPath.trim()) {
-    return path.join(configuredPath.trim(), os.platform() === 'win32' ? `${binary}.exe` : binary);
+    return path.join(
+      configuredPath.trim(),
+      os.platform() === "win32" ? `${binary}.exe` : binary,
+    );
   }
 
   // Auto-detect
   const detected = await detectPgAdminBinPath();
   if (detected) {
-    return path.join(detected, os.platform() === 'win32' ? `${binary}.exe` : binary);
+    return path.join(
+      detected,
+      os.platform() === "win32" ? `${binary}.exe` : binary,
+    );
   }
 
   // Fallback: assume it's on PATH
-  return os.platform() === 'win32' ? `${binary}.exe` : binary;
+  return os.platform() === "win32" ? `${binary}.exe` : binary;
 }
 
 export async function detectPgAdminBinPath(): Promise<string | undefined> {
   const candidates: string[] = [];
 
-  if (os.platform() === 'win32') {
-    const localAppData = process.env['LOCALAPPDATA'] ?? '';
-    const programFiles = process.env['PROGRAMFILES'] ?? 'C:\\Program Files';
-    const programFilesX86 = process.env['PROGRAMFILES(X86)'] ?? 'C:\\Program Files (x86)';
+  if (os.platform() === "win32") {
+    const localAppData = process.env["LOCALAPPDATA"] ?? "";
+    const programFiles = process.env["PROGRAMFILES"] ?? "C:\\Program Files";
+    const programFilesX86 =
+      process.env["PROGRAMFILES(X86)"] ?? "C:\\Program Files (x86)";
 
     for (const base of [localAppData, programFiles, programFilesX86]) {
       if (!base) {
         continue;
       }
-      for (const version of ['', 'v8', 'v7', 'v6']) {
-        const sub = version ? path.join('pgAdmin 4', version, 'runtime') : path.join('pgAdmin 4', 'runtime');
+      for (const version of ["", "v8", "v7", "v6"]) {
+        const sub = version
+          ? path.join("pgAdmin 4", version, "runtime")
+          : path.join("pgAdmin 4", "runtime");
         candidates.push(path.join(base, sub));
-        candidates.push(path.join(base, 'Programs', sub));
+        candidates.push(path.join(base, "Programs", sub));
       }
     }
   } else {
-    candidates.push('/usr/lib/postgresql/bin', '/usr/bin', '/usr/local/bin', '/opt/homebrew/bin');
+    candidates.push(
+      "/usr/lib/postgresql/bin",
+      "/usr/bin",
+      "/usr/local/bin",
+      "/opt/homebrew/bin",
+    );
   }
 
-  const binary = os.platform() === 'win32' ? 'pg_dump.exe' : 'pg_dump';
+  const binary = os.platform() === "win32" ? "pg_dump.exe" : "pg_dump";
   for (const candidate of candidates) {
     try {
       fs.accessSync(path.join(candidate, binary), fs.constants.X_OK);
@@ -168,11 +186,16 @@ export async function runDump(
   databaseName: string,
   schemaName: string,
   options: BackupOptions,
-  onLine: (line: string) => void
+  onLine: (line: string) => void,
 ): Promise<void> {
-  const pgDump = await resolveBinPath('pg_dump');
+  const pgDump = await resolveBinPath("pg_dump");
   const args = buildDumpArgs(connection, databaseName, schemaName, options);
-  return spawnWithStreaming(pgDump, args, { PGPASSWORD: connection.password }, onLine);
+  return spawnWithStreaming(
+    pgDump,
+    args,
+    { PGPASSWORD: connection.password },
+    onLine,
+  );
 }
 
 /**
@@ -184,11 +207,16 @@ export async function runRestore(
   databaseName: string,
   schemaName: string,
   options: RestoreOptions,
-  onLine: (line: string) => void
+  onLine: (line: string) => void,
 ): Promise<void> {
-  const pgRestore = await resolveBinPath('pg_restore');
+  const pgRestore = await resolveBinPath("pg_restore");
   const args = buildRestoreArgs(connection, databaseName, schemaName, options);
-  return spawnWithStreaming(pgRestore, args, { PGPASSWORD: connection.password }, onLine);
+  return spawnWithStreaming(
+    pgRestore,
+    args,
+    { PGPASSWORD: connection.password },
+    onLine,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -199,59 +227,66 @@ function buildDumpArgs(
   connection: PostgresConnection,
   databaseName: string,
   schemaName: string,
-  options: BackupOptions
+  options: BackupOptions,
 ): string[] {
   const args: string[] = [
-    '--host', connection.host,
-    '--port', String(connection.port),
-    '--username', connection.user,
-    '--dbname', databaseName,
-    '--schema', schemaName,
-    '--format', options.format,
-    '--file', options.filename,
+    "--host",
+    connection.host,
+    "--port",
+    String(connection.port),
+    "--username",
+    connection.user,
+    "--dbname",
+    databaseName,
+    "--schema",
+    schemaName,
+    "--format",
+    options.format,
+    "--file",
+    options.filename,
   ];
 
-  if (options.format === 'directory' && options.jobs > 1) {
-    args.push('--jobs', String(options.jobs));
+  if (options.format === "directory" && options.jobs > 1) {
+    args.push("--jobs", String(options.jobs));
   }
 
   if (options.roleName) {
-    args.push('--role', options.roleName);
+    args.push("--role", options.roleName);
   }
 
   const sections = options.sections ?? [];
   if (sections.length > 0 && sections.length < 3) {
     for (const section of sections) {
-      args.push('--section', section);
+      args.push("--section", section);
     }
   }
 
   if (options.onlyData) {
-    args.push('--data-only');
+    args.push("--data-only");
   } else if (options.onlySchema) {
-    args.push('--schema-only');
+    args.push("--schema-only");
   }
 
   if (options.useInserts) {
-    args.push('--inserts');
+    args.push("--inserts");
   }
   if (options.columnInserts) {
-    args.push('--column-inserts');
+    args.push("--column-inserts");
   }
   if (options.disableDollarQuoting) {
-    args.push('--disable-dollar-quoting');
+    args.push("--disable-dollar-quoting");
   }
   if (options.disableTriggers) {
-    args.push('--disable-triggers');
+    args.push("--disable-triggers");
   }
   if (options.verbose) {
-    args.push('--verbose');
+    args.push("--verbose");
   }
   if (options.serializableDeferrable) {
-    args.push('--serializable-deferrable');
+    args.push("--serializable-deferrable");
   }
   if (options.lockWaitTimeout > 0) {
-    args.push('--lock-wait-timeout', String(options.lockWaitTimeout));
+    args.push("--lock-wait-timeout", String(options.lockWaitTimeout));
   }
 
   return args;
@@ -261,71 +296,78 @@ function buildRestoreArgs(
   connection: PostgresConnection,
   databaseName: string,
   schemaName: string,
-  options: RestoreOptions
+  options: RestoreOptions,
 ): string[] {
   const args: string[] = [
-    '--host', connection.host,
-    '--port', String(connection.port),
-    '--username', connection.user,
-    '--dbname', databaseName,
-    '--schema', schemaName,
+    "--host",
+    connection.host,
+    "--port",
+    String(connection.port),
+    "--username",
+    connection.user,
+    "--dbname",
+    databaseName,
+    "--schema",
+    schemaName,
+    "--format",
+    options.format,
   ];
 
   if (options.jobs > 1) {
-    args.push('--jobs', String(options.jobs));
+    args.push("--jobs", String(options.jobs));
   }
   if (options.roleName) {
-    args.push('--role', options.roleName);
+    args.push("--role", options.roleName);
   }
 
   const sections = options.sections ?? [];
   if (sections.length > 0 && sections.length < 3) {
     for (const section of sections) {
-      args.push('--section', section);
+      args.push("--section", section);
     }
   }
 
   if (options.onlyData) {
-    args.push('--data-only');
+    args.push("--data-only");
   } else if (options.onlySchema) {
-    args.push('--schema-only');
+    args.push("--schema-only");
   }
 
   if (options.disableTriggers) {
-    args.push('--disable-triggers');
+    args.push("--disable-triggers");
   }
   if (options.includeCreateDatabase) {
-    args.push('--create');
+    args.push("--create");
   }
   if (options.includeIfExists) {
-    args.push('--if-exists');
+    args.push("--if-exists");
   }
   if (options.enableRowSecurity) {
-    args.push('--enable-row-security');
+    args.push("--enable-row-security");
   }
   if (options.noDataForFailedTables) {
-    args.push('--no-data-for-failed-tables');
+    args.push("--no-data-for-failed-tables");
   }
   if (options.useSetSessionAuthorization) {
-    args.push('--use-set-session-authorization');
+    args.push("--use-set-session-authorization");
   }
   if (options.noPrivileges) {
-    args.push('--no-privileges');
+    args.push("--no-privileges");
   }
   if (options.noOwner) {
-    args.push('--no-owner');
+    args.push("--no-owner");
   }
   if (options.verbose) {
-    args.push('--verbose');
+    args.push("--verbose");
   }
   if (options.exitOnError) {
-    args.push('--exit-on-error');
+    args.push("--exit-on-error");
   }
   if (options.singleTransaction) {
-    args.push('--single-transaction');
+    args.push("--single-transaction");
   }
   if (options.cleanBeforeRestore || options.dropSchema) {
-    args.push('--clean');
+    args.push("--clean");
   }
 
   // Input file last
@@ -342,7 +384,7 @@ function spawnWithStreaming(
   bin: string,
   args: string[],
   env: Record<string, string>,
-  onLine: (line: string) => void
+  onLine: (line: string) => void,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const proc = childProcess.spawn(bin, args, {
@@ -350,12 +392,12 @@ function spawnWithStreaming(
       windowsHide: true,
     });
 
-    let buffer = '';
+    let buffer = "";
 
     const handleData = (chunk: Buffer | string): void => {
       buffer += chunk.toString();
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
       for (const line of lines) {
         if (line) {
           onLine(line);
@@ -363,10 +405,10 @@ function spawnWithStreaming(
       }
     };
 
-    proc.stdout.on('data', handleData);
-    proc.stderr.on('data', handleData);
+    proc.stdout.on("data", handleData);
+    proc.stderr.on("data", handleData);
 
-    proc.on('close', (code) => {
+    proc.on("close", (code) => {
       if (buffer) {
         onLine(buffer);
       }
@@ -377,7 +419,7 @@ function spawnWithStreaming(
       }
     });
 
-    proc.on('error', (err) => {
+    proc.on("error", (err) => {
       reject(err);
     });
   });

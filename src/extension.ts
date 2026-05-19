@@ -1,7 +1,7 @@
-import * as vscode from 'vscode';
-import { ConnectionStore } from './connectionStore';
-import { showConnectionForm } from './connectionFormPanel';
-import { DatabaseTreeProvider } from './databaseTreeProvider';
+import * as vscode from "vscode";
+import { ConnectionStore } from "./connectionStore";
+import { showConnectionForm } from "./connectionFormPanel";
+import { DatabaseTreeProvider } from "./databaseTreeProvider";
 import {
   ConnectionNodeRef,
   DatabaseGroupNodeRef,
@@ -11,18 +11,19 @@ import {
   PostgresConnection,
   SchemaNodeRef,
   TableSectionItemNodeRef,
-} from './models';
-import { PostgresService } from './postgresService';
-import { TableDataPanelManager } from './tableDataPanel';
-import { SettingsPanelManager } from './settingsPanel';
-import { BackupPanelManager } from './backupPanel';
-import { RestorePanelManager } from './restorePanel';
-import { TableMetadataPanelManager } from './tableMetadataPanel';
-import { SqlBookSerializer, SqlBookController } from './sqlBookNotebook';
+} from "./models";
+import { PostgresService } from "./postgresService";
+import { TableDataPanelManager } from "./tableDataPanel";
+import { SettingsPanelManager } from "./settingsPanel";
+import { BackupPanelManager } from "./backupPanel";
+import { RestorePanelManager } from "./restorePanel";
+import { clearSchema } from "./backupRestoreService";
+import { TableMetadataPanelManager } from "./tableMetadataPanel";
+import { SqlBookSerializer, SqlBookController } from "./sqlBookNotebook";
 
-const EXPAND_FILTER_RESULTS_SETTING = 'dbadmin.expandFilterResults';
+const EXPAND_FILTER_RESULTS_SETTING = "dbadmin.expandFilterResults";
 const FILTER_INPUT_DEBOUNCE_MS = 180;
-const DBADMIN_SQL_ACTIVE_PREFIX = '-- Active:';
+const DBADMIN_SQL_ACTIVE_PREFIX = "-- Active:";
 
 interface SqlRunnerContext {
   connectionId?: string;
@@ -41,7 +42,7 @@ interface SqlRelationRef {
 
 interface SqlSchemaRelation {
   name: string;
-  type: 'table' | 'view';
+  type: "table" | "view";
 }
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -49,14 +50,23 @@ export function activate(context: vscode.ExtensionContext): void {
   const storageRoot = workspaceRoot || context.globalStorageUri.fsPath;
   const store = new ConnectionStore(storageRoot);
   const postgresService = new PostgresService();
-  const treeProvider = new DatabaseTreeProvider(store, postgresService, context.extensionPath);
+  const treeProvider = new DatabaseTreeProvider(
+    store,
+    postgresService,
+    context.extensionPath,
+  );
   const tablePanels = new TableDataPanelManager(context, postgresService);
-  const settingsPanel = new SettingsPanelManager(context, () => store.getStorageFilePath());
+  const settingsPanel = new SettingsPanelManager(context, () =>
+    store.getStorageFilePath(),
+  );
   const backupPanels = new BackupPanelManager(context);
   const restorePanels = new RestorePanelManager(context, async () => {
     await treeProvider.reloadAllMetadata();
   });
-  const metadataPanels = new TableMetadataPanelManager(context, postgresService);
+  const metadataPanels = new TableMetadataPanelManager(
+    context,
+    postgresService,
+  );
 
   if (!workspaceRoot) {
     // void vscode.window.showWarningMessage(
@@ -69,63 +79,78 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
-      if (event.affectsConfiguration('dbadmin.showQueryEditor')) {
+      if (event.affectsConfiguration("dbadmin.showQueryEditor")) {
         tablePanels.notifyQueryVisibilityChanged();
       }
 
-      if (event.affectsConfiguration('dbadmin.hideTabHeader')) {
+      if (event.affectsConfiguration("dbadmin.hideTabHeader")) {
         tablePanels.notifyHeaderVisibilityChanged();
       }
 
-      if (event.affectsConfiguration('dbadmin.showFilterLabel')) {
+      if (event.affectsConfiguration("dbadmin.showFilterLabel")) {
         const nextShowFilterLabel = vscode.workspace
           .getConfiguration()
-          .get<boolean>('dbadmin.showFilterLabel', true);
+          .get<boolean>("dbadmin.showFilterLabel", true);
         treeProvider.setShowFilterLabel(nextShowFilterLabel);
       }
 
       if (event.affectsConfiguration(EXPAND_FILTER_RESULTS_SETTING)) {
         if (filterView) {
           void filterView.webview.postMessage({
-            type: 'setExpandItems',
+            type: "setExpandItems",
             value: getExpandFilterResultsSetting(),
           });
         }
-        applyFilter(treeProvider.getTableNameFilter(), { origin: 'config-change' });
+        applyFilter(treeProvider.getTableNameFilter(), {
+          origin: "config-change",
+        });
       }
-    })
+    }),
   );
 
-  const treeView = vscode.window.createTreeView('databaseExplorer', {
+  const treeView = vscode.window.createTreeView("databaseExplorer", {
     treeDataProvider: treeProvider,
     showCollapseAll: true,
   });
 
   const initialShowFilterLabel = vscode.workspace
     .getConfiguration()
-    .get<boolean>('dbadmin.showFilterLabel', true);
+    .get<boolean>("dbadmin.showFilterLabel", true);
   treeProvider.setShowFilterLabel(initialShowFilterLabel);
 
   let filterView: vscode.WebviewView | undefined;
   let searchOnTypeEnabled = true;
 
   const getExpandFilterResultsSetting = (): boolean =>
-    vscode.workspace.getConfiguration().get<boolean>(EXPAND_FILTER_RESULTS_SETTING, false);
+    vscode.workspace
+      .getConfiguration()
+      .get<boolean>(EXPAND_FILTER_RESULTS_SETTING, false);
 
-  const setExpandFilterResultsSetting = async (value: boolean): Promise<void> => {
+  const setExpandFilterResultsSetting = async (
+    value: boolean,
+  ): Promise<void> => {
     await vscode.workspace
       .getConfiguration()
-      .update(EXPAND_FILTER_RESULTS_SETTING, Boolean(value), vscode.ConfigurationTarget.Global);
+      .update(
+        EXPAND_FILTER_RESULTS_SETTING,
+        Boolean(value),
+        vscode.ConfigurationTarget.Global,
+      );
   };
 
   const collapseAllExplorer = async (): Promise<void> => {
-    await vscode.commands.executeCommand('workbench.actions.treeView.databaseExplorer.collapseAll');
+    await vscode.commands.executeCommand(
+      "workbench.actions.treeView.databaseExplorer.collapseAll",
+    );
   };
 
   let filterRunSeq = 0;
   let pendingFilterTimeout: ReturnType<typeof setTimeout> | undefined;
 
-  const runFilter = async (rawValue: string, _origin: string = 'unknown'): Promise<void> => {
+  const runFilter = async (
+    rawValue: string,
+    _origin: string = "unknown",
+  ): Promise<void> => {
     const runId = ++filterRunSeq;
     const isStale = (): boolean => runId !== filterRunSeq;
 
@@ -134,12 +159,12 @@ export function activate(context: vscode.ExtensionContext): void {
 
     const shouldShowLabel = vscode.workspace
       .getConfiguration()
-      .get<boolean>('dbadmin.showFilterLabel', true);
+      .get<boolean>("dbadmin.showFilterLabel", true);
     treeProvider.setShowFilterLabel(shouldShowLabel);
 
     if (filterView) {
       await filterView.webview.postMessage({
-        type: 'setFilterValue',
+        type: "setFilterValue",
         value,
       });
     }
@@ -172,7 +197,7 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
 
-    await vscode.commands.executeCommand('databaseExplorer.focus');
+    await vscode.commands.executeCommand("databaseExplorer.focus");
     if (isStale()) {
       return;
     }
@@ -183,7 +208,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
 
       // Se depender da quickpick, melhor dar um tempinho para o VSCode gerar a treeview com sucesso
-      if (_origin === 'quickpick') {
+      if (_origin === "quickpick") {
         await new Promise((resolve) => setTimeout(resolve, 500));
       }
 
@@ -195,13 +220,16 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   };
 
-  const applyFilter = (rawValue: string, options?: { debounceMs?: number; origin?: string }): void => {
+  const applyFilter = (
+    rawValue: string,
+    options?: { debounceMs?: number; origin?: string },
+  ): void => {
     if (pendingFilterTimeout) {
       clearTimeout(pendingFilterTimeout);
       pendingFilterTimeout = undefined;
     }
 
-    const origin = options?.origin ?? 'unknown';
+    const origin = options?.origin ?? "unknown";
     const debounceMs = options?.debounceMs ?? 0;
     if (debounceMs > 0) {
       pendingFilterTimeout = setTimeout(() => {
@@ -222,7 +250,7 @@ export function activate(context: vscode.ExtensionContext): void {
         webviewView.webview,
         treeProvider.getTableNameFilter(),
         getExpandFilterResultsSetting(),
-        searchOnTypeEnabled
+        searchOnTypeEnabled,
       );
 
       webviewView.onDidDispose(() => {
@@ -231,69 +259,88 @@ export function activate(context: vscode.ExtensionContext): void {
         }
       });
 
-      webviewView.webview.onDidReceiveMessage((message: { type?: string; value?: string; checked?: boolean }) => {
-        if (message.type === 'filterChanged') {
-          if (searchOnTypeEnabled) {
-            applyFilter(String(message.value ?? ''), { debounceMs: FILTER_INPUT_DEBOUNCE_MS, origin: 'sidebar-typing' });
+      webviewView.webview.onDidReceiveMessage(
+        (message: { type?: string; value?: string; checked?: boolean }) => {
+          if (message.type === "filterChanged") {
+            if (searchOnTypeEnabled) {
+              applyFilter(String(message.value ?? ""), {
+                debounceMs: FILTER_INPUT_DEBOUNCE_MS,
+                origin: "sidebar-typing",
+              });
+            }
+            return;
           }
-          return;
-        }
 
-        if (message.type === 'filterSubmitted') {
-          applyFilter(String(message.value ?? ''), { origin: 'sidebar-enter' });
-          return;
-        }
-
-        if (message.type === 'toggleSearchOnType') {
-          searchOnTypeEnabled = Boolean(message.checked);
-          if (filterView) {
-            void filterView.webview.postMessage({
-              type: 'setSearchOnType',
-              value: searchOnTypeEnabled,
+          if (message.type === "filterSubmitted") {
+            applyFilter(String(message.value ?? ""), {
+              origin: "sidebar-enter",
             });
+            return;
           }
-          return;
-        }
 
-        if (message.type === 'toggleExpandItems') {
-          void (async () => {
-            await setExpandFilterResultsSetting(Boolean(message.checked));
-            applyFilter(treeProvider.getTableNameFilter(), { origin: 'toggle-expand' });
-          })();
-        }
-      });
+          if (message.type === "toggleSearchOnType") {
+            searchOnTypeEnabled = Boolean(message.checked);
+            if (filterView) {
+              void filterView.webview.postMessage({
+                type: "setSearchOnType",
+                value: searchOnTypeEnabled,
+              });
+            }
+            return;
+          }
+
+          if (message.type === "toggleExpandItems") {
+            void (async () => {
+              await setExpandFilterResultsSetting(Boolean(message.checked));
+              applyFilter(treeProvider.getTableNameFilter(), {
+                origin: "toggle-expand",
+              });
+            })();
+          }
+        },
+      );
     },
   };
 
   context.subscriptions.push(treeView);
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider('databaseExplorerFilter', filterViewProvider)
+    vscode.window.registerWebviewViewProvider(
+      "databaseExplorerFilter",
+      filterViewProvider,
+    ),
   );
   context.subscriptions.push(
-    vscode.languages.registerCodeLensProvider({ language: 'sql' }, createSqlRunnerCodeLensProvider(store))
+    vscode.languages.registerCodeLensProvider(
+      { language: "sql" },
+      createSqlRunnerCodeLensProvider(store),
+    ),
   );
   context.subscriptions.push(
     vscode.languages.registerCompletionItemProvider(
-      { language: 'sql' },
+      { language: "sql" },
       createSqlRunnerCompletionItemProvider(store, postgresService),
-      '.',
-      ' ',
-      ','
-    )
+      ".",
+      " ",
+      ",",
+    ),
   );
 
   const sqlActiveLineDeco = vscode.window.createTextEditorDecorationType({});
   context.subscriptions.push(sqlActiveLineDeco);
 
-  const refreshSqlActiveDecorations = async (editor: vscode.TextEditor): Promise<void> => {
-    if (editor.document.languageId !== 'sql') {
+  const refreshSqlActiveDecorations = async (
+    editor: vscode.TextEditor,
+  ): Promise<void> => {
+    if (editor.document.languageId !== "sql") {
       editor.setDecorations(sqlActiveLineDeco, []);
       return;
     }
 
     const allConnections = await store.listConnections();
     const nicknamesById = new Map(
-      allConnections.map((connection) => [connection.id, connection.nickname.trim()] as const)
+      allConnections.map(
+        (connection) => [connection.id, connection.nickname.trim()] as const,
+      ),
     );
 
     const lines = editor.document.getText().split(/\r?\n/);
@@ -318,8 +365,8 @@ export function activate(context: vscode.ExtensionContext): void {
         renderOptions: {
           after: {
             contentText: `  ${nickname}`,
-            color: new vscode.ThemeColor('terminal.ansiBrightBlue'),
-            fontWeight: 'bold',
+            color: new vscode.ThemeColor("terminal.ansiBrightBlue"),
+            fontWeight: "bold",
           },
         },
       });
@@ -337,7 +384,7 @@ export function activate(context: vscode.ExtensionContext): void {
       if (editor) {
         void refreshSqlActiveDecorations(editor);
       }
-    })
+    }),
   );
 
   context.subscriptions.push(
@@ -346,28 +393,28 @@ export function activate(context: vscode.ExtensionContext): void {
       if (editor && editor.document === event.document) {
         void refreshSqlActiveDecorations(editor);
       }
-    })
+    }),
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('dbadmin.refresh', async () => {
+    vscode.commands.registerCommand("dbadmin.refresh", async () => {
       await treeProvider.reloadAllMetadata();
-    })
+    }),
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('dbadmin.editTableFilter', async () => {
+    vscode.commands.registerCommand("dbadmin.editTableFilter", async () => {
       const current = treeProvider.getTableNameFilter();
-      const expandLabel = 'Expandir itens';
+      const expandLabel = "Expandir itens";
       const quickPick = vscode.window.createQuickPick<vscode.QuickPickItem>();
-      quickPick.title = 'Filtro de tabelas';
-      quickPick.placeholder = 'Digite para filtrar tabelas...';
+      quickPick.title = "Filtro de tabelas";
+      quickPick.placeholder = "Digite para filtrar tabelas...";
       quickPick.value = current;
       quickPick.canSelectMany = true;
 
       const expandItem: vscode.QuickPickItem = {
         label: expandLabel,
-        description: '',
+        description: "",
         alwaysShow: true,
         picked: getExpandFilterResultsSetting(),
       };
@@ -383,13 +430,15 @@ export function activate(context: vscode.ExtensionContext): void {
         quickPick.onDidAccept(() => {
           accepted = true;
           const value = quickPick.value;
-          const expandEnabled = quickPick.selectedItems.some((item) => item.label === expandLabel);
+          const expandEnabled = quickPick.selectedItems.some(
+            (item) => item.label === expandLabel,
+          );
 
           void (async () => {
             if (expandEnabled !== getExpandFilterResultsSetting()) {
               await setExpandFilterResultsSetting(expandEnabled);
             }
-            applyFilter(value, { origin: 'quickpick' });
+            applyFilter(value, { origin: "quickpick" });
             resolve();
           })();
 
@@ -405,338 +454,424 @@ export function activate(context: vscode.ExtensionContext): void {
 
         quickPick.show();
       });
-    })
+    }),
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('dbadmin.clearTableFilter', () => {
-      applyFilter('', { origin: 'clear-command' });
-    })
+    vscode.commands.registerCommand("dbadmin.clearTableFilter", () => {
+      applyFilter("", { origin: "clear-command" });
+    }),
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('dbadmin.executeSqlFromActiveEditor', async () => {
-      try {
-        const activeEditor = vscode.window.activeTextEditor;
-        if (!activeEditor) {
-          vscode.window.showInformationMessage('Nenhum editor SQL ativo para execução.');
-          return;
-        }
+    vscode.commands.registerCommand(
+      "dbadmin.executeSqlFromActiveEditor",
+      async () => {
+        try {
+          const activeEditor = vscode.window.activeTextEditor;
+          if (!activeEditor) {
+            vscode.window.showInformationMessage(
+              "Nenhum editor SQL ativo para execução.",
+            );
+            return;
+          }
 
-        await executeSqlFromEditorDocument(activeEditor.document, store, postgresService);
-        await treeProvider.reloadAllMetadata();
-      } catch (error) {
-        showError(error);
-      }
-    })
+          await executeSqlFromEditorDocument(
+            activeEditor.document,
+            store,
+            postgresService,
+          );
+          await treeProvider.reloadAllMetadata();
+        } catch (error) {
+          showError(error);
+        }
+      },
+    ),
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('dbadmin.sqlRunner.selectConnection', async () => {
-      try {
-        const editor = vscode.window.activeTextEditor;
-        const document = editor?.document;
-        if (!document || !isDbAdminSqlRunnerDocument(document)) {
-          return;
-        }
+    vscode.commands.registerCommand(
+      "dbadmin.sqlRunner.selectConnection",
+      async () => {
+        try {
+          const editor = vscode.window.activeTextEditor;
+          const document = editor?.document;
+          if (!document || !isDbAdminSqlRunnerDocument(document)) {
+            return;
+          }
 
-        const allConnections = await store.listConnections();
-        if (allConnections.length === 0) {
-          vscode.window.showInformationMessage('Não há conexões cadastradas.');
-          return;
-        }
+          const allConnections = await store.listConnections();
+          if (allConnections.length === 0) {
+            vscode.window.showInformationMessage(
+              "Não há conexões cadastradas.",
+            );
+            return;
+          }
 
-        const picked = await vscode.window.showQuickPick(
-          allConnections.map((connection) => ({
-            label: connection.nickname,
-            description: `${connection.user}@${connection.host}:${connection.port}/${connection.database}`,
-            connection,
-          })),
-          { placeHolder: 'Selecione a conexão' }
+          const picked = await vscode.window.showQuickPick(
+            allConnections.map((connection) => ({
+              label: connection.nickname,
+              description: `${connection.user}@${connection.host}:${connection.port}/${connection.database}`,
+              connection,
+            })),
+            { placeHolder: "Selecione a conexão" },
+          );
+
+          if (!picked) {
+            return;
+          }
+
+          const databases = await postgresService.listDatabases(
+            picked.connection,
+          );
+          if (databases.length === 0) {
+            vscode.window.showInformationMessage(
+              "Nenhum banco disponível para essa conexão.",
+            );
+            return;
+          }
+
+          const pickedDatabase = await vscode.window.showQuickPick(databases, {
+            placeHolder: "Selecione o banco",
+          });
+
+          if (!pickedDatabase) {
+            return;
+          }
+
+          const schemas = await postgresService.listSchemas(
+            picked.connection,
+            pickedDatabase,
+          );
+          const schemaItems: Array<{
+            label: string;
+            schemaName?: string;
+            description?: string;
+          }> = [
+            {
+              label: "Sem schema",
+              description: "Usar search_path padrão da conexão",
+              schemaName: undefined,
+            },
+            ...schemas.map((schemaName) => ({ label: schemaName, schemaName })),
+          ];
+
+          const pickedSchema = await vscode.window.showQuickPick(schemaItems, {
+            placeHolder: "Selecione o schema (opcional)",
+          });
+
+          if (!pickedSchema) {
+            return;
+          }
+
+          const parsed = parseSqlRunnerHeader(document.getText());
+          await rewriteSqlRunnerHeader(document, {
+            ...parsed.context,
+            connectionId: picked.connection.id,
+            connectionHost: picked.connection.host,
+            connectionPort: picked.connection.port,
+            databaseName: pickedDatabase,
+            schemaName: pickedSchema.schemaName,
+          });
+        } catch (error) {
+          showError(error);
+        }
+      },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "dbadmin.sqlRunner.selectDatabase",
+      async () => {
+        await vscode.commands.executeCommand(
+          "dbadmin.sqlRunner.selectConnection",
         );
-
-        if (!picked) {
-          return;
-        }
-
-        const databases = await postgresService.listDatabases(picked.connection);
-        if (databases.length === 0) {
-          vscode.window.showInformationMessage('Nenhum banco disponível para essa conexão.');
-          return;
-        }
-
-        const pickedDatabase = await vscode.window.showQuickPick(databases, {
-          placeHolder: 'Selecione o banco',
-        });
-
-        if (!pickedDatabase) {
-          return;
-        }
-
-        const schemas = await postgresService.listSchemas(picked.connection, pickedDatabase);
-        const schemaItems: Array<{ label: string; schemaName?: string; description?: string }> = [
-          {
-            label: 'Sem schema',
-            description: 'Usar search_path padrão da conexão',
-            schemaName: undefined,
-          },
-          ...schemas.map((schemaName) => ({ label: schemaName, schemaName })),
-        ];
-
-        const pickedSchema = await vscode.window.showQuickPick(schemaItems, {
-          placeHolder: 'Selecione o schema (opcional)',
-        });
-
-        if (!pickedSchema) {
-          return;
-        }
-
-        const parsed = parseSqlRunnerHeader(document.getText());
-        await rewriteSqlRunnerHeader(document, {
-          ...parsed.context,
-          connectionId: picked.connection.id,
-          connectionHost: picked.connection.host,
-          connectionPort: picked.connection.port,
-          databaseName: pickedDatabase,
-          schemaName: pickedSchema.schemaName,
-        });
-      } catch (error) {
-        showError(error);
-      }
-    })
+      },
+    ),
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('dbadmin.sqlRunner.selectDatabase', async () => {
-      await vscode.commands.executeCommand('dbadmin.sqlRunner.selectConnection');
-    })
+    vscode.commands.registerCommand(
+      "dbadmin.sqlRunner.selectSchema",
+      async () => {
+        await vscode.commands.executeCommand(
+          "dbadmin.sqlRunner.selectConnection",
+        );
+      },
+    ),
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('dbadmin.sqlRunner.selectSchema', async () => {
-      await vscode.commands.executeCommand('dbadmin.sqlRunner.selectConnection');
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('dbadmin.spacer', () => {
+    vscode.commands.registerCommand("dbadmin.spacer", () => {
       // Noop command for visual spacing in context menus
-    })
+    }),
   );
 
-  applyFilter(treeProvider.getTableNameFilter(), { origin: 'init' });
-
-
+  applyFilter(treeProvider.getTableNameFilter(), { origin: "init" });
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('dbadmin.createConnection', async () => {
+    vscode.commands.registerCommand("dbadmin.createConnection", async () => {
       try {
-        const payload = await showConnectionForm(context, postgresService, 'create');
+        const payload = await showConnectionForm(
+          context,
+          postgresService,
+          "create",
+        );
         if (!payload) {
           return;
         }
 
         await store.createConnection(payload);
         treeProvider.refresh();
-        vscode.window.showInformationMessage('Conexão criada com sucesso.');
+        vscode.window.showInformationMessage("Conexão criada com sucesso.");
       } catch (error) {
         showError(error);
       }
-    })
+    }),
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('dbadmin.editConnection', async (node?: { connection?: PostgresConnection }) => {
-      try {
-        const target = await resolveConnectionFromNodeOrPicker(store, node?.connection);
-        if (!target) {
-          return;
-        }
+    vscode.commands.registerCommand(
+      "dbadmin.editConnection",
+      async (node?: { connection?: PostgresConnection }) => {
+        try {
+          const target = await resolveConnectionFromNodeOrPicker(
+            store,
+            node?.connection,
+          );
+          if (!target) {
+            return;
+          }
 
-        const payload = await showConnectionForm(context, postgresService, 'edit', target);
-        if (!payload) {
-          return;
-        }
+          const payload = await showConnectionForm(
+            context,
+            postgresService,
+            "edit",
+            target,
+          );
+          if (!payload) {
+            return;
+          }
 
-        const updated = await store.updateConnection(target.id, payload);
-        if (node?.connection) {
-          Object.assign(node.connection, updated);
+          const updated = await store.updateConnection(target.id, payload);
+          if (node?.connection) {
+            Object.assign(node.connection, updated);
+          }
+          treeProvider.clearConnectionCache(target.id);
+          treeProvider.refresh();
+          vscode.window.showInformationMessage(
+            "Conexão atualizada com sucesso.",
+          );
+        } catch (error) {
+          showError(error);
         }
-        treeProvider.clearConnectionCache(target.id);
-        treeProvider.refresh();
-        vscode.window.showInformationMessage('Conexão atualizada com sucesso.');
-      } catch (error) {
-        showError(error);
-      }
-    })
+      },
+    ),
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('dbadmin.deleteConnection', async (node?: { connection?: PostgresConnection }) => {
-      try {
-        const target = await resolveConnectionFromNodeOrPicker(store, node?.connection);
-        if (!target) {
+    vscode.commands.registerCommand(
+      "dbadmin.deleteConnection",
+      async (node?: { connection?: PostgresConnection }) => {
+        try {
+          const target = await resolveConnectionFromNodeOrPicker(
+            store,
+            node?.connection,
+          );
+          if (!target) {
+            return;
+          }
+
+          const confirmation = await vscode.window.showWarningMessage(
+            `Deseja remover a conexão "${target.nickname}"?`,
+            { modal: true },
+            "Remover",
+          );
+
+          if (confirmation !== "Remover") {
+            return;
+          }
+
+          await store.deleteConnection(target.id);
+          treeProvider.clearConnectionCache(target.id);
+          treeProvider.refresh();
+          vscode.window.showInformationMessage("Conexão removida com sucesso.");
+        } catch (error) {
+          showError(error);
+        }
+      },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "dbadmin.refreshConnection",
+      (node?: ConnectionNodeRef) => {
+        if (!node || node.type !== "connection") {
           return;
         }
 
-        const confirmation = await vscode.window.showWarningMessage(
-          `Deseja remover a conexão "${target.nickname}"?`,
-          { modal: true },
-          'Remover'
+        treeProvider.reloadConnection(node.connection);
+      },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "dbadmin.refreshDatabase",
+      (node?: DatabaseNodeRef) => {
+        if (!node || node.type !== "database") {
+          return;
+        }
+
+        treeProvider.reloadDatabase(node.connection, node.databaseName);
+      },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "dbadmin.refreshSchema",
+      (node?: SchemaNodeRef) => {
+        if (!node || node.type !== "schema") {
+          return;
+        }
+
+        treeProvider.reloadSchema(
+          node.connection,
+          node.databaseName,
+          node.schemaName,
         );
-
-        if (confirmation !== 'Remover') {
-          return;
-        }
-
-        await store.deleteConnection(target.id);
-        treeProvider.clearConnectionCache(target.id);
-        treeProvider.refresh();
-        vscode.window.showInformationMessage('Conexão removida com sucesso.');
-      } catch (error) {
-        showError(error);
-      }
-    })
+      },
+    ),
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('dbadmin.refreshConnection', (node?: ConnectionNodeRef) => {
-      if (!node || node.type !== 'connection') {
-        return;
-      }
-
-      treeProvider.reloadConnection(node.connection);
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('dbadmin.refreshDatabase', (node?: DatabaseNodeRef) => {
-      if (!node || node.type !== 'database') {
-        return;
-      }
-
-      treeProvider.reloadDatabase(node.connection, node.databaseName);
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('dbadmin.refreshSchema', (node?: SchemaNodeRef) => {
-      if (!node || node.type !== 'schema') {
-        return;
-      }
-
-      treeProvider.reloadSchema(node.connection, node.databaseName, node.schemaName);
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('dbadmin.openSettings', async () => {
+    vscode.commands.registerCommand("dbadmin.openSettings", async () => {
       try {
         settingsPanel.show();
       } catch (error) {
         showError(error);
       }
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('dbadmin.openTable', async (node?: DbObjectNodeRef) => {
-      if (!node || node.type !== 'dbObject' || node.kind !== 'table') {
-        return;
-      }
-
-      await tablePanels.openTable({
-        node,
-        newTab: false,
-      });
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('dbadmin.openTableInNewTab', async (node?: DbObjectNodeRef) => {
-      if (!node || node.type !== 'dbObject' || node.kind !== 'table') {
-        return;
-      }
-
-      await tablePanels.openTable({
-        node,
-        newTab: true,
-      });
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('dbadmin.truncateTable', async (node?: DbObjectNodeRef) => {
-      try {
-        if (!node || node.type !== 'dbObject' || node.kind !== 'table') {
-          return;
-        }
-
-        const confirmation = await vscode.window.showWarningMessage(
-          `Deseja esvaziar a tabela "${node.schemaName}.${node.objectName}"? Esta ação remove todos os registros e também pode esvaziar tabelas relacionadas por chave estrangeira (CASCADE).`,
-          { modal: true },
-          'Esvaziar'
-        );
-
-        if (confirmation !== 'Esvaziar') {
-          return;
-        }
-
-        await postgresService.truncateTable(
-          node.connection,
-          node.databaseName,
-          node.schemaName,
-          node.objectName
-        );
-
-        await treeProvider.reloadAllMetadata();
-        vscode.window.showInformationMessage(
-          `Tabela "${node.schemaName}.${node.objectName}" esvaziada com sucesso.`
-        );
-      } catch (error) {
-        showError(error);
-      }
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('dbadmin.showInExplorer', async (node?: DbObjectNodeRef) => {
-      if (!node || node.type !== 'dbObject' || node.kind !== 'table') {
-        return;
-      }
-
-      try {
-        await vscode.commands.executeCommand('workbench.view.extension.dbadmin');
-      } catch {
-        // Ignore if host does not support the command.
-      }
-
-      try {
-        await treeView.reveal(node, {
-          select: true,
-          focus: true,
-          expand: false,
-        });
-      } catch {
-        treeProvider.refresh();
-      }
-    })
+    }),
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'dbadmin.createDatabase',
+      "dbadmin.openTable",
+      async (node?: DbObjectNodeRef) => {
+        if (!node || node.type !== "dbObject" || node.kind !== "table") {
+          return;
+        }
+
+        await tablePanels.openTable({
+          node,
+          newTab: false,
+        });
+      },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "dbadmin.openTableInNewTab",
+      async (node?: DbObjectNodeRef) => {
+        if (!node || node.type !== "dbObject" || node.kind !== "table") {
+          return;
+        }
+
+        await tablePanels.openTable({
+          node,
+          newTab: true,
+        });
+      },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "dbadmin.truncateTable",
+      async (node?: DbObjectNodeRef) => {
+        try {
+          if (!node || node.type !== "dbObject" || node.kind !== "table") {
+            return;
+          }
+
+          const confirmation = await vscode.window.showWarningMessage(
+            `Deseja esvaziar a tabela "${node.schemaName}.${node.objectName}"? Esta ação remove todos os registros e também pode esvaziar tabelas relacionadas por chave estrangeira (CASCADE).`,
+            { modal: true },
+            "Esvaziar",
+          );
+
+          if (confirmation !== "Esvaziar") {
+            return;
+          }
+
+          await postgresService.truncateTable(
+            node.connection,
+            node.databaseName,
+            node.schemaName,
+            node.objectName,
+          );
+
+          await treeProvider.reloadAllMetadata();
+          vscode.window.showInformationMessage(
+            `Tabela "${node.schemaName}.${node.objectName}" esvaziada com sucesso.`,
+          );
+        } catch (error) {
+          showError(error);
+        }
+      },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "dbadmin.showInExplorer",
+      async (node?: DbObjectNodeRef) => {
+        if (!node || node.type !== "dbObject" || node.kind !== "table") {
+          return;
+        }
+
+        try {
+          await vscode.commands.executeCommand(
+            "workbench.view.extension.dbadmin",
+          );
+        } catch {
+          // Ignore if host does not support the command.
+        }
+
+        try {
+          await treeView.reveal(node, {
+            select: true,
+            focus: true,
+            expand: false,
+          });
+        } catch {
+          treeProvider.refresh();
+        }
+      },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "dbadmin.createDatabase",
       async (node?: ConnectionNodeRef) => {
         try {
-          const connection = node?.connection ?? (await resolveConnectionFromNodeOrPicker(store));
+          const connection =
+            node?.connection ??
+            (await resolveConnectionFromNodeOrPicker(store));
           if (!connection) {
             return;
           }
 
           const name = await vscode.window.showInputBox({
-            title: 'Criar banco de dados',
-            prompt: 'Nome do novo banco de dados',
-            validateInput: (value) => (value.trim() ? undefined : 'Informe um nome.'),
+            title: "Criar banco de dados",
+            prompt: "Nome do novo banco de dados",
+            validateInput: (value) =>
+              value.trim() ? undefined : "Informe um nome.",
           });
 
           if (!name) {
@@ -744,507 +879,686 @@ export function activate(context: vscode.ExtensionContext): void {
           }
 
           await postgresService.createDatabase(connection, name.trim());
-          treeProvider.refresh();
-          vscode.window.showInformationMessage(`Banco de dados "${name.trim()}" criado com sucesso.`);
+          await treeProvider.reloadAllMetadata();
+          vscode.window.showInformationMessage(
+            `Banco de dados "${name.trim()}" criado com sucesso.`,
+          );
         } catch (error) {
           showError(error);
         }
-      }
-    )
+      },
+    ),
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'dbadmin.createSchema',
+      "dbadmin.createSchema",
       async (node?: DatabaseGroupNodeRef) => {
         try {
-          if (!node || node.type !== 'databaseGroup' || node.kind !== 'schemas') {
+          if (
+            !node ||
+            node.type !== "databaseGroup" ||
+            node.kind !== "schemas"
+          ) {
             return;
           }
 
           const schemaName = await vscode.window.showInputBox({
             title: `Criar schema em "${node.databaseName}"`,
-            prompt: 'Nome do novo schema',
-            validateInput: (value) => (value.trim() ? undefined : 'Informe um nome.'),
+            prompt: "Nome do novo schema",
+            validateInput: (value) =>
+              value.trim() ? undefined : "Informe um nome.",
           });
 
           if (!schemaName) {
             return;
           }
 
-          await postgresService.createSchema(node.connection, node.databaseName, schemaName.trim());
+          await postgresService.createSchema(
+            node.connection,
+            node.databaseName,
+            schemaName.trim(),
+          );
           await treeProvider.reloadAllMetadata();
           vscode.window.showInformationMessage(
-            `Schema "${schemaName.trim()}" criado com sucesso.`
+            `Schema "${schemaName.trim()}" criado com sucesso.`,
           );
         } catch (error) {
           showError(error);
         }
-      }
-    )
+      },
+    ),
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'dbadmin.renameDatabase',
+      "dbadmin.renameDatabase",
       async (node?: DatabaseNodeRef) => {
         try {
-          if (!node || node.type !== 'database') {
+          if (!node || node.type !== "database") {
             return;
           }
 
           const newName = await vscode.window.showInputBox({
             title: `Renomear banco de dados "${node.databaseName}"`,
-            prompt: 'Novo nome',
+            prompt: "Novo nome",
             value: node.databaseName,
-            validateInput: (value) => (value.trim() ? undefined : 'Informe um nome.'),
+            validateInput: (value) =>
+              value.trim() ? undefined : "Informe um nome.",
           });
 
           if (!newName || newName.trim() === node.databaseName) {
             return;
           }
 
-          await postgresService.renameDatabase(node.connection, node.databaseName, newName.trim());
-          treeProvider.refresh();
+          await postgresService.renameDatabase(
+            node.connection,
+            node.databaseName,
+            newName.trim(),
+          );
+          await treeProvider.reloadAllMetadata();
           vscode.window.showInformationMessage(
-            `Banco de dados renomeado para "${newName.trim()}".`
+            `Banco de dados renomeado para "${newName.trim()}".`,
           );
         } catch (error) {
           showError(error);
         }
-      }
-    )
+      },
+    ),
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'dbadmin.dropDatabase',
+      "dbadmin.duplicateDatabase",
       async (node?: DatabaseNodeRef) => {
         try {
-          if (!node || node.type !== 'database') {
+          if (!node || node.type !== "database") {
+            return;
+          }
+
+          const existingNames = new Set(
+            await postgresService.listDatabases(node.connection),
+          );
+          const suggestedName = `${node.databaseName}_copy`;
+
+          const newName = await vscode.window.showInputBox({
+            title: `Duplicar banco de dados "${node.databaseName}"`,
+            prompt: "Nome do banco de dados duplicado",
+            value: suggestedName,
+            validateInput: (value) => {
+              const trimmed = value.trim();
+              if (!trimmed) {
+                return "Informe um nome.";
+              }
+              if (trimmed === node.databaseName) {
+                return "Informe um nome diferente do banco de origem.";
+              }
+              if (existingNames.has(trimmed)) {
+                return "Já existe um banco com esse nome.";
+              }
+              return undefined;
+            },
+          });
+
+          if (!newName) {
+            return;
+          }
+
+          await postgresService.duplicateDatabase(
+            node.connection,
+            node.databaseName,
+            newName.trim(),
+          );
+          await treeProvider.reloadAllMetadata();
+          vscode.window.showInformationMessage(
+            `Banco de dados "${node.databaseName}" duplicado para "${newName.trim()}" com sucesso.`,
+          );
+        } catch (error) {
+          showError(error);
+        }
+      },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "dbadmin.dropDatabase",
+      async (node?: DatabaseNodeRef) => {
+        try {
+          if (!node || node.type !== "database") {
             return;
           }
 
           const confirmation = await vscode.window.showWarningMessage(
             `Deseja excluir permanentemente o banco de dados "${node.databaseName}"? Esta ação não pode ser desfeita.`,
             { modal: true },
-            'Excluir'
+            "Excluir",
           );
 
-          if (confirmation !== 'Excluir') {
+          if (confirmation !== "Excluir") {
             return;
           }
 
-          await postgresService.dropDatabase(node.connection, node.databaseName);
-          treeProvider.refresh();
+          await postgresService.dropDatabase(
+            node.connection,
+            node.databaseName,
+          );
+          await treeProvider.reloadAllMetadata();
           vscode.window.showInformationMessage(
-            `Banco de dados "${node.databaseName}" excluído com sucesso.`
+            `Banco de dados "${node.databaseName}" excluído com sucesso.`,
           );
         } catch (error) {
           showError(error);
         }
-      }
-    )
+      },
+    ),
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'dbadmin.backupSchema',
+      "dbadmin.backupSchema",
       async (node?: SchemaNodeRef) => {
         try {
-          if (!node || node.type !== 'schema') {
+          if (!node || node.type !== "schema") {
             return;
           }
           backupPanels.show(context, node);
         } catch (error) {
           showError(error);
         }
-      }
-    )
+      },
+    ),
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'dbadmin.restoreSchema',
+      "dbadmin.restoreSchema",
       async (node?: SchemaNodeRef) => {
         try {
-          if (!node || node.type !== 'schema') {
+          if (!node || node.type !== "schema") {
             return;
           }
           restorePanels.show(context, node);
         } catch (error) {
           showError(error);
         }
-      }
-    )
+      },
+    ),
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'dbadmin.dropSchema',
+      "dbadmin.dropSchema",
       async (node?: SchemaNodeRef) => {
         try {
-          if (!node || node.type !== 'schema') {
+          if (!node || node.type !== "schema") {
             return;
           }
 
           const confirmation = await vscode.window.showWarningMessage(
             `Deseja excluir permanentemente o schema "${node.schemaName}" e todos os seus objetos? Esta ação não pode ser desfeita.`,
             { modal: true },
-            'Excluir'
+            "Excluir",
           );
 
-          if (confirmation !== 'Excluir') {
+          if (confirmation !== "Excluir") {
             return;
           }
 
-          await postgresService.dropSchema(node.connection, node.databaseName, node.schemaName);
+          await postgresService.dropSchema(
+            node.connection,
+            node.databaseName,
+            node.schemaName,
+          );
           await treeProvider.reloadAllMetadata();
           vscode.window.showInformationMessage(
-            `Schema "${node.schemaName}" excluído com sucesso.`
+            `Schema "${node.schemaName}" excluído com sucesso.`,
           );
         } catch (error) {
           showError(error);
         }
-      }
-    )
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('dbadmin.createFunction', async (node?: ObjectGroupNodeRef) => {
-      try {
-        if (!node || node.type !== 'objectGroup' || node.kind !== 'function') {
-          return;
-        }
-
-        const initialSql = buildCreateFunctionTemplate(node.schemaName);
-        await openSqlRunnerEditor(
-          `Criar function em ${node.schemaName}`,
-          initialSql,
-          'Edite o SQL da function e execute com Ctrl+Enter ou CodeLens.',
-          {
-            connectionId: node.connection.id,
-            connectionName: node.connection.nickname,
-            connectionHost: node.connection.host,
-            connectionPort: node.connection.port,
-            databaseName: node.databaseName,
-            schemaName: node.schemaName,
-          }
-        );
-      } catch (error) {
-        showError(error);
-      }
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('dbadmin.editFunction', async (node?: DbObjectNodeRef) => {
-      try {
-        if (!node || node.type !== 'dbObject' || node.kind !== 'function') {
-          return;
-        }
-
-        const definition = await postgresService.getFunctionDefinition(
-          node.connection,
-          node.databaseName,
-          node.schemaName,
-          node.objectName
-        );
-
-        await openSqlRunnerEditor(
-          `Editar function ${node.schemaName}.${node.objectName}`,
-          ensureSqlEndsWithSemicolon(definition),
-          'Edite a definição e execute com Ctrl+Enter ou CodeLens.',
-          {
-            connectionId: node.connection.id,
-            connectionName: node.connection.nickname,
-            connectionHost: node.connection.host,
-            connectionPort: node.connection.port,
-            databaseName: node.databaseName,
-            schemaName: node.schemaName,
-          }
-        );
-      } catch (error) {
-        showError(error);
-      }
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('dbadmin.deleteFunction', async (node?: DbObjectNodeRef) => {
-      try {
-        if (!node || node.type !== 'dbObject' || node.kind !== 'function') {
-          return;
-        }
-
-        const confirmation = await vscode.window.showWarningMessage(
-          `Excluir function "${node.schemaName}.${node.objectName}"?`,
-          { modal: true },
-          'Excluir'
-        );
-
-        if (confirmation !== 'Excluir') {
-          return;
-        }
-
-        await postgresService.dropFunction(
-          node.connection,
-          node.databaseName,
-          node.schemaName,
-          node.objectName
-        );
-        await treeProvider.reloadAllMetadata();
-        vscode.window.showInformationMessage('Function excluída com sucesso.');
-      } catch (error) {
-        showError(error);
-      }
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('dbadmin.createProcedure', async (node?: ObjectGroupNodeRef) => {
-      try {
-        if (!node || node.type !== 'objectGroup' || node.kind !== 'procedure') {
-          return;
-        }
-
-        const initialSql = buildCreateProcedureTemplate(node.schemaName);
-        await openSqlRunnerEditor(
-          `Criar procedure em ${node.schemaName}`,
-          initialSql,
-          'Edite o SQL da procedure e execute com Ctrl+Enter ou CodeLens.',
-          {
-            connectionId: node.connection.id,
-            connectionName: node.connection.nickname,
-            connectionHost: node.connection.host,
-            connectionPort: node.connection.port,
-            databaseName: node.databaseName,
-            schemaName: node.schemaName,
-          }
-        );
-      } catch (error) {
-        showError(error);
-      }
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('dbadmin.editProcedure', async (node?: DbObjectNodeRef) => {
-      try {
-        if (!node || node.type !== 'dbObject' || node.kind !== 'procedure') {
-          return;
-        }
-
-        const definition = await postgresService.getProcedureDefinition(
-          node.connection,
-          node.databaseName,
-          node.schemaName,
-          node.objectName
-        );
-
-        await openSqlRunnerEditor(
-          `Editar procedure ${node.schemaName}.${node.objectName}`,
-          ensureSqlEndsWithSemicolon(definition),
-          'Edite a definição e execute com Ctrl+Enter ou CodeLens.',
-          {
-            connectionId: node.connection.id,
-            connectionName: node.connection.nickname,
-            connectionHost: node.connection.host,
-            connectionPort: node.connection.port,
-            databaseName: node.databaseName,
-            schemaName: node.schemaName,
-          }
-        );
-      } catch (error) {
-        showError(error);
-      }
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('dbadmin.deleteProcedure', async (node?: DbObjectNodeRef) => {
-      try {
-        if (!node || node.type !== 'dbObject' || node.kind !== 'procedure') {
-          return;
-        }
-
-        const confirmation = await vscode.window.showWarningMessage(
-          `Excluir procedure "${node.schemaName}.${node.objectName}"?`,
-          { modal: true },
-          'Excluir'
-        );
-
-        if (confirmation !== 'Excluir') {
-          return;
-        }
-
-        await postgresService.dropProcedure(
-          node.connection,
-          node.databaseName,
-          node.schemaName,
-          node.objectName
-        );
-        await treeProvider.reloadAllMetadata();
-        vscode.window.showInformationMessage('Procedure excluída com sucesso.');
-      } catch (error) {
-        showError(error);
-      }
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('dbadmin.createTrigger', async (node?: ObjectGroupNodeRef) => {
-      try {
-        if (!node || node.type !== 'objectGroup' || node.kind !== 'trigger') {
-          return;
-        }
-
-        const initialSql = buildCreateTriggerTemplate(node.schemaName);
-        await openSqlRunnerEditor(
-          `Criar trigger em ${node.schemaName}`,
-          initialSql,
-          'Edite o SQL da trigger e execute com Ctrl+Enter ou CodeLens.',
-          {
-            connectionId: node.connection.id,
-            connectionName: node.connection.nickname,
-            connectionHost: node.connection.host,
-            connectionPort: node.connection.port,
-            databaseName: node.databaseName,
-            schemaName: node.schemaName,
-          }
-        );
-      } catch (error) {
-        showError(error);
-      }
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('dbadmin.editTrigger', async (node?: DbObjectNodeRef) => {
-      try {
-        if (!node || node.type !== 'dbObject' || node.kind !== 'trigger') {
-          return;
-        }
-
-        const trigger = await postgresService.getTriggerDefinition(
-          node.connection,
-          node.databaseName,
-          node.schemaName,
-          node.objectName
-        );
-
-        const initialSql = [
-          `DROP TRIGGER IF EXISTS ${quoteIdentifier(node.objectName)} ON ${quoteIdentifier(node.schemaName)}.${quoteIdentifier(trigger.tableName)};`,
-          ensureSqlEndsWithSemicolon(trigger.definition),
-        ].join('\n\n');
-
-        await openSqlRunnerEditor(
-          `Editar trigger ${node.schemaName}.${node.objectName}`,
-          initialSql,
-          'Edite o SQL da trigger e execute com Ctrl+Enter ou CodeLens.',
-          {
-            connectionId: node.connection.id,
-            connectionName: node.connection.nickname,
-            connectionHost: node.connection.host,
-            connectionPort: node.connection.port,
-            databaseName: node.databaseName,
-            schemaName: node.schemaName,
-          }
-        );
-      } catch (error) {
-        showError(error);
-      }
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('dbadmin.deleteTrigger', async (node?: DbObjectNodeRef) => {
-      try {
-        if (!node || node.type !== 'dbObject' || node.kind !== 'trigger') {
-          return;
-        }
-
-        const confirmation = await vscode.window.showWarningMessage(
-          `Excluir trigger "${node.schemaName}.${node.objectName}"?`,
-          { modal: true },
-          'Excluir'
-        );
-
-        if (confirmation !== 'Excluir') {
-          return;
-        }
-
-        await postgresService.dropTrigger(
-          node.connection,
-          node.databaseName,
-          node.schemaName,
-          node.objectName
-        );
-        await treeProvider.reloadAllMetadata();
-        vscode.window.showInformationMessage('Trigger excluída com sucesso.');
-      } catch (error) {
-        showError(error);
-      }
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('dbadmin.openColumnDetails', async (node?: TableSectionItemNodeRef) => {
-      try {
-        if (!node || node.type !== 'tableSectionItem' || node.itemKind !== 'column') {
-          return;
-        }
-        await metadataPanels.showColumn(node, { newTab: false });
-      } catch (error) {
-        showError(error);
-      }
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('dbadmin.openColumnDetailsInNewTab', async (node?: TableSectionItemNodeRef) => {
-      try {
-        if (!node || node.type !== 'tableSectionItem' || node.itemKind !== 'column') {
-          return;
-        }
-        await metadataPanels.showColumn(node, { newTab: true });
-      } catch (error) {
-        showError(error);
-      }
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('dbadmin.openConstraintDetails', async (node?: TableSectionItemNodeRef) => {
-      try {
-        if (!node || node.type !== 'tableSectionItem' || node.itemKind !== 'constraint') {
-          return;
-        }
-        await metadataPanels.showConstraint(node, { newTab: false });
-      } catch (error) {
-        showError(error);
-      }
-    })
+      },
+    ),
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'dbadmin.openConstraintDetailsInNewTab',
+      "dbadmin.clearSchema",
+      async (node?: SchemaNodeRef) => {
+        try {
+          if (!node || node.type !== "schema") {
+            return;
+          }
+
+          const confirmation = await vscode.window.showWarningMessage(
+            `Deseja limpar o schema "${node.schemaName}" (DROP CASCADE + CREATE)? Todos os objetos serão removidos permanentemente.`,
+            { modal: true },
+            "Limpar",
+          );
+
+          if (confirmation !== "Limpar") {
+            return;
+          }
+
+          await clearSchema(
+            node.connection,
+            node.databaseName,
+            node.schemaName,
+            () => {},
+          );
+          await treeProvider.reloadAllMetadata();
+          vscode.window.showInformationMessage(
+            `Schema "${node.schemaName}" limpo com sucesso.`,
+          );
+        } catch (error) {
+          showError(error);
+        }
+      },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "dbadmin.createFunction",
+      async (node?: ObjectGroupNodeRef) => {
+        try {
+          if (
+            !node ||
+            node.type !== "objectGroup" ||
+            node.kind !== "function"
+          ) {
+            return;
+          }
+
+          const initialSql = buildCreateFunctionTemplate(node.schemaName);
+          await openSqlRunnerEditor(
+            `Criar function em ${node.schemaName}`,
+            initialSql,
+            "Edite o SQL da function e execute com Ctrl+Enter ou CodeLens.",
+            {
+              connectionId: node.connection.id,
+              connectionName: node.connection.nickname,
+              connectionHost: node.connection.host,
+              connectionPort: node.connection.port,
+              databaseName: node.databaseName,
+              schemaName: node.schemaName,
+            },
+          );
+        } catch (error) {
+          showError(error);
+        }
+      },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "dbadmin.editFunction",
+      async (node?: DbObjectNodeRef) => {
+        try {
+          if (!node || node.type !== "dbObject" || node.kind !== "function") {
+            return;
+          }
+
+          const definition = await postgresService.getFunctionDefinition(
+            node.connection,
+            node.databaseName,
+            node.schemaName,
+            node.objectName,
+          );
+
+          await openSqlRunnerEditor(
+            `Editar function ${node.schemaName}.${node.objectName}`,
+            ensureSqlEndsWithSemicolon(definition),
+            "Edite a definição e execute com Ctrl+Enter ou CodeLens.",
+            {
+              connectionId: node.connection.id,
+              connectionName: node.connection.nickname,
+              connectionHost: node.connection.host,
+              connectionPort: node.connection.port,
+              databaseName: node.databaseName,
+              schemaName: node.schemaName,
+            },
+          );
+        } catch (error) {
+          showError(error);
+        }
+      },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "dbadmin.deleteFunction",
+      async (node?: DbObjectNodeRef) => {
+        try {
+          if (!node || node.type !== "dbObject" || node.kind !== "function") {
+            return;
+          }
+
+          const confirmation = await vscode.window.showWarningMessage(
+            `Excluir function "${node.schemaName}.${node.objectName}"?`,
+            { modal: true },
+            "Excluir",
+          );
+
+          if (confirmation !== "Excluir") {
+            return;
+          }
+
+          await postgresService.dropFunction(
+            node.connection,
+            node.databaseName,
+            node.schemaName,
+            node.objectName,
+          );
+          await treeProvider.reloadAllMetadata();
+          vscode.window.showInformationMessage(
+            "Function excluída com sucesso.",
+          );
+        } catch (error) {
+          showError(error);
+        }
+      },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "dbadmin.createProcedure",
+      async (node?: ObjectGroupNodeRef) => {
+        try {
+          if (
+            !node ||
+            node.type !== "objectGroup" ||
+            node.kind !== "procedure"
+          ) {
+            return;
+          }
+
+          const initialSql = buildCreateProcedureTemplate(node.schemaName);
+          await openSqlRunnerEditor(
+            `Criar procedure em ${node.schemaName}`,
+            initialSql,
+            "Edite o SQL da procedure e execute com Ctrl+Enter ou CodeLens.",
+            {
+              connectionId: node.connection.id,
+              connectionName: node.connection.nickname,
+              connectionHost: node.connection.host,
+              connectionPort: node.connection.port,
+              databaseName: node.databaseName,
+              schemaName: node.schemaName,
+            },
+          );
+        } catch (error) {
+          showError(error);
+        }
+      },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "dbadmin.editProcedure",
+      async (node?: DbObjectNodeRef) => {
+        try {
+          if (!node || node.type !== "dbObject" || node.kind !== "procedure") {
+            return;
+          }
+
+          const definition = await postgresService.getProcedureDefinition(
+            node.connection,
+            node.databaseName,
+            node.schemaName,
+            node.objectName,
+          );
+
+          await openSqlRunnerEditor(
+            `Editar procedure ${node.schemaName}.${node.objectName}`,
+            ensureSqlEndsWithSemicolon(definition),
+            "Edite a definição e execute com Ctrl+Enter ou CodeLens.",
+            {
+              connectionId: node.connection.id,
+              connectionName: node.connection.nickname,
+              connectionHost: node.connection.host,
+              connectionPort: node.connection.port,
+              databaseName: node.databaseName,
+              schemaName: node.schemaName,
+            },
+          );
+        } catch (error) {
+          showError(error);
+        }
+      },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "dbadmin.deleteProcedure",
+      async (node?: DbObjectNodeRef) => {
+        try {
+          if (!node || node.type !== "dbObject" || node.kind !== "procedure") {
+            return;
+          }
+
+          const confirmation = await vscode.window.showWarningMessage(
+            `Excluir procedure "${node.schemaName}.${node.objectName}"?`,
+            { modal: true },
+            "Excluir",
+          );
+
+          if (confirmation !== "Excluir") {
+            return;
+          }
+
+          await postgresService.dropProcedure(
+            node.connection,
+            node.databaseName,
+            node.schemaName,
+            node.objectName,
+          );
+          await treeProvider.reloadAllMetadata();
+          vscode.window.showInformationMessage(
+            "Procedure excluída com sucesso.",
+          );
+        } catch (error) {
+          showError(error);
+        }
+      },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "dbadmin.createTrigger",
+      async (node?: ObjectGroupNodeRef) => {
+        try {
+          if (!node || node.type !== "objectGroup" || node.kind !== "trigger") {
+            return;
+          }
+
+          const initialSql = buildCreateTriggerTemplate(node.schemaName);
+          await openSqlRunnerEditor(
+            `Criar trigger em ${node.schemaName}`,
+            initialSql,
+            "Edite o SQL da trigger e execute com Ctrl+Enter ou CodeLens.",
+            {
+              connectionId: node.connection.id,
+              connectionName: node.connection.nickname,
+              connectionHost: node.connection.host,
+              connectionPort: node.connection.port,
+              databaseName: node.databaseName,
+              schemaName: node.schemaName,
+            },
+          );
+        } catch (error) {
+          showError(error);
+        }
+      },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "dbadmin.editTrigger",
+      async (node?: DbObjectNodeRef) => {
+        try {
+          if (!node || node.type !== "dbObject" || node.kind !== "trigger") {
+            return;
+          }
+
+          const trigger = await postgresService.getTriggerDefinition(
+            node.connection,
+            node.databaseName,
+            node.schemaName,
+            node.objectName,
+          );
+
+          const initialSql = [
+            `DROP TRIGGER IF EXISTS ${quoteIdentifier(node.objectName)} ON ${quoteIdentifier(node.schemaName)}.${quoteIdentifier(trigger.tableName)};`,
+            ensureSqlEndsWithSemicolon(trigger.definition),
+          ].join("\n\n");
+
+          await openSqlRunnerEditor(
+            `Editar trigger ${node.schemaName}.${node.objectName}`,
+            initialSql,
+            "Edite o SQL da trigger e execute com Ctrl+Enter ou CodeLens.",
+            {
+              connectionId: node.connection.id,
+              connectionName: node.connection.nickname,
+              connectionHost: node.connection.host,
+              connectionPort: node.connection.port,
+              databaseName: node.databaseName,
+              schemaName: node.schemaName,
+            },
+          );
+        } catch (error) {
+          showError(error);
+        }
+      },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "dbadmin.deleteTrigger",
+      async (node?: DbObjectNodeRef) => {
+        try {
+          if (!node || node.type !== "dbObject" || node.kind !== "trigger") {
+            return;
+          }
+
+          const confirmation = await vscode.window.showWarningMessage(
+            `Excluir trigger "${node.schemaName}.${node.objectName}"?`,
+            { modal: true },
+            "Excluir",
+          );
+
+          if (confirmation !== "Excluir") {
+            return;
+          }
+
+          await postgresService.dropTrigger(
+            node.connection,
+            node.databaseName,
+            node.schemaName,
+            node.objectName,
+          );
+          await treeProvider.reloadAllMetadata();
+          vscode.window.showInformationMessage("Trigger excluída com sucesso.");
+        } catch (error) {
+          showError(error);
+        }
+      },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "dbadmin.openColumnDetails",
       async (node?: TableSectionItemNodeRef) => {
         try {
-          if (!node || node.type !== 'tableSectionItem' || node.itemKind !== 'constraint') {
+          if (
+            !node ||
+            node.type !== "tableSectionItem" ||
+            node.itemKind !== "column"
+          ) {
+            return;
+          }
+          await metadataPanels.showColumn(node, { newTab: false });
+        } catch (error) {
+          showError(error);
+        }
+      },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "dbadmin.openColumnDetailsInNewTab",
+      async (node?: TableSectionItemNodeRef) => {
+        try {
+          if (
+            !node ||
+            node.type !== "tableSectionItem" ||
+            node.itemKind !== "column"
+          ) {
+            return;
+          }
+          await metadataPanels.showColumn(node, { newTab: true });
+        } catch (error) {
+          showError(error);
+        }
+      },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "dbadmin.openConstraintDetails",
+      async (node?: TableSectionItemNodeRef) => {
+        try {
+          if (
+            !node ||
+            node.type !== "tableSectionItem" ||
+            node.itemKind !== "constraint"
+          ) {
+            return;
+          }
+          await metadataPanels.showConstraint(node, { newTab: false });
+        } catch (error) {
+          showError(error);
+        }
+      },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "dbadmin.openConstraintDetailsInNewTab",
+      async (node?: TableSectionItemNodeRef) => {
+        try {
+          if (
+            !node ||
+            node.type !== "tableSectionItem" ||
+            node.itemKind !== "constraint"
+          ) {
             return;
           }
           await metadataPanels.showConstraint(node, { newTab: true });
         } catch (error) {
           showError(error);
         }
-      }
-    )
+      },
+    ),
   );
 
   context.subscriptions.push(
-    vscode.workspace.registerNotebookSerializer('sqlbook', new SqlBookSerializer())
+    vscode.workspace.registerNotebookSerializer(
+      "sqlbook",
+      new SqlBookSerializer(),
+    ),
   );
   context.subscriptions.push(new SqlBookController(store, postgresService));
 }
@@ -1253,7 +1567,7 @@ export function deactivate(): void {}
 
 async function resolveConnectionFromNodeOrPicker(
   store: ConnectionStore,
-  selectedFromTree?: PostgresConnection
+  selectedFromTree?: PostgresConnection,
 ): Promise<PostgresConnection | undefined> {
   if (selectedFromTree) {
     return selectedFromTree;
@@ -1261,7 +1575,7 @@ async function resolveConnectionFromNodeOrPicker(
 
   const all = await store.listConnections();
   if (all.length === 0) {
-    vscode.window.showInformationMessage('Não existem conexões cadastradas.');
+    vscode.window.showInformationMessage("Não existem conexões cadastradas.");
     return undefined;
   }
 
@@ -1272,15 +1586,15 @@ async function resolveConnectionFromNodeOrPicker(
       connection,
     })),
     {
-      placeHolder: 'Selecione a conexão',
-    }
+      placeHolder: "Selecione a conexão",
+    },
   );
 
   return selected?.connection;
 }
 
 function showError(error: unknown): void {
-  const message = error instanceof Error ? error.message : 'Erro inesperado';
+  const message = error instanceof Error ? error.message : "Erro inesperado";
   vscode.window.showErrorMessage(message);
 }
 
@@ -1288,11 +1602,11 @@ async function openSqlRunnerEditor(
   title: string,
   initialSql: string,
   guidanceMessage: string,
-  runnerContext: SqlRunnerContext
+  runnerContext: SqlRunnerContext,
 ): Promise<void> {
   const content = buildSqlRunnerDocumentContent(initialSql, runnerContext);
   const document = await vscode.workspace.openTextDocument({
-    language: 'sql',
+    language: "sql",
     content,
   });
 
@@ -1305,11 +1619,14 @@ async function openSqlRunnerEditor(
   void vscode.window.setStatusBarMessage(`${title}. ${guidanceMessage}`, 4500);
 }
 
-function buildSqlRunnerDocumentContent(sql: string, context: SqlRunnerContext): string {
+function buildSqlRunnerDocumentContent(
+  sql: string,
+  context: SqlRunnerContext,
+): string {
   return [
     `${DBADMIN_SQL_ACTIVE_PREFIX} ${serializeSqlRunnerActiveContext(context)}`,
     ensureSqlEndsWithSemicolon(sql),
-  ].join('\n');
+  ].join("\n");
 }
 
 function getExecutableSqlFromDocument(document: vscode.TextDocument): string {
@@ -1318,12 +1635,12 @@ function getExecutableSqlFromDocument(document: vscode.TextDocument): string {
 }
 
 function isDbAdminSqlRunnerDocument(document: vscode.TextDocument): boolean {
-  return document.languageId === 'sql';
+  return document.languageId === "sql";
 }
 
 async function rewriteSqlRunnerHeader(
   document: vscode.TextDocument,
-  context: SqlRunnerContext
+  context: SqlRunnerContext,
 ): Promise<void> {
   const parsed = parseSqlRunnerHeader(document.getText());
   const mergedContext: SqlRunnerContext = {
@@ -1335,14 +1652,17 @@ async function rewriteSqlRunnerHeader(
   const edit = new vscode.WorkspaceEdit();
   const fullRange = new vscode.Range(
     document.positionAt(0),
-    document.positionAt(document.getText().length)
+    document.positionAt(document.getText().length),
   );
   edit.replace(document.uri, fullRange, nextContent);
   await vscode.workspace.applyEdit(edit);
 }
 
-function parseSqlRunnerHeader(text: string): { context: SqlRunnerContext; sql: string } {
-  const lines = String(text || '').split(/\r?\n/);
+function parseSqlRunnerHeader(text: string): {
+  context: SqlRunnerContext;
+  sql: string;
+} {
+  const lines = String(text || "").split(/\r?\n/);
   const context: SqlRunnerContext = {};
   const sqlLines: string[] = [];
 
@@ -1351,7 +1671,7 @@ function parseSqlRunnerHeader(text: string): { context: SqlRunnerContext; sql: s
     const line = rawLine.trim();
 
     // Ignora a marca legada (arquivos antigos)
-    if (line === '-- DBADMIN-SQL-RUNNER') {
+    if (line === "-- DBADMIN-SQL-RUNNER") {
       continue;
     }
 
@@ -1364,12 +1684,16 @@ function parseSqlRunnerHeader(text: string): { context: SqlRunnerContext; sql: s
     sqlLines.push(rawLine);
   }
 
-  return { context, sql: sqlLines.join('\n').trim() };
+  return { context, sql: sqlLines.join("\n").trim() };
 }
 
-function createSqlRunnerCodeLensProvider(store: ConnectionStore): vscode.CodeLensProvider {
+function createSqlRunnerCodeLensProvider(
+  store: ConnectionStore,
+): vscode.CodeLensProvider {
   return {
-    async provideCodeLenses(document: vscode.TextDocument): Promise<vscode.CodeLens[]> {
+    async provideCodeLenses(
+      document: vscode.TextDocument,
+    ): Promise<vscode.CodeLens[]> {
       if (!isDbAdminSqlRunnerDocument(document)) {
         return [];
       }
@@ -1378,12 +1702,16 @@ function createSqlRunnerCodeLensProvider(store: ConnectionStore): vscode.CodeLen
       const context = parsed.context;
       const allConnections = await store.listConnections();
       const connectionById = new Map(
-        allConnections.map((connection) => [connection.id, connection] as const)
+        allConnections.map(
+          (connection) => [connection.id, connection] as const,
+        ),
       );
 
       let activeLine = 0;
       for (let i = 0; i < document.lineCount; i++) {
-        if (document.lineAt(i).text.trim().startsWith(DBADMIN_SQL_ACTIVE_PREFIX)) {
+        if (
+          document.lineAt(i).text.trim().startsWith(DBADMIN_SQL_ACTIVE_PREFIX)
+        ) {
           activeLine = i;
           break;
         }
@@ -1393,26 +1721,32 @@ function createSqlRunnerCodeLensProvider(store: ConnectionStore): vscode.CodeLen
       const resolvedConnection = context.connectionId
         ? connectionById.get(context.connectionId)
         : undefined;
-      const connectionLabel = resolvedConnection?.nickname?.trim() ||
+      const connectionLabel =
+        resolvedConnection?.nickname?.trim() ||
         context.connectionName?.trim() ||
         formatHostPort(context.connectionHost, context.connectionPort) ||
-        context.connectionId?.trim() || 'Conexão';
-      const databaseLabel = context.databaseName?.trim() || 'Banco';
-      const isConfigSelected = Boolean(context.connectionId) && Boolean(context.databaseName);
+        context.connectionId?.trim() ||
+        "Conexão";
+      const databaseLabel = context.databaseName?.trim() || "Banco";
+      const isConfigSelected =
+        Boolean(context.connectionId) && Boolean(context.databaseName);
       const isSchemaSelected = isConfigSelected && Boolean(context.schemaName);
-      const schemaLabel = isSchemaSelected ? ` $(type-hierarchy-sub) ${context.schemaName?.trim()}` : '';
+      const schemaLabel = isSchemaSelected
+        ? ` $(type-hierarchy-sub) ${context.schemaName?.trim()}`
+        : "";
       const contextButtonLabel = isConfigSelected
-        ? `$(plug) ${connectionLabel} $(database) ${databaseLabel}` + schemaLabel
+        ? `$(plug) ${connectionLabel} $(database) ${databaseLabel}` +
+          schemaLabel
         : "$(plug) Selecionar conexão";
 
       return [
         new vscode.CodeLens(range, {
           title: contextButtonLabel,
-          command: 'dbadmin.sqlRunner.selectConnection',
+          command: "dbadmin.sqlRunner.selectConnection",
         }),
         new vscode.CodeLens(range, {
-          title: '$(play) Executar',
-          command: 'dbadmin.executeSqlFromActiveEditor',
+          title: "$(play) Executar",
+          command: "dbadmin.executeSqlFromActiveEditor",
         }),
       ];
     },
@@ -1421,12 +1755,15 @@ function createSqlRunnerCodeLensProvider(store: ConnectionStore): vscode.CodeLen
 
 function createSqlRunnerCompletionItemProvider(
   store: ConnectionStore,
-  postgresService: PostgresService
+  postgresService: PostgresService,
 ): vscode.CompletionItemProvider {
   const cacheTtlMs = 15_000;
   const cache = new Map<string, { expiresAt: number; value: unknown }>();
 
-  const getCached = async <T>(key: string, loader: () => Promise<T>): Promise<T> => {
+  const getCached = async <T>(
+    key: string,
+    loader: () => Promise<T>,
+  ): Promise<T> => {
     const now = Date.now();
     const cached = cache.get(key);
     if (cached && cached.expiresAt > now) {
@@ -1440,58 +1777,68 @@ function createSqlRunnerCompletionItemProvider(
 
   const loadSchemas = async (
     connection: PostgresConnection,
-    databaseName: string
-  ): Promise<string[]> => getCached(
-    `schemas:${connection.id}:${databaseName}`,
-    () => postgresService.listSchemas(connection, databaseName)
-  );
+    databaseName: string,
+  ): Promise<string[]> =>
+    getCached(`schemas:${connection.id}:${databaseName}`, () =>
+      postgresService.listSchemas(connection, databaseName),
+    );
 
   const loadRelations = async (
     connection: PostgresConnection,
     databaseName: string,
-    schemaName: string
-  ): Promise<SqlSchemaRelation[]> => getCached(
-    `relations:${connection.id}:${databaseName}:${schemaName}`,
-    async () => {
-      const [tables, views] = await Promise.all([
-        postgresService.listTables(connection, databaseName, schemaName),
-        postgresService.listViews(connection, databaseName, schemaName),
-      ]);
+    schemaName: string,
+  ): Promise<SqlSchemaRelation[]> =>
+    getCached(
+      `relations:${connection.id}:${databaseName}:${schemaName}`,
+      async () => {
+        const [tables, views] = await Promise.all([
+          postgresService.listTables(connection, databaseName, schemaName),
+          postgresService.listViews(connection, databaseName, schemaName),
+        ]);
 
-      return [
-        ...tables.map((name) => ({ name, type: 'table' as const })),
-        ...views.map((name) => ({ name, type: 'view' as const })),
-      ];
-    }
-  );
+        return [
+          ...tables.map((name) => ({ name, type: "table" as const })),
+          ...views.map((name) => ({ name, type: "view" as const })),
+        ];
+      },
+    );
 
   const loadColumns = async (
     connection: PostgresConnection,
     databaseName: string,
     schemaName: string,
-    tableName: string
-  ) => getCached(
-    `columns:${connection.id}:${databaseName}:${schemaName}:${tableName}`,
-    () => postgresService.listTableColumnsDetailed(connection, databaseName, schemaName, tableName)
-  );
+    tableName: string,
+  ) =>
+    getCached(
+      `columns:${connection.id}:${databaseName}:${schemaName}:${tableName}`,
+      () =>
+        postgresService.listTableColumnsDetailed(
+          connection,
+          databaseName,
+          schemaName,
+          tableName,
+        ),
+    );
 
   return {
     async provideCompletionItems(
       document: vscode.TextDocument,
-      position: vscode.Position
+      position: vscode.Position,
     ): Promise<vscode.CompletionItem[]> {
       if (!isDbAdminSqlRunnerDocument(document)) {
         return [];
       }
 
-      const linePrefix = document.lineAt(position.line).text.slice(0, position.character);
-      if (linePrefix.trimStart().startsWith('--')) {
+      const linePrefix = document
+        .lineAt(position.line)
+        .text.slice(0, position.character);
+      if (linePrefix.trimStart().startsWith("--")) {
         return [];
       }
 
       const fullParsed = parseSqlRunnerHeader(document.getText());
       const beforeCursorParsed = parseSqlRunnerHeader(
-        document.getText(new vscode.Range(new vscode.Position(0, 0), position))
+        document.getText(new vscode.Range(new vscode.Position(0, 0), position)),
       );
       const runnerContext = fullParsed.context;
 
@@ -1500,7 +1847,10 @@ function createSqlRunnerCompletionItemProvider(
       }
 
       const allConnections = await store.listConnections();
-      const connection = resolveConnectionFromHeaderContext(allConnections, runnerContext);
+      const connection = resolveConnectionFromHeaderContext(
+        allConnections,
+        runnerContext,
+      );
       if (!connection) {
         return [];
       }
@@ -1508,19 +1858,20 @@ function createSqlRunnerCompletionItemProvider(
       const currentSql = beforeCursorParsed.sql;
       const fullSql = fullParsed.sql;
       const currentWordMatch = linePrefix.match(/([a-zA-Z_][\w$]*)$/);
-      const currentWord = currentWordMatch?.[1] ?? '';
+      const currentWord = currentWordMatch?.[1] ?? "";
       const currentRange = new vscode.Range(
         position.line,
         position.character - currentWord.length,
         position.line,
-        position.character
+        position.character,
       );
 
       const tripleQualifiedMatch = linePrefix.match(
-        /([a-zA-Z_][\w$]*)\.([a-zA-Z_][\w$]*)\.([a-zA-Z_][\w$]*)?$/i
+        /([a-zA-Z_][\w$]*)\.([a-zA-Z_][\w$]*)\.([a-zA-Z_][\w$]*)?$/i,
       );
       if (tripleQualifiedMatch) {
-        const [, schemaNameRaw, tableNameRaw, columnPrefixRaw = ''] = tripleQualifiedMatch;
+        const [, schemaNameRaw, tableNameRaw, columnPrefixRaw = ""] =
+          tripleQualifiedMatch;
         const schemaName = schemaNameRaw.trim();
         const tableName = tableNameRaw.trim();
         const columnPrefix = columnPrefixRaw.trim();
@@ -1528,29 +1879,47 @@ function createSqlRunnerCompletionItemProvider(
           position.line,
           position.character - columnPrefix.length,
           position.line,
-          position.character
+          position.character,
         );
-        const columns = await loadColumns(connection, runnerContext.databaseName, schemaName, tableName);
+        const columns = await loadColumns(
+          connection,
+          runnerContext.databaseName,
+          schemaName,
+          tableName,
+        );
         return columns
           .filter((column) => matchesSqlPrefix(column.name, columnPrefix))
-          .map((column) => buildSqlColumnCompletionItem(column.name, schemaName, tableName, range));
+          .map((column) =>
+            buildSqlColumnCompletionItem(
+              column.name,
+              schemaName,
+              tableName,
+              range,
+            ),
+          );
       }
 
-      const dottedMatch = linePrefix.match(/([a-zA-Z_][\w$]*)\.([a-zA-Z_][\w$]*)?$/i);
+      const dottedMatch = linePrefix.match(
+        /([a-zA-Z_][\w$]*)\.([a-zA-Z_][\w$]*)?$/i,
+      );
       if (dottedMatch) {
-        const [, leftRaw, rightRaw = ''] = dottedMatch;
+        const [, leftRaw, rightRaw = ""] = dottedMatch;
         const left = leftRaw.trim();
         const right = rightRaw.trim();
         const range = new vscode.Range(
           position.line,
           position.character - right.length,
           position.line,
-          position.character
+          position.character,
         );
 
-        const references = extractSqlTableReferences(fullSql, runnerContext.schemaName);
+        const references = extractSqlTableReferences(
+          fullSql,
+          runnerContext.schemaName,
+        );
         const matchedReference = references.find(
-          (reference) => reference.alias === left || reference.tableName === left
+          (reference) =>
+            reference.alias === left || reference.tableName === left,
         );
 
         if (matchedReference?.schemaName) {
@@ -1559,7 +1928,7 @@ function createSqlRunnerCompletionItemProvider(
             connection,
             runnerContext.databaseName,
             matchedSchemaName,
-            matchedReference.tableName
+            matchedReference.tableName,
           );
           return columns
             .filter((column) => matchesSqlPrefix(column.name, right))
@@ -1568,52 +1937,75 @@ function createSqlRunnerCompletionItemProvider(
                 column.name,
                 matchedSchemaName,
                 matchedReference.tableName,
-                range
-              )
+                range,
+              ),
             );
         }
 
-        const schemas = await loadSchemas(connection, runnerContext.databaseName);
+        const schemas = await loadSchemas(
+          connection,
+          runnerContext.databaseName,
+        );
         if (schemas.some((schemaName) => schemaName === left)) {
-          const relations = await loadRelations(connection, runnerContext.databaseName, left);
+          const relations = await loadRelations(
+            connection,
+            runnerContext.databaseName,
+            left,
+          );
           return relations
             .filter((relation) => matchesSqlPrefix(relation.name, right))
-            .map((relation) => buildSqlRelationCompletionItem(relation, left, range));
+            .map((relation) =>
+              buildSqlRelationCompletionItem(relation, left, range),
+            );
         }
       }
 
-      const wantsRelationSuggestions = /\b(from|join|update|into|truncate\s+table|table)\s+[a-zA-Z_\d$]*$/i.test(
-        linePrefix
-      );
+      const wantsRelationSuggestions =
+        /\b(from|join|update|into|truncate\s+table|table)\s+[a-zA-Z_\d$]*$/i.test(
+          linePrefix,
+        );
 
       if (wantsRelationSuggestions) {
         if (runnerContext.schemaName) {
           const relations = await loadRelations(
             connection,
             runnerContext.databaseName,
-            runnerContext.schemaName
+            runnerContext.schemaName,
           );
           return relations
             .filter((relation) => matchesSqlPrefix(relation.name, currentWord))
             .map((relation) =>
-              buildSqlRelationCompletionItem(relation, runnerContext.schemaName as string, currentRange)
+              buildSqlRelationCompletionItem(
+                relation,
+                runnerContext.schemaName as string,
+                currentRange,
+              ),
             );
         }
 
-        const schemas = await loadSchemas(connection, runnerContext.databaseName);
+        const schemas = await loadSchemas(
+          connection,
+          runnerContext.databaseName,
+        );
         return schemas
           .filter((schemaName) => matchesSqlPrefix(schemaName, currentWord))
-          .map((schemaName) => buildSqlSchemaCompletionItem(schemaName, currentRange));
+          .map((schemaName) =>
+            buildSqlSchemaCompletionItem(schemaName, currentRange),
+          );
       }
 
-      const references = extractSqlTableReferences(fullSql, runnerContext.schemaName);
+      const references = extractSqlTableReferences(
+        fullSql,
+        runnerContext.schemaName,
+      );
       if (references.length === 0) {
         return [];
       }
 
-      const wantsColumnSuggestions = /\b(select|where|and|or|on|order\s+by|group\s+by|having|set|returning)\b[\s\S]*$/i.test(
-        currentSql
-      ) || /,\s*[a-zA-Z_\d$]*$/i.test(linePrefix);
+      const wantsColumnSuggestions =
+        /\b(select|where|and|or|on|order\s+by|group\s+by|having|set|returning)\b[\s\S]*$/i.test(
+          currentSql,
+        ) || /,\s*[a-zA-Z_\d$]*$/i.test(linePrefix);
 
       if (!wantsColumnSuggestions) {
         return [];
@@ -1629,7 +2021,7 @@ function createSqlRunnerCompletionItemProvider(
           connection,
           runnerContext.databaseName,
           reference.schemaName,
-          reference.tableName
+          reference.tableName,
         );
 
         items.push(
@@ -1641,9 +2033,9 @@ function createSqlRunnerCompletionItemProvider(
                 reference.schemaName as string,
                 reference.tableName,
                 currentRange,
-                reference.alias || reference.tableName
-              )
-            )
+                reference.alias || reference.tableName,
+              ),
+            ),
         );
       }
 
@@ -1653,22 +2045,22 @@ function createSqlRunnerCompletionItemProvider(
 }
 
 function serializeSqlRunnerActiveContext(context: SqlRunnerContext): string {
-  const id = String(context.connectionId || '').trim();
-  const host = String(context.connectionHost || '').trim();
-  const port = String(context.connectionPort ?? '').trim();
-  const database = String(context.databaseName || '').trim();
-  const schema = String(context.schemaName || '').trim();
+  const id = String(context.connectionId || "").trim();
+  const host = String(context.connectionHost || "").trim();
+  const port = String(context.connectionPort ?? "").trim();
+  const database = String(context.databaseName || "").trim();
+  const schema = String(context.schemaName || "").trim();
 
-  return `${id}@@${host}@${port}@${database}${schema ? `@${schema}` : ''}`;
+  return `${id}@@${host}@${port}@${database}${schema ? `@${schema}` : ""}`;
 }
 
 function parseSqlRunnerActiveContext(value: string): SqlRunnerContext {
-  const raw = String(value || '').trim();
+  const raw = String(value || "").trim();
   if (!raw) {
     return {};
   }
 
-  const parts = raw.split('@@');
+  const parts = raw.split("@@");
   let id: string;
   let name: string | undefined;
   let rest: string;
@@ -1677,42 +2069,50 @@ function parseSqlRunnerActiveContext(value: string): SqlRunnerContext {
     // Formato legado: id@@name@@host@port@database@schema
     id = parts[0];
     name = parts[1];
-    rest = parts.slice(2).join('@@');
+    rest = parts.slice(2).join("@@");
   } else {
     // Formato atual: id@@host@port@database@schema
     id = parts[0];
     name = undefined;
-    rest = parts[1] || '';
+    rest = parts[1] || "";
   }
 
-  const restParts = rest.split('@');
-  const [host = '', portRaw = '', database = '', schema = ''] = restParts;
+  const restParts = rest.split("@");
+  const [host = "", portRaw = "", database = "", schema = ""] = restParts;
   const parsedPort = Number(portRaw);
 
   return {
     connectionId: id.trim() || undefined,
     connectionName: name?.trim() || undefined,
     connectionHost: host.trim() || undefined,
-    connectionPort: Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : undefined,
+    connectionPort:
+      Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : undefined,
     databaseName: database.trim() || undefined,
     schemaName: schema.trim() || undefined,
   };
 }
 
-function extractSqlTableReferences(sql: string, defaultSchemaName?: string): SqlRelationRef[] {
-  const text = String(sql || '');
+function extractSqlTableReferences(
+  sql: string,
+  defaultSchemaName?: string,
+): SqlRelationRef[] {
+  const text = String(sql || "");
   const references: SqlRelationRef[] = [];
-  const matcher = /\b(?:from|join|update|into)\s+((?:[a-zA-Z_][\w$]*\.)?[a-zA-Z_][\w$]*)(?:\s+(?:as\s+)?([a-zA-Z_][\w$]*))?/gi;
+  const matcher =
+    /\b(?:from|join|update|into)\s+((?:[a-zA-Z_][\w$]*\.)?[a-zA-Z_][\w$]*)(?:\s+(?:as\s+)?([a-zA-Z_][\w$]*))?/gi;
 
   let match: RegExpExecArray | null;
   while ((match = matcher.exec(text)) !== null) {
-    const rawName = String(match[1] || '').trim();
+    const rawName = String(match[1] || "").trim();
     if (!rawName) {
       continue;
     }
 
-    const alias = String(match[2] || '').trim() || undefined;
-    const parts = rawName.split('.').map((part) => part.trim()).filter(Boolean);
+    const alias = String(match[2] || "").trim() || undefined;
+    const parts = rawName
+      .split(".")
+      .map((part) => part.trim())
+      .filter(Boolean);
     const schemaName = parts.length > 1 ? parts[0] : defaultSchemaName;
     const tableName = parts.length > 1 ? parts[1] : parts[0];
 
@@ -1727,17 +2127,20 @@ function extractSqlTableReferences(sql: string, defaultSchemaName?: string): Sql
 }
 
 function matchesSqlPrefix(value: string, prefix: string): boolean {
-  const normalizedValue = String(value || '').toLowerCase();
-  const normalizedPrefix = String(prefix || '').toLowerCase();
+  const normalizedValue = String(value || "").toLowerCase();
+  const normalizedPrefix = String(prefix || "").toLowerCase();
   return !normalizedPrefix || normalizedValue.startsWith(normalizedPrefix);
 }
 
 function buildSqlSchemaCompletionItem(
   schemaName: string,
-  range: vscode.Range
+  range: vscode.Range,
 ): vscode.CompletionItem {
-  const item = new vscode.CompletionItem(schemaName, vscode.CompletionItemKind.Module);
-  item.detail = 'Schema';
+  const item = new vscode.CompletionItem(
+    schemaName,
+    vscode.CompletionItemKind.Module,
+  );
+  item.detail = "Schema";
   item.insertText = schemaName;
   item.range = range;
   item.sortText = `00_schema_${schemaName.toLowerCase()}`;
@@ -1748,11 +2151,13 @@ function buildSqlSchemaCompletionItem(
 function buildSqlRelationCompletionItem(
   relation: SqlSchemaRelation,
   schemaName: string,
-  range: vscode.Range
+  range: vscode.Range,
 ): vscode.CompletionItem {
   const item = new vscode.CompletionItem(
     relation.name,
-    relation.type === 'view' ? vscode.CompletionItemKind.Interface : vscode.CompletionItemKind.Class
+    relation.type === "view"
+      ? vscode.CompletionItemKind.Interface
+      : vscode.CompletionItemKind.Class,
   );
   item.detail = `${schemaName}.${relation.name}`;
   item.range = range;
@@ -1766,9 +2171,12 @@ function buildSqlColumnCompletionItem(
   schemaName: string,
   tableName: string,
   range: vscode.Range,
-  ownerName?: string
+  ownerName?: string,
 ): vscode.CompletionItem {
-  const item = new vscode.CompletionItem(columnName, vscode.CompletionItemKind.Field);
+  const item = new vscode.CompletionItem(
+    columnName,
+    vscode.CompletionItemKind.Field,
+  );
   item.detail = `${schemaName}.${tableName}.${columnName}`;
   item.documentation = ownerName ? `Origem: ${ownerName}` : undefined;
   item.range = range;
@@ -1777,12 +2185,14 @@ function buildSqlColumnCompletionItem(
   return item;
 }
 
-function dedupeCompletionItems(items: vscode.CompletionItem[]): vscode.CompletionItem[] {
+function dedupeCompletionItems(
+  items: vscode.CompletionItem[],
+): vscode.CompletionItem[] {
   const seen = new Set<string>();
   const deduped: vscode.CompletionItem[] = [];
 
   for (const item of items) {
-    const key = `${item.label}|${item.detail || ''}`;
+    const key = `${item.label}|${item.detail || ""}`;
     if (seen.has(key)) {
       continue;
     }
@@ -1794,10 +2204,10 @@ function dedupeCompletionItems(items: vscode.CompletionItem[]): vscode.Completio
 }
 
 function formatHostPort(host?: string, port?: number): string {
-  const h = String(host || '').trim();
+  const h = String(host || "").trim();
   const p = Number(port);
   if (!h) {
-    return '';
+    return "";
   }
   if (!Number.isFinite(p) || p <= 0) {
     return h;
@@ -1808,21 +2218,24 @@ function formatHostPort(host?: string, port?: number): string {
 async function executeSqlFromEditorDocument(
   document: vscode.TextDocument,
   store: ConnectionStore,
-  postgresService: PostgresService
+  postgresService: PostgresService,
 ): Promise<void> {
   const parsed = parseSqlRunnerHeader(document.getText());
   const sql = parsed.sql;
 
   if (!sql) {
-    throw new Error('SQL vazio para execução.');
+    throw new Error("SQL vazio para execução.");
   }
 
   const allConnections = await store.listConnections();
   if (allConnections.length === 0) {
-    throw new Error('Não há conexões cadastradas.');
+    throw new Error("Não há conexões cadastradas.");
   }
 
-  let connection = resolveConnectionFromHeaderContext(allConnections, parsed.context);
+  let connection = resolveConnectionFromHeaderContext(
+    allConnections,
+    parsed.context,
+  );
   if (!connection) {
     connection = await resolveConnectionFromNodeOrPicker(store);
   }
@@ -1831,100 +2244,111 @@ async function executeSqlFromEditorDocument(
     return;
   }
 
-  const databaseName = parsed.context.databaseName?.trim() || connection.database;
+  const databaseName =
+    parsed.context.databaseName?.trim() || connection.database;
   const schemaName = parsed.context.schemaName?.trim();
   const schemaPrefix = schemaName
     ? `SET search_path TO ${quoteIdentifier(schemaName)}, public;\n`
-    : '';
+    : "";
 
-  await postgresService.executeSql(connection, databaseName, `${schemaPrefix}${sql}`);
-  vscode.window.showInformationMessage('SQL executado com sucesso.');
+  await postgresService.executeSql(
+    connection,
+    databaseName,
+    `${schemaPrefix}${sql}`,
+  );
+  vscode.window.showInformationMessage("SQL executado com sucesso.");
 }
 
 function resolveConnectionFromHeaderContext(
   allConnections: PostgresConnection[],
-  context: SqlRunnerContext
+  context: SqlRunnerContext,
 ): PostgresConnection | undefined {
-  const byId = String(context.connectionId || '').trim();
+  const byId = String(context.connectionId || "").trim();
   if (byId) {
-    const foundById = allConnections.find((connection) => connection.id === byId);
+    const foundById = allConnections.find(
+      (connection) => connection.id === byId,
+    );
     if (foundById) {
       return foundById;
     }
   }
 
-  const byName = String(context.connectionName || '').trim().toLowerCase();
+  const byName = String(context.connectionName || "")
+    .trim()
+    .toLowerCase();
   if (byName) {
-    return allConnections.find((connection) => connection.nickname.trim().toLowerCase() === byName);
+    return allConnections.find(
+      (connection) => connection.nickname.trim().toLowerCase() === byName,
+    );
   }
 
   return undefined;
 }
 
 function ensureSqlEndsWithSemicolon(sql: string): string {
-  const trimmed = String(sql || '').trim();
+  const trimmed = String(sql || "").trim();
   if (!trimmed) {
-    return '';
+    return "";
   }
-  return trimmed.endsWith(';') ? trimmed : `${trimmed};`;
+  return trimmed.endsWith(";") ? trimmed : `${trimmed};`;
 }
 
 function quoteIdentifier(identifier: string): string {
-  return `"${String(identifier || '').replace(/"/g, '""')}"`;
+  return `"${String(identifier || "").replace(/"/g, '""')}"`;
 }
 
 function buildCreateFunctionTemplate(schemaName: string): string {
   const schema = quoteIdentifier(schemaName);
   return [
     `CREATE OR REPLACE FUNCTION ${schema}.new_function()`,
-    'RETURNS void',
-    'LANGUAGE plpgsql',
-    'AS $$',
-    'BEGIN',
-    '  -- TODO: implemente a lógica',
-    '  RETURN;',
-    'END;',
-    '$$;',
-  ].join('\n');
+    "RETURNS void",
+    "LANGUAGE plpgsql",
+    "AS $$",
+    "BEGIN",
+    "  -- TODO: implemente a lógica",
+    "  RETURN;",
+    "END;",
+    "$$;",
+  ].join("\n");
 }
 
 function buildCreateProcedureTemplate(schemaName: string): string {
   const schema = quoteIdentifier(schemaName);
   return [
     `CREATE OR REPLACE PROCEDURE ${schema}.new_procedure()`,
-    'LANGUAGE plpgsql',
-    'AS $$',
-    'BEGIN',
-    '  -- TODO: implemente a lógica',
-    'END;',
-    '$$;',
-  ].join('\n');
+    "LANGUAGE plpgsql",
+    "AS $$",
+    "BEGIN",
+    "  -- TODO: implemente a lógica",
+    "END;",
+    "$$;",
+  ].join("\n");
 }
 
 function buildCreateTriggerTemplate(schemaName: string): string {
   const schema = quoteIdentifier(schemaName);
   return [
     `CREATE OR REPLACE FUNCTION ${schema}.new_trigger_fn()`,
-    'RETURNS trigger',
-    'LANGUAGE plpgsql',
-    'AS $$',
-    'BEGIN',
-    '  RETURN NEW;',
-    'END;',
-    '$$;',
-    '',
+    "RETURNS trigger",
+    "LANGUAGE plpgsql",
+    "AS $$",
+    "BEGIN",
+    "  RETURN NEW;",
+    "END;",
+    "$$;",
+    "",
     `CREATE TRIGGER new_trigger`,
     `BEFORE INSERT OR UPDATE ON ${schema}.table_name`,
-    'FOR EACH ROW',
+    "FOR EACH ROW",
     `EXECUTE FUNCTION ${schema}.new_trigger_fn();`,
-  ].join('\n');
+  ].join("\n");
 }
 
 function buildFilterViewHtml(
   webview: vscode.Webview,
   initialValue: string,
   initialExpandItems: boolean,
-  initialSearchOnType: boolean
+  initialSearchOnType: boolean,
 ): string {
   const nonce = String(Date.now());
   const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';`;
@@ -1999,11 +2423,11 @@ function buildFilterViewHtml(
   <div class="wrap">
     <input id="tableFilter" type="text" placeholder="Filtrar tabelas..." value="${escapeHtml(initialValue)}" />
     <label class="check-row" title="Expandir apenas conexões e bancos com tabelas encontradas">
-      <input id="expandItems" type="checkbox" ${initialExpandItems ? 'checked' : ''} />
+      <input id="expandItems" type="checkbox" ${initialExpandItems ? "checked" : ""} />
       <span>Expandir itens</span>
     </label>
     <label class="check-row" title="Quando desativado, aplica o filtro somente ao pressionar Enter">
-      <input id="searchOnType" type="checkbox" ${initialSearchOnType ? 'checked' : ''} />
+      <input id="searchOnType" type="checkbox" ${initialSearchOnType ? "checked" : ""} />
       <span>Pesquisar ao digitar</span>
     </label>
   </div>
@@ -2076,8 +2500,8 @@ function buildFilterViewHtml(
 
 function escapeHtml(value: string): string {
   return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }

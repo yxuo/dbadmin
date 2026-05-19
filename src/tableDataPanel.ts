@@ -1,15 +1,21 @@
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
-import * as vscode from 'vscode';
-import { DbObjectNodeRef } from './models';
-import { DiagramDataResult, PostgresService, TableColumnMeta, TableSavePayload, TableSortDirection } from './postgresService';
-import { ConnectionStore } from './connectionStore';
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
+import * as vscode from "vscode";
+import { DbObjectNodeRef } from "./models";
+import {
+  DiagramDataResult,
+  PostgresService,
+  TableColumnMeta,
+  TableSavePayload,
+  TableSortDirection,
+} from "./postgresService";
+import { ConnectionStore } from "./connectionStore";
 import {
   buildCodeEditorMarkup,
   buildCodeEditorScript,
   buildCodeEditorStyles,
-} from './webview/codeEditor';
+} from "./webview/codeEditor";
 
 interface OpenTableInput {
   node: DbObjectNodeRef;
@@ -21,7 +27,7 @@ interface OpenTableInput {
 
 interface TableState {
   searchText: string;
-  searchMode: 'local' | 'query';
+  searchMode: "local" | "query";
   sortColumn?: string;
   sortDirection?: TableSortDirection;
   columnFilters: Record<string, string>;
@@ -36,29 +42,29 @@ interface TableLayoutState {
 }
 
 type WebviewMessage =
-  | { type: 'ready' }
-  | { type: 'reload'; state: TableState; clearSelectionAndPreview?: boolean }
-  | { type: 'updateState'; state: TableState }
-  | { type: 'save'; state: TableState; payload: TableSavePayload }
+  | { type: "ready" }
+  | { type: "reload"; state: TableState; clearSelectionAndPreview?: boolean }
+  | { type: "updateState"; state: TableState }
+  | { type: "save"; state: TableState; payload: TableSavePayload }
   | {
-      type: 'exportData';
-      format: 'json' | 'csv';
-      dataScope: 'result' | 'all' | 'selected';
+      type: "exportData";
+      format: "json" | "csv";
+      dataScope: "result" | "all" | "selected";
       state: TableState;
       columns: string[];
       rows: Array<Record<string, unknown>>;
     }
   | {
-      type: 'copyAdvancedClipboard';
-      format: 'json' | 'csv';
+      type: "copyAdvancedClipboard";
+      format: "json" | "csv";
       columns: string[];
       rows: Array<Record<string, unknown>>;
     }
-  | { type: 'openInNewTab' }
-  | { type: 'openSettings' }
-  | { type: 'showInExplorer' }
+  | { type: "openInNewTab" }
+  | { type: "openSettings" }
+  | { type: "showInExplorer" }
   | {
-      type: 'openJsonInNativeEditor';
+      type: "openJsonInNativeEditor";
       content: string;
       columnName: string;
       isJson?: boolean;
@@ -67,7 +73,7 @@ type WebviewMessage =
       preserveFocus?: boolean;
     }
   | {
-      type: 'syncNativeJsonPreview';
+      type: "syncNativeJsonPreview";
       content: string;
       columnName: string;
       isJson?: boolean;
@@ -76,18 +82,24 @@ type WebviewMessage =
       open?: boolean;
     }
   | {
-      type: 'openForeignKeyTarget';
+      type: "openForeignKeyTarget";
       sourceValue: string;
       targetSchemaName: string;
       targetTableName: string;
       targetColumnName: string;
     }
-  | { type: 'toggleQueryVisibility' }
-  | { type: 'toggleHeaderVisibility' }
-  | { type: 'updateLayout'; layout: TableLayoutState }
-  | { type: 'loadDiagram'; mainColumns?: TableColumnMeta[] }
-  | { type: 'exportDiagram'; format: 'png' | 'drawio'; target: 'file' | 'clipboard'; data: string; tableName: string }
-  | { type: 'openDiagramTableInNewTab'; schemaName: string; tableName: string };
+  | { type: "toggleQueryVisibility" }
+  | { type: "toggleHeaderVisibility" }
+  | { type: "updateLayout"; layout: TableLayoutState }
+  | { type: "loadDiagram"; mainColumns?: TableColumnMeta[] }
+  | {
+      type: "exportDiagram";
+      format: "png" | "drawio";
+      target: "file" | "clipboard";
+      data: string;
+      tableName: string;
+    }
+  | { type: "openDiagramTableInNewTab"; schemaName: string; tableName: string };
 
 interface NativeJsonPreviewState {
   document: vscode.TextDocument;
@@ -100,45 +112,63 @@ interface NativeJsonPreviewState {
   viewColumn?: vscode.ViewColumn;
 }
 
-const GLOBAL_REUSED_KEY = '__global__';
-const SHOW_QUERY_SETTING = 'dbadmin.showQueryEditor';
-const HIDE_TAB_HEADER_SETTING = 'dbadmin.hideTabHeader';
-const PERSIST_LAYOUT_SETTING = 'dbadmin.persistColumnLayout';
-const DEFAULT_PAGE_SIZE_SETTING = 'dbadmin.defaultPageSize';
-const DYNAMIC_DEFAULT_COLUMN_WIDTH_SETTING = 'dbadmin.dynamicDefaultColumnWidth';
+const GLOBAL_REUSED_KEY = "__global__";
+const SHOW_QUERY_SETTING = "dbadmin.showQueryEditor";
+const HIDE_TAB_HEADER_SETTING = "dbadmin.hideTabHeader";
+const PERSIST_LAYOUT_SETTING = "dbadmin.persistColumnLayout";
+const DEFAULT_PAGE_SIZE_SETTING = "dbadmin.defaultPageSize";
+const DYNAMIC_DEFAULT_COLUMN_WIDTH_SETTING =
+  "dbadmin.dynamicDefaultColumnWidth";
 
 export class TableDataPanelManager {
   private readonly reusedPanels = new Map<string, vscode.WebviewPanel>();
   private readonly panelNodes = new Map<vscode.WebviewPanel, DbObjectNodeRef>();
   private readonly panelIsNewTab = new Map<vscode.WebviewPanel, boolean>();
-  private readonly panelLayouts = new Map<vscode.WebviewPanel, TableLayoutState>();
+  private readonly panelLayouts = new Map<
+    vscode.WebviewPanel,
+    TableLayoutState
+  >();
   private readonly panelStates = new Map<vscode.WebviewPanel, TableState>();
   private readonly panelPreviewTabIds = new Map<vscode.WebviewPanel, string>();
-  private readonly panelNativePreview = new Map<vscode.WebviewPanel, NativeJsonPreviewState>();
-  private readonly nativePreviewDocumentToPanel = new Map<string, vscode.WebviewPanel>();
+  private readonly panelNativePreview = new Map<
+    vscode.WebviewPanel,
+    NativeJsonPreviewState
+  >();
+  private readonly nativePreviewDocumentToPanel = new Map<
+    string,
+    vscode.WebviewPanel
+  >();
   private readonly nativePreviewSaveDisposable: vscode.Disposable;
   private readonly nativePreviewCloseDisposable: vscode.Disposable;
   private previewTabIdSequence = 1;
 
   public constructor(
     private readonly context: vscode.ExtensionContext,
-    private readonly postgresService: PostgresService
+    private readonly postgresService: PostgresService,
   ) {
     this.cleanupStaleNativePreviewTempFiles();
-    this.nativePreviewSaveDisposable = vscode.workspace.onDidSaveTextDocument((document) => {
-      this.handleNativePreviewDocumentSave(document);
-    });
-    this.nativePreviewCloseDisposable = vscode.workspace.onDidCloseTextDocument((document) => {
-      this.handleNativePreviewDocumentClose(document);
-    });
+    this.nativePreviewSaveDisposable = vscode.workspace.onDidSaveTextDocument(
+      (document) => {
+        this.handleNativePreviewDocumentSave(document);
+      },
+    );
+    this.nativePreviewCloseDisposable = vscode.workspace.onDidCloseTextDocument(
+      (document) => {
+        this.handleNativePreviewDocumentClose(document);
+      },
+    );
   }
 
   public async openTable(input: OpenTableInput): Promise<void> {
-    const key = input.newTab ? this.panelKey(input.node, true) : GLOBAL_REUSED_KEY;
+    const key = input.newTab
+      ? this.panelKey(input.node, true)
+      : GLOBAL_REUSED_KEY;
     const shouldPersistOutsideRestore = this.getPersistLayoutOutsideRestore();
     const initialLayout =
       input.layout ??
-      (shouldPersistOutsideRestore ? this.readStoredLayout(input.node) : undefined);
+      (shouldPersistOutsideRestore
+        ? this.readStoredLayout(input.node)
+        : undefined);
 
     const initialState = input.initialState ?? this.defaultState();
 
@@ -162,7 +192,7 @@ export class TableDataPanelManager {
     }
 
     const panel = vscode.window.createWebviewPanel(
-      'dbadmin.tableData',
+      "dbadmin.tableData",
       `${input.node.objectName}`,
       {
         preserveFocus: false,
@@ -171,13 +201,13 @@ export class TableDataPanelManager {
       {
         enableScripts: true,
         retainContextWhenHidden: true,
-      }
+      },
     );
 
     panel.webview.html = this.buildHtml(
       panel.webview,
       this.getShowQueryEditor(),
-      this.getHideTabHeader()
+      this.getHideTabHeader(),
     );
     this.panelNodes.set(panel, input.node);
     this.panelIsNewTab.set(panel, input.newTab);
@@ -190,290 +220,333 @@ export class TableDataPanelManager {
 
     if (!input.newTab) {
       panel.iconPath = vscode.Uri.file(
-        this.context.asAbsolutePath('resources/icons/table-global.svg')
+        this.context.asAbsolutePath("resources/icons/table-global.svg"),
       );
       this.reusedPanels.set(key, panel);
     } else {
       panel.iconPath = {
-        light: vscode.Uri.file(this.context.asAbsolutePath('resources/icons/light/table.svg')),
-        dark: vscode.Uri.file(this.context.asAbsolutePath('resources/icons/dark/table.svg')),
+        light: vscode.Uri.file(
+          this.context.asAbsolutePath("resources/icons/light/table.svg"),
+        ),
+        dark: vscode.Uri.file(
+          this.context.asAbsolutePath("resources/icons/dark/table.svg"),
+        ),
       };
     }
 
     this.saveOpenTabs();
 
-    const disposable = panel.webview.onDidReceiveMessage(async (message: WebviewMessage) => {
-      const currentNode = this.panelNodes.get(panel) ?? input.node;
+    const disposable = panel.webview.onDidReceiveMessage(
+      async (message: WebviewMessage) => {
+        const currentNode = this.panelNodes.get(panel) ?? input.node;
 
-      if (message.type === 'ready') {
-        panel.webview.postMessage({
-          type: 'queryVisibility',
-          showQueryEditor: this.getShowQueryEditor(),
-        });
-        panel.webview.postMessage({
-          type: 'headerVisibility',
-          hideTabHeader: this.getHideTabHeader(),
-        });
-        await this.refreshPanel(panel, currentNode, initialState, {
-          retryTimeout: input.restoringOnStartup === true,
-        });
-        return;
-      }
-
-      if (message.type === 'reload') {
-        this.panelStates.set(panel, this.cloneTableState(message.state));
-        this.saveOpenTabs();
-        if (message.clearSelectionAndPreview === true) {
-          await this.clearNativePreviewContent(panel);
+        if (message.type === "ready") {
+          panel.webview.postMessage({
+            type: "queryVisibility",
+            showQueryEditor: this.getShowQueryEditor(),
+          });
+          panel.webview.postMessage({
+            type: "headerVisibility",
+            hideTabHeader: this.getHideTabHeader(),
+          });
+          await this.refreshPanel(panel, currentNode, initialState, {
+            retryTimeout: input.restoringOnStartup === true,
+          });
+          return;
         }
-        await this.refreshPanel(panel, currentNode, message.state);
-        return;
-      }
 
-      if (message.type === 'updateState') {
-        this.panelStates.set(panel, this.cloneTableState(message.state));
-        this.saveOpenTabs();
-        return;
-      }
-
-      if (message.type === 'save') {
-        try {
+        if (message.type === "reload") {
           this.panelStates.set(panel, this.cloneTableState(message.state));
           this.saveOpenTabs();
-          await this.postgresService.saveTableData(
-            currentNode.connection,
-            currentNode.databaseName,
-            currentNode.schemaName,
-            currentNode.objectName,
-            message.payload
-          );
-
-          panel.webview.postMessage({
-            type: 'status',
-            kind: 'ok',
-            message: 'Alteracoes salvas com sucesso.',
-          });
-
+          if (message.clearSelectionAndPreview === true) {
+            await this.clearNativePreviewContent(panel);
+          }
           await this.refreshPanel(panel, currentNode, message.state);
-        } catch (error) {
-          panel.webview.postMessage({
-            type: 'status',
-            kind: 'error',
-            message: this.errorMessage(error),
-          });
-        }
-        return;
-      }
-
-      if (message.type === 'exportData') {
-        try {
-          await this.exportTableData(panel, currentNode, message);
-        } catch (error) {
-          panel.webview.postMessage({
-            type: 'status',
-            kind: 'error',
-            message: this.errorMessage(error),
-          });
-        }
-        return;
-      }
-
-      if (message.type === 'copyAdvancedClipboard') {
-        try {
-          const content = this.buildExportContent(message.format, message.columns, message.rows);
-          await vscode.env.clipboard.writeText(content);
-          panel.webview.postMessage({
-            type: 'status',
-            kind: 'ok',
-            message: 'Conteudo copiado para a area de transferencia.',
-          });
-        } catch (error) {
-          panel.webview.postMessage({
-            type: 'status',
-            kind: 'error',
-            message: this.errorMessage(error),
-          });
-        }
-        return;
-      }
-
-      if (message.type === 'openInNewTab') {
-        await this.openTable({ node: currentNode, newTab: true });
-        return;
-      }
-
-      if (message.type === 'openSettings') {
-        await vscode.commands.executeCommand('dbadmin.openSettings');
-        return;
-      }
-
-      if (message.type === 'showInExplorer') {
-        await vscode.commands.executeCommand('dbadmin.showInExplorer', currentNode);
-        return;
-      }
-
-      if (message.type === 'openJsonInNativeEditor') {
-        await this.openOrSyncNativePreview(panel, message, true);
-        return;
-      }
-
-      if (message.type === 'syncNativeJsonPreview') {
-        await this.openOrSyncNativePreview(panel, message, false);
-        return;
-      }
-
-      if (message.type === 'openForeignKeyTarget') {
-        const targetSchemaName = String(message.targetSchemaName || '').trim();
-        const targetTableName = String(message.targetTableName || '').trim();
-        const targetColumnName = String(message.targetColumnName || '').trim();
-
-        if (!targetSchemaName || !targetTableName || !targetColumnName) {
-          panel.webview.postMessage({
-            type: 'status',
-            kind: 'error',
-            message: 'Metadados da chave estrangeira incompletos para abrir a tabela relacionada.',
-          });
           return;
         }
 
-        const initialTargetState = this.defaultState();
-        initialTargetState.searchMode = 'query';
-        const sourceValue = String(message.sourceValue ?? '').trim();
-        if (sourceValue.length > 0) {
-          initialTargetState.columnFilters[targetColumnName] = sourceValue;
-        }
-
-        await this.openTable({
-          node: {
-            type: 'dbObject',
-            connection: currentNode.connection,
-            databaseName: currentNode.databaseName,
-            schemaName: targetSchemaName,
-            kind: 'table',
-            objectName: targetTableName,
-          },
-          newTab: true,
-          initialState: initialTargetState,
-        });
-        return;
-      }
-
-      if (message.type === 'toggleQueryVisibility') {
-        const current = this.getShowQueryEditor();
-        await vscode.workspace.getConfiguration().update(
-          SHOW_QUERY_SETTING,
-          !current,
-          vscode.ConfigurationTarget.Global
-        );
-        this.notifyQueryVisibilityChanged();
-        return;
-      }
-
-      if (message.type === 'toggleHeaderVisibility') {
-        const current = this.getHideTabHeader();
-        await vscode.workspace.getConfiguration().update(
-          HIDE_TAB_HEADER_SETTING,
-          !current,
-          vscode.ConfigurationTarget.Global
-        );
-        this.notifyHeaderVisibilityChanged();
-        return;
-      }
-
-      if (message.type === 'updateLayout') {
-        this.panelLayouts.set(panel, message.layout);
-        if (this.getPersistLayoutOutsideRestore()) {
-          await this.persistLayout(currentNode, message.layout);
-        }
-        this.saveOpenTabs();
-        return;
-      }
-
-      if (message.type === 'openDiagramTableInNewTab') {
-        const schemaName = String(message.schemaName || '').trim();
-        const tableName = String(message.tableName || '').trim();
-        if (!schemaName || !tableName) {
-          panel.webview.postMessage({
-            type: 'status',
-            kind: 'error',
-            message: 'Nome de schema ou tabela invalido para abrir em nova aba.',
-          });
+        if (message.type === "updateState") {
+          this.panelStates.set(panel, this.cloneTableState(message.state));
+          this.saveOpenTabs();
           return;
         }
-        await this.openTable({
-          node: {
-            type: 'dbObject',
-            connection: currentNode.connection,
-            databaseName: currentNode.databaseName,
-            schemaName,
-            kind: 'table',
-            objectName: tableName,
-          },
-          newTab: true,
-        });
-        return;
-      }
 
-      if (message.type === 'loadDiagram') {
-        try {
-          const diagramData = await this.postgresService.getTableDiagramData(
-            currentNode.connection,
-            currentNode.databaseName,
-            currentNode.schemaName,
-            currentNode.objectName,
-            message.mainColumns
-          );
-          panel.webview.postMessage({ type: 'diagramData', data: diagramData });
-        } catch (error) {
-          panel.webview.postMessage({
-            type: 'status',
-            kind: 'error',
-            message: this.errorMessage(error),
-          });
-        }
-        return;
-      }
+        if (message.type === "save") {
+          try {
+            this.panelStates.set(panel, this.cloneTableState(message.state));
+            this.saveOpenTabs();
+            await this.postgresService.saveTableData(
+              currentNode.connection,
+              currentNode.databaseName,
+              currentNode.schemaName,
+              currentNode.objectName,
+              message.payload,
+            );
 
-      if (message.type === 'exportDiagram') {
-        try {
-          if (message.format === 'png' && message.target === 'file') {
-            const uri = await vscode.window.showSaveDialog({
-              defaultUri: vscode.Uri.file(`${message.tableName}.png`),
-              filters: { 'PNG Image': ['png'] },
-            });
-            if (uri) {
-              const base64 = message.data.replace(/^data:image\/png;base64,/, '');
-              const buffer = Buffer.from(base64, 'base64');
-              await vscode.workspace.fs.writeFile(uri, buffer);
-              vscode.window.showInformationMessage(`Diagrama exportado: ${uri.fsPath}`);
-            }
-          } else if (message.format === 'drawio' && message.target === 'file') {
-            const uri = await vscode.window.showSaveDialog({
-              defaultUri: vscode.Uri.file(`${message.tableName}.drawio`),
-              filters: { 'Draw.io Diagram': ['drawio', 'xml'] },
-            });
-            if (uri) {
-              await vscode.workspace.fs.writeFile(uri, Buffer.from(message.data, 'utf-8'));
-              vscode.window.showInformationMessage(`Diagrama exportado: ${uri.fsPath}`);
-            }
-          } else if (message.format === 'drawio' && message.target === 'clipboard') {
-            await vscode.env.clipboard.writeText(message.data);
             panel.webview.postMessage({
-              type: 'status',
-              kind: 'ok',
-              message: 'XML do diagrama copiado para a área de transferência.',
+              type: "status",
+              kind: "ok",
+              message: "Alteracoes salvas com sucesso.",
+            });
+
+            await this.refreshPanel(panel, currentNode, message.state);
+          } catch (error) {
+            panel.webview.postMessage({
+              type: "status",
+              kind: "error",
+              message: this.errorMessage(error),
             });
           }
-        } catch (error) {
-          panel.webview.postMessage({
-            type: 'status',
-            kind: 'error',
-            message: this.errorMessage(error),
-          });
+          return;
         }
-        return;
-      }
-    });
+
+        if (message.type === "exportData") {
+          try {
+            await this.exportTableData(panel, currentNode, message);
+          } catch (error) {
+            panel.webview.postMessage({
+              type: "status",
+              kind: "error",
+              message: this.errorMessage(error),
+            });
+          }
+          return;
+        }
+
+        if (message.type === "copyAdvancedClipboard") {
+          try {
+            const content = this.buildExportContent(
+              message.format,
+              message.columns,
+              message.rows,
+            );
+            await vscode.env.clipboard.writeText(content);
+            panel.webview.postMessage({
+              type: "status",
+              kind: "ok",
+              message: "Conteudo copiado para a area de transferencia.",
+            });
+          } catch (error) {
+            panel.webview.postMessage({
+              type: "status",
+              kind: "error",
+              message: this.errorMessage(error),
+            });
+          }
+          return;
+        }
+
+        if (message.type === "openInNewTab") {
+          await this.openTable({ node: currentNode, newTab: true });
+          return;
+        }
+
+        if (message.type === "openSettings") {
+          await vscode.commands.executeCommand("dbadmin.openSettings");
+          return;
+        }
+
+        if (message.type === "showInExplorer") {
+          await vscode.commands.executeCommand(
+            "dbadmin.showInExplorer",
+            currentNode,
+          );
+          return;
+        }
+
+        if (message.type === "openJsonInNativeEditor") {
+          await this.openOrSyncNativePreview(panel, message, true);
+          return;
+        }
+
+        if (message.type === "syncNativeJsonPreview") {
+          await this.openOrSyncNativePreview(panel, message, false);
+          return;
+        }
+
+        if (message.type === "openForeignKeyTarget") {
+          const targetSchemaName = String(
+            message.targetSchemaName || "",
+          ).trim();
+          const targetTableName = String(message.targetTableName || "").trim();
+          const targetColumnName = String(
+            message.targetColumnName || "",
+          ).trim();
+
+          if (!targetSchemaName || !targetTableName || !targetColumnName) {
+            panel.webview.postMessage({
+              type: "status",
+              kind: "error",
+              message:
+                "Metadados da chave estrangeira incompletos para abrir a tabela relacionada.",
+            });
+            return;
+          }
+
+          const initialTargetState = this.defaultState();
+          initialTargetState.searchMode = "query";
+          const sourceValue = String(message.sourceValue ?? "").trim();
+          if (sourceValue.length > 0) {
+            initialTargetState.columnFilters[targetColumnName] = sourceValue;
+          }
+
+          await this.openTable({
+            node: {
+              type: "dbObject",
+              connection: currentNode.connection,
+              databaseName: currentNode.databaseName,
+              schemaName: targetSchemaName,
+              kind: "table",
+              objectName: targetTableName,
+            },
+            newTab: true,
+            initialState: initialTargetState,
+          });
+          return;
+        }
+
+        if (message.type === "toggleQueryVisibility") {
+          const current = this.getShowQueryEditor();
+          await vscode.workspace
+            .getConfiguration()
+            .update(
+              SHOW_QUERY_SETTING,
+              !current,
+              vscode.ConfigurationTarget.Global,
+            );
+          this.notifyQueryVisibilityChanged();
+          return;
+        }
+
+        if (message.type === "toggleHeaderVisibility") {
+          const current = this.getHideTabHeader();
+          await vscode.workspace
+            .getConfiguration()
+            .update(
+              HIDE_TAB_HEADER_SETTING,
+              !current,
+              vscode.ConfigurationTarget.Global,
+            );
+          this.notifyHeaderVisibilityChanged();
+          return;
+        }
+
+        if (message.type === "updateLayout") {
+          this.panelLayouts.set(panel, message.layout);
+          if (this.getPersistLayoutOutsideRestore()) {
+            await this.persistLayout(currentNode, message.layout);
+          }
+          this.saveOpenTabs();
+          return;
+        }
+
+        if (message.type === "openDiagramTableInNewTab") {
+          const schemaName = String(message.schemaName || "").trim();
+          const tableName = String(message.tableName || "").trim();
+          if (!schemaName || !tableName) {
+            panel.webview.postMessage({
+              type: "status",
+              kind: "error",
+              message:
+                "Nome de schema ou tabela invalido para abrir em nova aba.",
+            });
+            return;
+          }
+          await this.openTable({
+            node: {
+              type: "dbObject",
+              connection: currentNode.connection,
+              databaseName: currentNode.databaseName,
+              schemaName,
+              kind: "table",
+              objectName: tableName,
+            },
+            newTab: true,
+          });
+          return;
+        }
+
+        if (message.type === "loadDiagram") {
+          try {
+            const diagramData = await this.postgresService.getTableDiagramData(
+              currentNode.connection,
+              currentNode.databaseName,
+              currentNode.schemaName,
+              currentNode.objectName,
+              message.mainColumns,
+            );
+            panel.webview.postMessage({
+              type: "diagramData",
+              data: diagramData,
+            });
+          } catch (error) {
+            panel.webview.postMessage({
+              type: "status",
+              kind: "error",
+              message: this.errorMessage(error),
+            });
+          }
+          return;
+        }
+
+        if (message.type === "exportDiagram") {
+          try {
+            if (message.format === "png" && message.target === "file") {
+              const uri = await vscode.window.showSaveDialog({
+                defaultUri: vscode.Uri.file(`${message.tableName}.png`),
+                filters: { "PNG Image": ["png"] },
+              });
+              if (uri) {
+                const base64 = message.data.replace(
+                  /^data:image\/png;base64,/,
+                  "",
+                );
+                const buffer = Buffer.from(base64, "base64");
+                await vscode.workspace.fs.writeFile(uri, buffer);
+                vscode.window.showInformationMessage(
+                  `Diagrama exportado: ${uri.fsPath}`,
+                );
+              }
+            } else if (
+              message.format === "drawio" &&
+              message.target === "file"
+            ) {
+              const uri = await vscode.window.showSaveDialog({
+                defaultUri: vscode.Uri.file(`${message.tableName}.drawio`),
+                filters: { "Draw.io Diagram": ["drawio", "xml"] },
+              });
+              if (uri) {
+                await vscode.workspace.fs.writeFile(
+                  uri,
+                  Buffer.from(message.data, "utf-8"),
+                );
+                vscode.window.showInformationMessage(
+                  `Diagrama exportado: ${uri.fsPath}`,
+                );
+              }
+            } else if (
+              message.format === "drawio" &&
+              message.target === "clipboard"
+            ) {
+              await vscode.env.clipboard.writeText(message.data);
+              panel.webview.postMessage({
+                type: "status",
+                kind: "ok",
+                message:
+                  "XML do diagrama copiado para a área de transferência.",
+              });
+            }
+          } catch (error) {
+            panel.webview.postMessage({
+              type: "status",
+              kind: "error",
+              message: this.errorMessage(error),
+            });
+          }
+          return;
+        }
+      },
+    );
 
     panel.onDidDispose(() => {
       disposable.dispose();
@@ -494,7 +567,7 @@ export class TableDataPanelManager {
     panel: vscode.WebviewPanel,
     node: DbObjectNodeRef,
     state: TableState,
-    options?: { retryTimeout?: boolean }
+    options?: { retryTimeout?: boolean },
   ): Promise<void> {
     const maxAttempts = options?.retryTimeout ? 3 : 1;
 
@@ -514,11 +587,11 @@ export class TableDataPanelManager {
             columnFilters: state.columnFilters,
             limit: state.limit,
             page: state.page,
-          }
+          },
         );
 
         panel.webview.postMessage({
-          type: 'data',
+          type: "data",
           title: `${node.databaseName} / ${node.schemaName}.${node.objectName}`,
           connectionName:
             node.connection.nickname?.trim() ||
@@ -536,7 +609,10 @@ export class TableDataPanelManager {
       } catch (error) {
         lastError = error;
 
-        const shouldRetry = options?.retryTimeout && this.isTimeoutError(error) && attempt < maxAttempts;
+        const shouldRetry =
+          options?.retryTimeout &&
+          this.isTimeoutError(error) &&
+          attempt < maxAttempts;
         if (shouldRetry) {
           await this.wait(350);
           continue;
@@ -547,8 +623,8 @@ export class TableDataPanelManager {
     }
 
     panel.webview.postMessage({
-      type: 'status',
-      kind: 'error',
+      type: "status",
+      kind: "error",
       message: this.errorMessage(lastError),
     });
   }
@@ -556,21 +632,24 @@ export class TableDataPanelManager {
   private async exportTableData(
     panel: vscode.WebviewPanel,
     node: DbObjectNodeRef,
-    message: Extract<WebviewMessage, { type: 'exportData' }>
+    message: Extract<WebviewMessage, { type: "exportData" }>,
   ): Promise<void> {
     let columns = Array.isArray(message.columns) ? [...message.columns] : [];
     let rows = Array.isArray(message.rows) ? [...message.rows] : [];
 
-    if (message.dataScope === 'all') {
+    if (message.dataScope === "all") {
       const allResult = await this.fetchAllRowsForExport(node, message.state);
       columns = allResult.columns;
       rows = allResult.rows;
     }
 
-    const format = message.format === 'csv' ? 'csv' : 'json';
+    const format = message.format === "csv" ? "csv" : "json";
     const content = this.buildExportContent(format, columns, rows);
-    const language = format === 'csv' ? 'csv' : 'json';
-    const document = await vscode.workspace.openTextDocument({ language, content });
+    const language = format === "csv" ? "csv" : "json";
+    const document = await vscode.workspace.openTextDocument({
+      language,
+      content,
+    });
 
     await vscode.window.showTextDocument(document, {
       preview: false,
@@ -579,15 +658,15 @@ export class TableDataPanelManager {
     });
 
     panel.webview.postMessage({
-      type: 'status',
-      kind: 'ok',
-      message: 'Exportacao aberta em nova aba.',
+      type: "status",
+      kind: "ok",
+      message: "Exportacao aberta em nova aba.",
     });
   }
 
   private async fetchAllRowsForExport(
     node: DbObjectNodeRef,
-    state: TableState
+    state: TableState,
   ): Promise<{ columns: string[]; rows: Array<Record<string, unknown>> }> {
     const rows: Array<Record<string, unknown>> = [];
     let columns: string[] = [];
@@ -609,7 +688,7 @@ export class TableDataPanelManager {
           columnFilters: state.columnFilters,
           limit,
           page,
-        }
+        },
       );
 
       if (page === 1) {
@@ -630,13 +709,17 @@ export class TableDataPanelManager {
   }
 
   private buildExportContent(
-    format: 'json' | 'csv',
+    format: "json" | "csv",
     columns: string[],
-    rows: Array<Record<string, unknown>>
+    rows: Array<Record<string, unknown>>,
   ): string {
-    const normalizedColumns = columns.filter((columnName) => Boolean(columnName));
+    const normalizedColumns = columns.filter((columnName) =>
+      Boolean(columnName),
+    );
 
-    const pickRowValues = (row: Record<string, unknown>): Record<string, unknown> => {
+    const pickRowValues = (
+      row: Record<string, unknown>,
+    ): Record<string, unknown> => {
       if (normalizedColumns.length === 0) {
         return { ...row };
       }
@@ -648,19 +731,21 @@ export class TableDataPanelManager {
       return picked;
     };
 
-    if (format === 'json') {
-      return JSON.stringify(rows.map((row) => pickRowValues(row)), null, 2);
+    if (format === "json") {
+      return JSON.stringify(
+        rows.map((row) => pickRowValues(row)),
+        null,
+        2,
+      );
     }
 
     const escapeCsv = (value: unknown): string => {
       if (value === null || value === undefined) {
-        return '';
+        return "";
       }
 
       const text =
-        typeof value === 'object'
-          ? JSON.stringify(value)
-          : String(value);
+        typeof value === "object" ? JSON.stringify(value) : String(value);
       if (!/[",\n\r]/.test(text)) {
         return text;
       }
@@ -668,21 +753,28 @@ export class TableDataPanelManager {
       return `"${text.replace(/"/g, '""')}"`;
     };
 
-    const header = normalizedColumns.map((columnName) => escapeCsv(columnName)).join(',');
+    const header = normalizedColumns
+      .map((columnName) => escapeCsv(columnName))
+      .join(",");
     const lines = rows.map((row) => {
       const source = pickRowValues(row);
-      return normalizedColumns.map((columnName) => escapeCsv(source[columnName])).join(',');
+      return normalizedColumns
+        .map((columnName) => escapeCsv(source[columnName]))
+        .join(",");
     });
 
-    return [header, ...lines].join('\n');
+    return [header, ...lines].join("\n");
   }
 
   private isTimeoutError(error: unknown): boolean {
-    const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+    const message =
+      error instanceof Error
+        ? error.message.toLowerCase()
+        : String(error).toLowerCase();
     return (
-      message.includes('timeout') ||
-      message.includes('timed out') ||
-      message.includes('etimedout')
+      message.includes("timeout") ||
+      message.includes("timed out") ||
+      message.includes("etimedout")
     );
   }
 
@@ -696,8 +788,8 @@ export class TableDataPanelManager {
 
   private defaultState(): TableState {
     return {
-      searchText: '',
-      searchMode: 'local',
+      searchText: "",
+      searchMode: "local",
       sortColumn: undefined,
       sortDirection: undefined,
       columnFilters: {},
@@ -708,52 +800,71 @@ export class TableDataPanelManager {
 
   private cloneTableState(state: TableState): TableState {
     return {
-      searchText: String(state.searchText || ''),
-      searchMode: state.searchMode === 'query' ? 'query' : 'local',
+      searchText: String(state.searchText || ""),
+      searchMode: state.searchMode === "query" ? "query" : "local",
       sortColumn: state.sortColumn,
       sortDirection: state.sortDirection,
       columnFilters: { ...(state.columnFilters || {}) },
-      limit: Number.isFinite(Number(state.limit)) ? Math.max(1, Math.trunc(Number(state.limit))) : this.getDefaultPageSize(),
-      page: Number.isFinite(Number(state.page)) ? Math.max(1, Math.trunc(Number(state.page))) : 1,
+      limit: Number.isFinite(Number(state.limit))
+        ? Math.max(1, Math.trunc(Number(state.limit)))
+        : this.getDefaultPageSize(),
+      page: Number.isFinite(Number(state.page))
+        ? Math.max(1, Math.trunc(Number(state.page)))
+        : 1,
     };
   }
 
   private errorMessage(error: unknown): string {
-    return error instanceof Error ? error.message : 'Erro inesperado';
+    return error instanceof Error ? error.message : "Erro inesperado";
   }
 
   private layoutStorageKey(node: DbObjectNodeRef): string {
     return [
-      'dbadmin.tableLayout',
+      "dbadmin.tableLayout",
       node.connection.id,
       node.databaseName,
       node.schemaName,
       node.objectName,
-    ].join(':');
+    ].join(":");
   }
 
-  private readStoredLayout(node: DbObjectNodeRef): TableLayoutState | undefined {
-    return this.context.globalState.get<TableLayoutState>(this.layoutStorageKey(node));
+  private readStoredLayout(
+    node: DbObjectNodeRef,
+  ): TableLayoutState | undefined {
+    return this.context.globalState.get<TableLayoutState>(
+      this.layoutStorageKey(node),
+    );
   }
 
-  private async persistLayout(node: DbObjectNodeRef, layout: TableLayoutState): Promise<void> {
+  private async persistLayout(
+    node: DbObjectNodeRef,
+    layout: TableLayoutState,
+  ): Promise<void> {
     await this.context.globalState.update(this.layoutStorageKey(node), layout);
   }
 
   private getShowQueryEditor(): boolean {
-    return vscode.workspace.getConfiguration().get<boolean>(SHOW_QUERY_SETTING, true);
+    return vscode.workspace
+      .getConfiguration()
+      .get<boolean>(SHOW_QUERY_SETTING, true);
   }
 
   private getHideTabHeader(): boolean {
-    return vscode.workspace.getConfiguration().get<boolean>(HIDE_TAB_HEADER_SETTING, false);
+    return vscode.workspace
+      .getConfiguration()
+      .get<boolean>(HIDE_TAB_HEADER_SETTING, false);
   }
 
   private getPersistLayoutOutsideRestore(): boolean {
-    return vscode.workspace.getConfiguration().get<boolean>(PERSIST_LAYOUT_SETTING, false);
+    return vscode.workspace
+      .getConfiguration()
+      .get<boolean>(PERSIST_LAYOUT_SETTING, false);
   }
 
   private getDefaultPageSize(): number {
-    const configured = vscode.workspace.getConfiguration().get<number>(DEFAULT_PAGE_SIZE_SETTING, 50);
+    const configured = vscode.workspace
+      .getConfiguration()
+      .get<number>(DEFAULT_PAGE_SIZE_SETTING, 50);
     const numeric = Number(configured);
     if (!Number.isFinite(numeric)) {
       return 50;
@@ -771,7 +882,7 @@ export class TableDataPanelManager {
     const showQueryEditor = this.getShowQueryEditor();
     this.panelNodes.forEach((_node, panel) => {
       panel.webview.postMessage({
-        type: 'queryVisibility',
+        type: "queryVisibility",
         showQueryEditor,
       });
     });
@@ -781,7 +892,7 @@ export class TableDataPanelManager {
     const hideTabHeader = this.getHideTabHeader();
     this.panelNodes.forEach((_node, panel) => {
       panel.webview.postMessage({
-        type: 'headerVisibility',
+        type: "headerVisibility",
         hideTabHeader,
       });
     });
@@ -790,38 +901,40 @@ export class TableDataPanelManager {
   private async updateNativePreviewContent(
     state: NativeJsonPreviewState,
     content: string,
-    options?: { preserveFocus?: boolean }
+    options?: { preserveFocus?: boolean },
   ): Promise<void> {
-    const formatted = this.tryFormatJson(String(content ?? ''));
+    const formatted = this.tryFormatJson(String(content ?? ""));
     if (state.document.getText() === formatted) {
       return;
     }
     const edit = new vscode.WorkspaceEdit();
     const fullRange = new vscode.Range(
       state.document.positionAt(0),
-      state.document.positionAt(state.document.getText().length)
+      state.document.positionAt(state.document.getText().length),
     );
     edit.replace(state.document.uri, fullRange, formatted);
     await vscode.workspace.applyEdit(edit);
   }
 
-  private async clearNativePreviewContent(panel: vscode.WebviewPanel): Promise<void> {
+  private async clearNativePreviewContent(
+    panel: vscode.WebviewPanel,
+  ): Promise<void> {
     const state = this.panelNativePreview.get(panel);
     if (!state) {
       return;
     }
-    await this.updateNativePreviewContent(state, '', { preserveFocus: true });
+    await this.updateNativePreviewContent(state, "", { preserveFocus: true });
     state.ctid = null;
     state.rowKey = null;
   }
 
   private sanitizeFileNamePart(value: string): string {
-    const sanitized = String(value || '')
+    const sanitized = String(value || "")
       .trim()
       .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '');
-    return sanitized || 'na';
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    return sanitized || "na";
   }
 
   private getOrCreatePanelPreviewTabId(panel: vscode.WebviewPanel): string {
@@ -837,19 +950,25 @@ export class TableDataPanelManager {
 
   private getNativePreviewFilePrefix(panel: vscode.WebviewPanel): string {
     const node = this.panelNodes.get(panel);
-    const tablePart = this.sanitizeFileNamePart(node?.objectName ?? 'tabela');
-    const tabId = this.sanitizeFileNamePart(this.getOrCreatePanelPreviewTabId(panel));
+    const tablePart = this.sanitizeFileNamePart(node?.objectName ?? "tabela");
+    const tabId = this.sanitizeFileNamePart(
+      this.getOrCreatePanelPreviewTabId(panel),
+    );
     return `${tablePart}_dbadmin_${tabId}`;
   }
 
-  private cleanupNativePreviewTempFilesByPrefix(prefix: string, keepPath?: string): void {
+  private cleanupNativePreviewTempFilesByPrefix(
+    prefix: string,
+    keepPath?: string,
+  ): void {
     try {
       const tmpDir = os.tmpdir();
       const keep = keepPath ? path.normalize(keepPath).toLowerCase() : null;
       const entries = fs.readdirSync(tmpDir);
       for (const entry of entries) {
         const isTarget =
-          entry.startsWith(prefix) && (entry.endsWith('.json') || entry.endsWith('.txt'));
+          entry.startsWith(prefix) &&
+          (entry.endsWith(".json") || entry.endsWith(".txt"));
         if (!isTarget) {
           continue;
         }
@@ -872,22 +991,34 @@ export class TableDataPanelManager {
   private async createNativePreviewTempDocument(
     panel: vscode.WebviewPanel,
     content: string,
-    isJson: boolean
-  ): Promise<{ document: vscode.TextDocument; tmpFilePath: string; tmpFilePrefix: string }> {
-    const formattedContent = this.tryFormatJson(String(content ?? ''));
-    const extension = 'preview';
+    isJson: boolean,
+  ): Promise<{
+    document: vscode.TextDocument;
+    tmpFilePath: string;
+    tmpFilePrefix: string;
+  }> {
+    const formattedContent = this.tryFormatJson(String(content ?? ""));
+    const extension = "preview";
     const tmpFilePrefix = this.getNativePreviewFilePrefix(panel);
     const tmpFilePath = path.join(os.tmpdir(), `${tmpFilePrefix}.${extension}`);
-    fs.writeFileSync(tmpFilePath, formattedContent, 'utf8');
-    const openedDocument = await vscode.workspace.openTextDocument(vscode.Uri.file(tmpFilePath));
-    const document = await vscode.languages.setTextDocumentLanguage(openedDocument, 'json');
+    fs.writeFileSync(tmpFilePath, formattedContent, "utf8");
+    const openedDocument = await vscode.workspace.openTextDocument(
+      vscode.Uri.file(tmpFilePath),
+    );
+    const document = await vscode.languages.setTextDocumentLanguage(
+      openedDocument,
+      "json",
+    );
     return { document, tmpFilePath, tmpFilePrefix };
   }
 
   private isNativePreviewTempPath(fsPath: string): boolean {
     const name = path.basename(fsPath).toLowerCase();
-    const isNamedByPrefix = name.includes('_dbadmin_') &&
-      (name.endsWith('.json') || name.endsWith('.txt') || name.endsWith('.preview'));
+    const isNamedByPrefix =
+      name.includes("_dbadmin_") &&
+      (name.endsWith(".json") ||
+        name.endsWith(".txt") ||
+        name.endsWith(".preview"));
     return isNamedByPrefix;
   }
 
@@ -896,7 +1027,10 @@ export class TableDataPanelManager {
       .flatMap((group) => group.tabs)
       .find((candidate) => {
         const input = candidate.input;
-        return input instanceof vscode.TabInputText && input.uri.toString() === uri.toString();
+        return (
+          input instanceof vscode.TabInputText &&
+          input.uri.toString() === uri.toString()
+        );
       });
 
     if (tab) {
@@ -905,7 +1039,7 @@ export class TableDataPanelManager {
     }
 
     const editor = vscode.window.visibleTextEditors.find(
-      (candidate) => candidate.document.uri.toString() === uri.toString()
+      (candidate) => candidate.document.uri.toString() === uri.toString(),
     );
     if (!editor) {
       return;
@@ -916,7 +1050,7 @@ export class TableDataPanelManager {
       preserveFocus: true,
       viewColumn: editor.viewColumn,
     });
-    await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+    await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
   }
 
   private scrollNativePreviewToTop(document: vscode.TextDocument): void {
@@ -939,13 +1073,15 @@ export class TableDataPanelManager {
           modified?: vscode.Uri;
           original?: vscode.Uri;
         };
-        const candidateUris = [tabInput.uri, tabInput.modified, tabInput.original].filter(
-          (uri): uri is vscode.Uri => uri !== undefined
-        );
+        const candidateUris = [
+          tabInput.uri,
+          tabInput.modified,
+          tabInput.original,
+        ].filter((uri): uri is vscode.Uri => uri !== undefined);
 
         for (const uri of candidateUris) {
           const pathStr = uri.fsPath || uri.path;
-          if (pathStr.includes('_dbadmin_') && pathStr.endsWith('.preview')) {
+          if (pathStr.includes("_dbadmin_") && pathStr.endsWith(".preview")) {
             return tabGroup.viewColumn;
           }
         }
@@ -955,12 +1091,17 @@ export class TableDataPanelManager {
   }
 
   private isDocumentActiveInEditor(document: vscode.TextDocument): boolean {
-    return vscode.window.activeTextEditor?.document.uri.toString() === document.uri.toString();
+    return (
+      vscode.window.activeTextEditor?.document.uri.toString() ===
+      document.uri.toString()
+    );
   }
 
-  private getVisibleEditorForDocument(document: vscode.TextDocument): vscode.TextEditor | undefined {
+  private getVisibleEditorForDocument(
+    document: vscode.TextDocument,
+  ): vscode.TextEditor | undefined {
     return vscode.window.visibleTextEditors.find(
-      (editor) => editor.document.uri.toString() === document.uri.toString()
+      (editor) => editor.document.uri.toString() === document.uri.toString(),
     );
   }
 
@@ -975,7 +1116,7 @@ export class TableDataPanelManager {
       open?: boolean;
       preserveFocus?: boolean;
     },
-    forceOpen: boolean
+    forceOpen: boolean,
   ): Promise<void> {
     const isJson = payload.isJson !== false;
     let state = this.panelNativePreview.get(panel);
@@ -985,11 +1126,12 @@ export class TableDataPanelManager {
     }
 
     if (!state) {
-      const { document, tmpFilePath, tmpFilePrefix } = await this.createNativePreviewTempDocument(
-        panel,
-        payload.content,
-        isJson
-      );
+      const { document, tmpFilePath, tmpFilePrefix } =
+        await this.createNativePreviewTempDocument(
+          panel,
+          payload.content,
+          isJson,
+        );
       this.cleanupNativePreviewTempFilesByPrefix(tmpFilePrefix, tmpFilePath);
 
       let targetViewColumn = vscode.ViewColumn.Active;
@@ -1001,7 +1143,9 @@ export class TableDataPanelManager {
       } else {
         // Cria novo container com split down
         try {
-          await vscode.commands.executeCommand('workbench.action.splitEditorDown');
+          await vscode.commands.executeCommand(
+            "workbench.action.splitEditorDown",
+          );
         } catch {
           // Fallback: open beside if split command is unavailable.
         }
@@ -1028,7 +1172,7 @@ export class TableDataPanelManager {
 
       if (payload.preserveFocus) {
         panel.reveal(panel.viewColumn, false);
-        panel.webview.postMessage({ type: 'restoreGridFocus' });
+        panel.webview.postMessage({ type: "restoreGridFocus" });
       }
       return;
     }
@@ -1046,16 +1190,21 @@ export class TableDataPanelManager {
     }
 
     if (forceOpen) {
-      const existingVisibleEditor = this.getVisibleEditorForDocument(state.document);
+      const existingVisibleEditor = this.getVisibleEditorForDocument(
+        state.document,
+      );
       if (!existingVisibleEditor) {
         try {
-          await vscode.commands.executeCommand('workbench.action.splitEditorDown');
+          await vscode.commands.executeCommand(
+            "workbench.action.splitEditorDown",
+          );
         } catch {
           // Fallback: keep current group when split command is unavailable.
         }
       }
 
-      const targetViewColumn = existingVisibleEditor?.viewColumn ?? vscode.ViewColumn.Active;
+      const targetViewColumn =
+        existingVisibleEditor?.viewColumn ?? vscode.ViewColumn.Active;
 
       const shownEditor = await vscode.window.showTextDocument(state.document, {
         preview: false,
@@ -1066,13 +1215,15 @@ export class TableDataPanelManager {
 
       if (payload.preserveFocus) {
         panel.reveal(panel.viewColumn, false);
-        panel.webview.postMessage({ type: 'restoreGridFocus' });
+        panel.webview.postMessage({ type: "restoreGridFocus" });
       }
     }
   }
 
   private handleNativePreviewDocumentSave(document: vscode.TextDocument): void {
-    const panel = this.nativePreviewDocumentToPanel.get(document.uri.toString());
+    const panel = this.nativePreviewDocumentToPanel.get(
+      document.uri.toString(),
+    );
     if (!panel) {
       return;
     }
@@ -1084,7 +1235,7 @@ export class TableDataPanelManager {
     }
 
     panel.webview.postMessage({
-      type: 'nativeJsonPreviewContentChanged',
+      type: "nativeJsonPreviewContentChanged",
       content: document.getText(),
       ctid: state.ctid,
       rowKey: state.rowKey,
@@ -1092,8 +1243,12 @@ export class TableDataPanelManager {
     });
   }
 
-  private handleNativePreviewDocumentClose(document: vscode.TextDocument): void {
-    const panel = this.nativePreviewDocumentToPanel.get(document.uri.toString());
+  private handleNativePreviewDocumentClose(
+    document: vscode.TextDocument,
+  ): void {
+    const panel = this.nativePreviewDocumentToPanel.get(
+      document.uri.toString(),
+    );
 
     if (!panel) {
       return;
@@ -1101,7 +1256,9 @@ export class TableDataPanelManager {
     this.clearNativePreviewState(panel);
   }
 
-  private async closeAndClearNativePreviewState(panel: vscode.WebviewPanel): Promise<void> {
+  private async closeAndClearNativePreviewState(
+    panel: vscode.WebviewPanel,
+  ): Promise<void> {
     const state = this.panelNativePreview.get(panel);
     if (!state) {
       return;
@@ -1135,15 +1292,21 @@ export class TableDataPanelManager {
     try {
       const tmpDir = os.tmpdir();
       const openDocs = new Set(
-        vscode.workspace.textDocuments.map((doc) => path.normalize(doc.uri.fsPath).toLowerCase())
+        vscode.workspace.textDocuments.map((doc) =>
+          path.normalize(doc.uri.fsPath).toLowerCase(),
+        ),
       );
       const entries = fs.readdirSync(tmpDir);
       for (const entry of entries) {
-        const isNamedByPrefix = entry.includes('_dbadmin_');
+        const isNamedByPrefix = entry.includes("_dbadmin_");
         if (!isNamedByPrefix) {
           continue;
         }
-        if (!entry.endsWith('.json') && !entry.endsWith('.txt') && !entry.endsWith('.preview')) {
+        if (
+          !entry.endsWith(".json") &&
+          !entry.endsWith(".txt") &&
+          !entry.endsWith(".preview")
+        ) {
           continue;
         }
         const fullPath = path.join(tmpDir, entry);
@@ -1184,25 +1347,34 @@ export class TableDataPanelManager {
           objectName: node.objectName,
           newTab: this.panelIsNewTab.get(panel) ?? false,
           layout: this.panelLayouts.get(panel),
-          state: this.cloneTableState(this.panelStates.get(panel) ?? this.defaultState()),
+          state: this.cloneTableState(
+            this.panelStates.get(panel) ?? this.defaultState(),
+          ),
         };
       })
-      .filter((tab): tab is {
-        connectionId: string;
-        databaseName: string;
-        schemaName: string;
-        objectName: string;
-        newTab: boolean;
-        layout: TableLayoutState | undefined;
-        state: TableState;
-      } => tab !== null);
+      .filter(
+        (
+          tab,
+        ): tab is {
+          connectionId: string;
+          databaseName: string;
+          schemaName: string;
+          objectName: string;
+          newTab: boolean;
+          layout: TableLayoutState | undefined;
+          state: TableState;
+        } => tab !== null,
+      );
 
-    this.context.globalState.update('dbadmin.openTabs', openTabs);
+    this.context.globalState.update("dbadmin.openTabs", openTabs);
   }
 
   public async restoreOpenTabs(store: ConnectionStore): Promise<void> {
     try {
-      const openTabs = this.context.globalState.get('dbadmin.openTabs', []) as Array<{
+      const openTabs = this.context.globalState.get(
+        "dbadmin.openTabs",
+        [],
+      ) as Array<{
         connectionId: string;
         databaseName: string;
         schemaName: string;
@@ -1224,8 +1396,8 @@ export class TableDataPanelManager {
           }
 
           const node: DbObjectNodeRef = {
-            type: 'dbObject',
-            kind: 'table',
+            type: "dbObject",
+            kind: "table",
             connection,
             databaseName: tab.databaseName,
             schemaName: tab.schemaName,
@@ -1237,21 +1409,23 @@ export class TableDataPanelManager {
             newTab: tab.newTab,
             restoringOnStartup: true,
             layout: tab.layout,
-            initialState: this.cloneTableState(tab.state ?? this.defaultState()),
+            initialState: this.cloneTableState(
+              tab.state ?? this.defaultState(),
+            ),
           });
         } catch (error) {
           console.error(`Falha ao restaurar aba ${tab.objectName}:`, error);
         }
       }
     } catch (error) {
-      console.error('Falha ao restaurar abas abertas:', error);
+      console.error("Falha ao restaurar abas abertas:", error);
     }
   }
 
   private buildHtml(
     webview: vscode.Webview,
     initialShowQueryEditor: boolean = true,
-    initialHideTabHeader: boolean = false
+    initialHideTabHeader: boolean = false,
   ): string {
     const nonce = String(Date.now());
     const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource}; script-src 'nonce-${nonce}'; connect-src ${webview.cspSource};`;
@@ -1260,12 +1434,25 @@ export class TableDataPanelManager {
     const codeEditorMarkup = buildCodeEditorMarkup();
     const codeEditorScript = buildCodeEditorScript();
     const codiconsCssUri = webview.asWebviewUri(
-      vscode.Uri.joinPath(this.context.extensionUri, 'node_modules', '@vscode', 'codicons', 'dist', 'codicon.css')
+      vscode.Uri.joinPath(
+        this.context.extensionUri,
+        "node_modules",
+        "@vscode",
+        "codicons",
+        "dist",
+        "codicon.css",
+      ),
     );
     const tableAdvancedFilterScriptUri = webview.asWebviewUri(
-      vscode.Uri.joinPath(this.context.extensionUri, 'out', 'webview', 'tableAdvancedFilter.js')
+      vscode.Uri.joinPath(
+        this.context.extensionUri,
+        "out",
+        "webview",
+        "tableAdvancedFilter.js",
+      ),
     );
-    const initialDynamicDefaultColumnWidth = this.getDynamicDefaultColumnWidth();
+    const initialDynamicDefaultColumnWidth =
+      this.getDynamicDefaultColumnWidth();
 
     return `<!DOCTYPE html>
 <html lang="pt-BR">
@@ -1364,7 +1551,48 @@ export class TableDataPanelManager {
     button:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground)); border-color: var(--vscode-focusBorder); }
     button.primary:hover:not(:disabled) { background: var(--vscode-button-hoverBackground); border-color: var(--vscode-button-border, transparent); }
     button:focus-visible { outline: none; box-shadow: 0 0 0 1px var(--vscode-focusBorder) inset; }
-    #pageInfo { white-space: nowrap; font-size: 12px; color: var(--vscode-descriptionForeground); line-height: 28px; }
+    #pageInfo {
+      min-width: 60px;
+      white-space: nowrap;
+      font-size: 12px;
+      color: var(--vscode-descriptionForeground);
+      line-height: 28px;
+    }
+    #pageInfoBtn {
+      min-width: 60px;
+      justify-content: center;
+      font-variant-numeric: tabular-nums;
+      padding: 0 6px;
+    }
+    .pagination-menu {
+      width: min(130px, calc(100vw - 24px));
+      padding: 8px;
+      flex-direction: column;
+      gap: 10px;
+      z-index: 62;
+    }
+    #paginationMenu.open { display: flex; }
+    .pagination-menu-info {
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+      font-variant-numeric: tabular-nums;
+      text-align: center;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--vscode-panel-border);
+    }
+    .pagination-menu .row {
+      display: grid;
+      grid-template-columns: 1fr;
+      align-items: start;
+      gap: 6px;
+    }
+    .pagination-menu .label {
+      font-size: 12px;
+      color: var(--vscode-descriptionForeground);
+    }
+    .pagination-menu .input {
+      width: 100%;
+    }
     .mode-select { position: relative; display: inline-flex; }
     .header-menu { z-index: 40; min-width: 180px; }
     .header-menu hr.menu-separator { border: none; border-top: 1px solid var(--vscode-panel-border); margin: 4px 0; }
@@ -1372,7 +1600,13 @@ export class TableDataPanelManager {
     .mode-dropdown button:last-child,
     .menu > button:last-child,
     .menu-submenu > button:last-child { border-bottom: 0; }
+    .header-menu .header-view-btn + .header-view-btn { margin-top: 4px; }
     .header-view-btn.active { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); font-weight: 600; }
+    .header-view-btn.active:hover:not(:disabled) {
+      background: var(--vscode-button-hoverBackground, var(--vscode-button-background));
+      color: var(--vscode-button-foreground, var(--vscode-list-activeSelectionForeground));
+      border-color: var(--vscode-button-border, transparent);
+    }
     .diagram-view { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; }
     .diagram-toolbar { display: flex; align-items: center; gap: 6px; padding: 0px 4px 2px 4px; flex: 0 0 auto; border-bottom: 1px solid var(--vscode-panel-border); flex-wrap: wrap; }
     .diagram-zoom-group { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }
@@ -1458,6 +1692,11 @@ export class TableDataPanelManager {
     #headerMenuBackdrop { z-index: 39; }
     #menuBackdrop { z-index: 49; }
     #columnsBackdrop { z-index: 59; }
+    #paginationMenuBackdrop {
+      z-index: 61;
+      pointer-events: auto;
+      background: transparent;
+    }
     .columns-popup-head { position: sticky; top: 0; background: var(--vscode-editorWidget-background); border-bottom: 1px solid var(--vscode-panel-border); padding: 8px 10px; }
     .columns-search { width: 100%; box-sizing: border-box; border: 1px solid var(--vscode-input-border, transparent); background: var(--vscode-input-background); color: var(--vscode-input-foreground); border-radius: 6px; padding: 0 8px; height: 26px; }
     .columns-search:focus { border-color: var(--vscode-focusBorder); outline: none; }
@@ -1537,6 +1776,11 @@ export class TableDataPanelManager {
     .cell-input { width: 100%; box-sizing: border-box; border: 1px solid transparent; background: transparent; color: var(--vscode-foreground); border-radius: 4px; padding: 4px; }
     .cell-input:focus { border-color: var(--vscode-focusBorder); background: var(--vscode-input-background); }
     .cell-input.dirty { background: rgba(70, 130, 255, 0.18); border-color: rgba(70, 130, 255, 0.62); }
+    .cell-input.cell-input-placeholder::placeholder {
+      color: var(--vscode-descriptionForeground);
+      font-style: italic;
+      opacity: 0.95;
+    }
     .json-cell { position: relative; }
     .json-open-btn {
       position: absolute;
@@ -1806,7 +2050,6 @@ export class TableDataPanelManager {
           <button data-mode="query"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><ellipse cx="8" cy="4.5" rx="5.5" ry="2" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 4.5v7c0 1.1 2.46 2 5.5 2s5.5-.9 5.5-2v-7" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 8c0 1.1 2.46 2 5.5 2s5.5-.9 5.5-2" stroke="currentColor" stroke-width="1.3"/></svg>Filtro via query</button>
         </div>
       </div>
-      <input id="limit" class="input" type="number" min="1" max="500" value="${defaultPageSize}" style="width:60px" />
       <button id="columnsBtn" class="secondary btn-icon" title="Selecionar colunas" aria-label="Selecionar colunas">
         <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path d="M1.8 8c1.3-2.2 3.6-3.6 6.2-3.6S12.9 5.8 14.2 8c-1.3 2.2-3.6 3.6-6.2 3.6S3.1 10.2 1.8 8z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
@@ -1824,7 +2067,9 @@ export class TableDataPanelManager {
       <button id="newRow" class="secondary btn-icon btn-icon-fix" title="Nova linha">＋</button>
       <div style="display: flex; align-items: center; gap: 4px;">
         <button id="prevPage" class="secondary btn-icon btn-icon-fix" title="Página anterior">←</button>
-        <span id="pageInfo"></span>
+        <button id="pageInfoBtn" class="secondary" title="Paginação">
+          <span id="pageInfo">1/1 (0)</span>
+        </button>
         <button id="nextPage" class="secondary btn-icon btn-icon-fix" title="Próxima página">→</button>
       </div>
       <button id="toolbarMenuBtn" class="secondary btn-icon btn-icon-fix" title="Menu">☰</button>
@@ -1873,6 +2118,7 @@ export class TableDataPanelManager {
 
   <div class="overlay-backdrop" id="modeBackdrop"></div>
   <div class="overlay-backdrop" id="headerMenuBackdrop"></div>
+  <div class="overlay-backdrop" id="paginationMenuBackdrop"></div>
   <div id="headerMenu" class="header-menu simple-menu overlay-surface overlay-scroll">
     <button id="viewDataBtn" class="header-view-btn active" title="Ver dados da tabela">
       <span>Dados</span>
@@ -1887,21 +2133,33 @@ export class TableDataPanelManager {
     <button id="showInExplorer" title="Mostrar no explorador">
       <span>Mostrar no explorador</span>
     </button>
-    <button id="toggleHeaderVisibility" title="Mostrar/Ocultar cabeçalho">
-      <span id="toggleHeaderVisibilityLabel">Ocultar cabeçalho</span>
-    </button>
-    <button id="toggleQueryVisibility" title="Mostrar query">
-      <span id="toggleQueryVisibilityLabel">Ocultar query</span>
-    </button>
-    <button id="openExport" title="Exportar dados">
-      <span>Exportar</span>
-    </button>
-    <button id="resetLayout" title="Restaurar layout da tabela">
-      <span>Restaurar layout</span>
-    </button>
     <button id="openNewTab" title="Abrir em nova aba">
       <span>Abrir em nova aba</span>
     </button>
+    <hr id="headerMenuDataSeparator" class="menu-separator" />
+    <button id="toggleHeaderVisibility" class="header-menu-data-only" title="Mostrar/Ocultar cabeçalho">
+      <span id="toggleHeaderVisibilityLabel">Ocultar cabeçalho</span>
+    </button>
+    <button id="toggleQueryVisibility" class="header-menu-data-only" title="Mostrar query">
+      <span id="toggleQueryVisibilityLabel">Ocultar query</span>
+    </button>
+    <button id="openExport" class="header-menu-data-only" title="Exportar dados">
+      <span>Exportar</span>
+    </button>
+    <button id="resetLayout" class="header-menu-data-only" title="Restaurar layout da tabela">
+      <span>Restaurar layout</span>
+    </button>
+  </div>
+  <div id="paginationMenu" class="pagination-menu overlay-surface overlay-scroll" role="dialog" aria-label="Configurar paginação">
+    <div class="pagination-menu-info" id="paginationMenuInfo"></div>
+    <div class="row">
+    <label class="label" for="paginationPageInput">Página</label>
+    <input id="paginationPageInput" class="input" type="number" step="1" />
+    </div>
+    <div class="row">
+      <label class="label" for="paginationLimitInput">Itens por página</label>
+      <input id="paginationLimitInput" class="input" type="number" min="1" max="500" step="1" />
+    </div>
   </div>
 
   <div class="overlay-backdrop" id="menuBackdrop"></div>
@@ -2021,6 +2279,12 @@ export class TableDataPanelManager {
     const queryResizer = document.getElementById('queryResizer');
     const cellMenu = document.getElementById('cellMenu');
     const pageInfoEl = document.getElementById('pageInfo');
+    const pageInfoBtn = document.getElementById('pageInfoBtn');
+    const paginationMenuInfoEl = document.getElementById('paginationMenuInfo');
+    const paginationMenu = document.getElementById('paginationMenu');
+    const paginationMenuBackdrop = document.getElementById('paginationMenuBackdrop');
+    const paginationLimitInput = document.getElementById('paginationLimitInput');
+    const paginationPageInput = document.getElementById('paginationPageInput');
     const menuBackdrop = document.getElementById('menuBackdrop');
     const errorMsgEl = document.getElementById('errorMsg');
     const tableWrapEl = document.querySelector('.table-wrap');
@@ -2145,7 +2409,14 @@ export class TableDataPanelManager {
         this.onAfterClose = options.onAfterClose;
         this.lastOpenOptions = {};
 
+        this.backdropEl.addEventListener('mousedown', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          this.close();
+        });
+
         this.backdropEl.addEventListener('click', (event) => {
+          event.preventDefault();
           event.stopPropagation();
           this.close();
         });
@@ -2815,6 +3086,7 @@ export class TableDataPanelManager {
 
       if (input) {
         input.value = nextInputValue;
+        updateCellInputPlaceholder(input, nextValue);
       }
 
       if (ctid) {
@@ -2902,6 +3174,27 @@ export class TableDataPanelManager {
       return String(value);
     }
 
+    function getCellPlaceholderText(value) {
+      if (value === null || value === undefined) {
+        return 'Nulo';
+      }
+      if (typeof value === 'string' && value.length === 0) {
+        return 'Vazio';
+      }
+      return '';
+    }
+
+    function updateCellInputPlaceholder(input, value) {
+      const placeholder = getCellPlaceholderText(value);
+      if (placeholder) {
+        input.placeholder = placeholder;
+        input.classList.add('cell-input-placeholder');
+      } else {
+        input.placeholder = '';
+        input.classList.remove('cell-input-placeholder');
+      }
+    }
+
     function isValidUnixTimestamp(value) {
       if (typeof value !== 'number' && typeof value !== 'string') {
         return false;
@@ -2971,6 +3264,20 @@ export class TableDataPanelManager {
       placement: 'point',
     });
 
+    const paginationMenuOverlay = new OverlaySurfaceController({
+      surfaceEl: paginationMenu,
+      backdropEl: paginationMenuBackdrop,
+      anchorEl: pageInfoBtn,
+      placement: 'bottom-end',
+      onAfterOpen: () => {
+        renderPageInfo();
+        paginationLimitInput.value = String(state.limit);
+        paginationPageInput.value = String(state.page);
+        paginationPageInput.focus();
+        paginationPageInput.select();
+      },
+    });
+
     function closeSubmenusImmediately() {
       document.querySelectorAll('.menu-submenu-wrap').forEach((wrap) => {
         const timer = submenuCloseTimers.get(wrap);
@@ -2998,6 +3305,10 @@ export class TableDataPanelManager {
 
     function closeColumnsPopup() {
       columnsPopupOverlay.close();
+    }
+
+    function closePaginationMenu() {
+      paginationMenuOverlay.close();
     }
 
     function openJsonModal(column, value, row, ctid, input) {
@@ -3118,6 +3429,7 @@ export class TableDataPanelManager {
       applyCellValue(row, column, ctid, nextContent, input || null);
       if (input) {
         input.value = toCellInputText(nextContent, column);
+        updateCellInputPlaceholder(input, nextContent);
       }
       updateSaveButtonState();
       renderSelectionState();
@@ -3324,7 +3636,6 @@ export class TableDataPanelManager {
 
     function syncControls() {
       searchInputEl.value = state.searchText;
-      document.getElementById('limit').value = String(state.limit);
       updateModeIcon();
       updateSearchContextPlaceholder();
       syncClearFiltersButton();
@@ -3357,7 +3668,7 @@ export class TableDataPanelManager {
         sortColumn: state.sortColumn,
         sortDirection: state.sortDirection,
         columnFilters: state.columnFilters,
-        limit: Number(document.getElementById('limit').value || ${defaultPageSize}),
+        limit: Math.max(1, Math.trunc(Number(state.limit || ${defaultPageSize}))),
         page: state.page,
       };
     }
@@ -3451,8 +3762,66 @@ export class TableDataPanelManager {
         state.page = totalPages;
       }
       pageInfoEl.textContent = state.page + '/' + totalPages + ' (' + totalRows + ')';
+      if (paginationMenuInfoEl) {
+        paginationMenuInfoEl.textContent = 'Página ' + state.page + ' de ' + totalPages + '   •   Total: ' + totalRows;
+      }
+      if (pageInfoBtn) {
+        pageInfoBtn.setAttribute(
+          'title',
+          'Paginação - Página ' + state.page + ' de ' + totalPages,
+        );
+      }
       document.getElementById('prevPage').disabled = state.page <= 1;
       document.getElementById('nextPage').disabled = state.page >= totalPages;
+    }
+
+    function sanitizePageSizeInput(rawValue) {
+      const parsed = Math.trunc(Number(rawValue));
+      if (!Number.isFinite(parsed) || parsed < 1) {
+        return null;
+      }
+      return Math.max(1, Math.min(500, parsed));
+    }
+
+    function normalizeRequestedPage(rawPageValue, totalPages) {
+      const parsed = Math.trunc(Number(rawPageValue));
+      if (!Number.isFinite(parsed)) {
+        return null;
+      }
+      if (parsed === -1) {
+        return totalPages;
+      }
+      if (parsed < 1) {
+        return null;
+      }
+      return parsed > totalPages ? totalPages : parsed;
+    }
+
+    function applyPaginationMenuValues() {
+      const nextLimit = sanitizePageSizeInput(paginationLimitInput.value);
+      if (nextLimit === null) {
+        paginationLimitInput.value = String(state.limit);
+        return false;
+      }
+
+      const limitChanged = nextLimit !== state.limit;
+      const totalPagesAfterLimit = Math.max(1, Math.ceil(totalRows / nextLimit));
+      const requestedPage = normalizeRequestedPage(paginationPageInput.value, totalPagesAfterLimit);
+      if (requestedPage === null) {
+        paginationPageInput.value = String(state.page);
+        return false;
+      }
+
+      const pageChanged = requestedPage !== state.page;
+      if (!limitChanged && !pageChanged) {
+        return true;
+      }
+
+      state.limit = nextLimit;
+      state.page = requestedPage;
+      persistCurrentState();
+      reloadTableViewClearingSelection();
+      return true;
     }
 
     function enableCellEditing(input) {
@@ -4238,6 +4607,31 @@ export class TableDataPanelManager {
       });
     }
 
+    function pasteIntoEditingOrSelectedCell(value) {
+      if (editingCellInput) {
+        editingCellInput.value = value;
+        editingCellInput.dispatchEvent(new Event('input', { bubbles: true }));
+        return true;
+      }
+
+      if (!lastSelectedCell) {
+        return false;
+      }
+
+      const row = rowKeyToRow.get(lastSelectedCell.rowKey);
+      const col = columns.find((c) => c.name === lastSelectedCell.colName);
+      if (!row || !col) {
+        return false;
+      }
+
+      const ctid = rowKeyToCtid.get(lastSelectedCell.rowKey) || null;
+      const inputMap = inputElements.get(lastSelectedCell.rowKey);
+      const input = inputMap ? inputMap.get(col.name) : null;
+      applyCellValue(row, col, ctid, value, input || null);
+      renderSelectionState();
+      return true;
+    }
+
     function render() {
       const displayColumns = getDisplayColumns();
       const visibleRows = applyLocalFilter(rows);
@@ -4616,6 +5010,7 @@ export class TableDataPanelManager {
           const baseCurrentText = toCellInputText(baseCurrent, col);
           const effectiveCurrent = getEffectiveCellValue(row, col.name, ctid);
           input.value = toCellInputText(effectiveCurrent, col);
+          updateCellInputPlaceholder(input, effectiveCurrent);
 
           if (isPreviewableColumn(col) || isFkColumn(col)) {
             td.classList.add('json-cell');
@@ -4649,6 +5044,7 @@ export class TableDataPanelManager {
             } else {
               row[col.name] = input.value;
             }
+            updateCellInputPlaceholder(input, input.value);
             updateSaveButtonState();
           });
 
@@ -4665,6 +5061,7 @@ export class TableDataPanelManager {
             isDragging = true;
 
             const anchorPosition = getSelectionAnchorPosition();
+              searchInputEl.blur();
             if (event.shiftKey && anchorPosition) {
               isDragging = false;
               dragAnchor = null;
@@ -4991,6 +5388,25 @@ export class TableDataPanelManager {
       }
     });
 
+    // Prevent duplicate paste in global search when grid selection should receive Ctrl+V.
+    searchInputEl.addEventListener('paste', (event) => {
+      if (currentView !== 'data') {
+        return;
+      }
+
+      if (!(editingCellInput || lastSelectedCell)) {
+        return;
+      }
+
+      const text = event.clipboardData ? event.clipboardData.getData('text/plain') : '';
+      if (!pasteIntoEditingOrSelectedCell(text)) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+    });
+
     modeDropdown.querySelectorAll('button[data-mode]').forEach((btn) => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -5215,10 +5631,49 @@ export class TableDataPanelManager {
       reloadTableViewClearingSelection();
     });
 
-    document.getElementById('limit').addEventListener('change', () => {
-      state.page = 1;
-      persistCurrentState();
-      reloadTableViewClearingSelection();
+    pageInfoBtn.addEventListener('click', (event) => {
+      event.stopPropagation();
+      paginationMenuOverlay.toggle({ anchorEl: pageInfoBtn });
+    });
+
+    paginationLimitInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        if (applyPaginationMenuValues()) {
+          closePaginationMenu();
+        }
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        closePaginationMenu();
+      }
+    });
+
+    paginationPageInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        if (applyPaginationMenuValues()) {
+          closePaginationMenu();
+        }
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        closePaginationMenu();
+      }
+    });
+
+    paginationLimitInput.addEventListener('change', () => {
+      const parsed = sanitizePageSizeInput(paginationLimitInput.value);
+      if (parsed !== null) {
+        paginationLimitInput.value = String(parsed);
+      }
+    });
+
+    paginationPageInput.addEventListener('change', () => {
+      const pageSize = sanitizePageSizeInput(paginationLimitInput.value) ?? state.limit;
+      const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+      const normalized = normalizeRequestedPage(paginationPageInput.value, totalPages);
+      if (normalized !== null) {
+        paginationPageInput.value = String(normalized);
+      }
     });
 
     document.getElementById('openNewTab').addEventListener('click', () => {
@@ -5356,15 +5811,22 @@ export class TableDataPanelManager {
       event.preventDefault();
     });
 
-    // Keyboard handlers for copy/paste/delete
+    // Keyboard handlers for data grid interactions only.
     document.addEventListener('keydown', (event) => {
-      if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 's') {
+      if (currentView !== 'data') {
+        return;
+      }
+
+      const isCtrlOrMeta = event.ctrlKey || event.metaKey;
+      const key = String(event.key || '').toLowerCase();
+
+      if (isCtrlOrMeta && !event.altKey && !event.shiftKey && key === 's') {
         event.preventDefault();
         save();
         return;
       }
 
-      if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'a') {
+      if (isCtrlOrMeta && !event.altKey && !event.shiftKey && key === 'a') {
         if (shouldHandleGridSelectAllShortcut(event)) {
           event.preventDefault();
           event.stopPropagation();
@@ -5374,6 +5836,31 @@ export class TableDataPanelManager {
           }
           selectAllDisplayedCells();
         }
+        return;
+      }
+
+      // Ctrl+C: copy active editing value or last selected cell value.
+      // Handle before input-target early return so grid shortcuts still work
+      // after selecting a cell, even if another input kept focus.
+      if (isCtrlOrMeta && !event.altKey && !event.shiftKey && key === 'c') {
+        if (editingCellInput || lastSelectedCell) {
+          copyDefaultSelectionToClipboard();
+          event.preventDefault();
+          return;
+        }
+      }
+
+      // Ctrl+V: paste into current editing cell or last selected cell.
+      // Handle before input-target early return for consistent grid behavior.
+      if (isCtrlOrMeta && !event.altKey && !event.shiftKey && key === 'v') {
+        if (!(editingCellInput || lastSelectedCell)) {
+          return;
+        }
+
+        event.preventDefault();
+        navigator.clipboard.readText().then((value) => {
+          pasteIntoEditingOrSelectedCell(value);
+        }).catch(() => {});
         return;
       }
 
@@ -5536,41 +6023,6 @@ export class TableDataPanelManager {
         return;
       }
 
-      // Ctrl+C: copy active editing value or last selected cell value
-      if ((event.ctrlKey || event.metaKey) && event.key === 'c') {
-        copyDefaultSelectionToClipboard();
-        event.preventDefault();
-        return;
-      }
-
-      // Ctrl+V: paste into current editing cell or last selected cell
-      if ((event.ctrlKey || event.metaKey) && event.key === 'v') {
-        event.preventDefault();
-        navigator.clipboard.readText().then((value) => {
-          if (editingCellInput) {
-            editingCellInput.value = value;
-            editingCellInput.dispatchEvent(new Event('input', { bubbles: true }));
-            return;
-          }
-
-          if (!lastSelectedCell) {
-            return;
-          }
-
-          const row = rowKeyToRow.get(lastSelectedCell.rowKey);
-          const col = columns.find((c) => c.name === lastSelectedCell.colName);
-          if (!row || !col) {
-            return;
-          }
-
-          const ctid = rowKeyToCtid.get(lastSelectedCell.rowKey) || null;
-          const inputMap = inputElements.get(lastSelectedCell.rowKey);
-          const input = inputMap ? inputMap.get(col.name) : null;
-          applyCellValue(row, col, ctid, value, input || null);
-          renderSelectionState();
-        }).catch(() => {});
-        return;
-      }
     });
 
     document.querySelectorAll('.menu-submenu-wrap').forEach((wrap) => {
@@ -5750,6 +6202,10 @@ export class TableDataPanelManager {
 
         if (action === 'null' || action === 'empty' || action === 'default') {
           activeCell.input.value = value;
+          updateCellInputPlaceholder(
+            activeCell.input,
+            action === 'null' ? null : value,
+          );
         }
         updateSaveButtonState();
         closeContextMenu();
@@ -5843,6 +6299,8 @@ export class TableDataPanelManager {
     const mainToolbarEl = document.querySelector('.toolbar');
     const diagramToolbarEl = document.querySelector('.diagram-toolbar');
     const diagramZoomPctEl = document.getElementById('diagramZoomPct');
+    const headerMenuDataSeparatorEl = document.getElementById('headerMenuDataSeparator');
+    const headerMenuDataOnlyEls = Array.from(document.querySelectorAll('.header-menu-data-only'));
 
     let currentView = 'data';
     let diagramData = null;
@@ -5933,6 +6391,14 @@ export class TableDataPanelManager {
       diagramToolbarEl.style.display = isData ? 'none' : '';
       viewDataBtnEl.classList.toggle('active', isData);
       viewDiagramBtnEl.classList.toggle('active', !isData);
+      if (headerMenuDataSeparatorEl) {
+        headerMenuDataSeparatorEl.style.display = isData ? '' : 'none';
+      }
+      headerMenuDataOnlyEls.forEach((el) => {
+        if (el instanceof HTMLElement) {
+          el.style.display = isData ? '' : 'none';
+        }
+      });
       if (!isData && !diagramData && !diagramLoading) {
         diagramLoading = true;
         diagramLoadingEl.style.display = '';
