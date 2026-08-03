@@ -1,14 +1,10 @@
 import * as fs from "fs";
-import * as os from "os";
-import * as path from "path";
 import * as vscode from "vscode";
 import { DbObjectNodeRef } from "./models";
 import {
   DiagramDataResult,
   PostgresService,
   TableColumnMeta,
-  TableSavePayload,
-  TableSortDirection,
 } from "./postgresService";
 import { ConnectionStore } from "./connectionStore";
 import {
@@ -16,137 +12,61 @@ import {
   buildCodeEditorScript,
   buildCodeEditorStyles,
 } from "./webview/codeEditor";
-
-interface OpenTableInput {
-  node: DbObjectNodeRef;
-  newTab: boolean;
-  restoringOnStartup?: boolean;
-  layout?: TableLayoutState;
-  initialState?: TableState;
-}
-
-interface TableState {
-  searchText: string;
-  searchMode: "local" | "query";
-  sortColumn?: string;
-  sortDirection?: TableSortDirection;
-  columnFilters: Record<string, string>;
-  limit: number;
-  page: number;
-}
-
-interface TableLayoutState {
-  columnOrder: string[];
-  visibleColumns: string[];
-  columnWidths: Record<string, number>;
-}
-
-type WebviewMessage =
-  | { type: "ready" }
-  | { type: "reload"; state: TableState; clearSelectionAndPreview?: boolean }
-  | { type: "updateState"; state: TableState }
-  | { type: "save"; state: TableState; payload: TableSavePayload }
-  | {
-      type: "exportData";
-      format: "json" | "csv";
-      dataScope: "result" | "all" | "selected";
-      state: TableState;
-      columns: string[];
-      rows: Array<Record<string, unknown>>;
-    }
-  | {
-      type: "copyAdvancedClipboard";
-      format: "json" | "csv";
-      columns: string[];
-      rows: Array<Record<string, unknown>>;
-    }
-  | { type: "openInNewTab" }
-  | { type: "openSettings" }
-  | { type: "showInExplorer" }
-  | {
-      type: "openJsonInNativeEditor";
-      content: string;
-      columnName: string;
-      isJson?: boolean;
-      ctid?: string | null;
-      rowKey?: string | null;
-      preserveFocus?: boolean;
-    }
-  | {
-      type: "syncNativeJsonPreview";
-      content: string;
-      columnName: string;
-      isJson?: boolean;
-      ctid?: string | null;
-      rowKey?: string | null;
-      open?: boolean;
-    }
-  | {
-      type: "openForeignKeyTarget";
-      sourceValue: string;
-      targetSchemaName: string;
-      targetTableName: string;
-      targetColumnName: string;
-    }
-  | { type: "toggleQueryVisibility" }
-  | { type: "toggleHeaderVisibility" }
-  | { type: "updateLayout"; layout: TableLayoutState }
-  | { type: "loadDiagram"; mainColumns?: TableColumnMeta[] }
-  | {
-      type: "exportDiagram";
-      format: "png" | "drawio";
-      target: "file" | "clipboard";
-      data: string;
-      tableName: string;
-    }
-  | { type: "openDiagramTableInNewTab"; schemaName: string; tableName: string };
-
-interface NativeJsonPreviewState {
-  document: vscode.TextDocument;
-  tmpFilePath: string;
-  tmpFilePrefix: string;
-  isJson: boolean;
-  ctid: string | null;
-  rowKey: string | null;
-  columnName: string;
-  viewColumn?: vscode.ViewColumn;
-}
-
-const GLOBAL_REUSED_KEY = "__global__";
-const SHOW_QUERY_SETTING = "dbadmin.showQueryEditor";
-const HIDE_TAB_HEADER_SETTING = "dbadmin.hideTabHeader";
-const PERSIST_LAYOUT_SETTING = "dbadmin.persistColumnLayout";
-const DEFAULT_PAGE_SIZE_SETTING = "dbadmin.defaultPageSize";
-const DYNAMIC_DEFAULT_COLUMN_WIDTH_SETTING =
-  "dbadmin.dynamicDefaultColumnWidth";
+import {
+  buildExportContent,
+  fetchAllRowsForExport,
+} from "./tableDataPanel/exportService";
+import {
+  buildOpenTabsSnapshot,
+  buildTableLayoutStorageKey,
+  cloneTableStateWithPageSize,
+  createDefaultTableState,
+  getStoredOpenTabs,
+  persistLayout as persistStoredLayout,
+  persistOpenTabs,
+  readStoredLayout as readLayoutFromStore,
+  StoredOpenTab,
+} from "./tableDataPanel/stateStore";
+import {
+  buildNativePreviewFilePrefix,
+  cleanupNativePreviewTempFilesByPrefix,
+  cleanupStaleNativePreviewTempFiles,
+  createNativePreviewTempDocument,
+  formatPreviewJson,
+} from "./tableDataPanel/nativePreviewTemp";
+import {
+  closeDocumentTabByUri,
+  findPreviewTabGroupViewColumn,
+  getVisibleEditorForDocument,
+  isDocumentActiveInEditor,
+  scrollPreviewDocumentToTop,
+} from "./tableDataPanel/nativePreviewEditor";
+import {
+  GLOBAL_REUSED_KEY,
+  NativeJsonPreviewState,
+  OpenTableInput,
+  TableLayoutState,
+  TableState,
+  WebviewMessage,
+} from "./tableDataPanel/types";
+import {
+  PanelConfig,
+  SHOW_QUERY_SETTING,
+  HIDE_TAB_HEADER_SETTING,
+} from "./tableDataPanel/config";
+import { PanelRegistry } from "./tableDataPanel/panelRegistry";
 
 export class TableDataPanelManager {
-  private readonly reusedPanels = new Map<string, vscode.WebviewPanel>();
-  private readonly panelNodes = new Map<vscode.WebviewPanel, DbObjectNodeRef>();
-  private readonly panelIsNewTab = new Map<vscode.WebviewPanel, boolean>();
-  private readonly panelLayouts = new Map<
-    vscode.WebviewPanel,
-    TableLayoutState
-  >();
-  private readonly panelStates = new Map<vscode.WebviewPanel, TableState>();
-  private readonly panelPreviewTabIds = new Map<vscode.WebviewPanel, string>();
-  private readonly panelNativePreview = new Map<
-    vscode.WebviewPanel,
-    NativeJsonPreviewState
-  >();
-  private readonly nativePreviewDocumentToPanel = new Map<
-    string,
-    vscode.WebviewPanel
-  >();
+  private readonly panelConfig = new PanelConfig();
+  private readonly panelRegistry = new PanelRegistry();
   private readonly nativePreviewSaveDisposable: vscode.Disposable;
   private readonly nativePreviewCloseDisposable: vscode.Disposable;
-  private previewTabIdSequence = 1;
 
   public constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly postgresService: PostgresService,
   ) {
-    this.cleanupStaleNativePreviewTempFiles();
+    cleanupStaleNativePreviewTempFiles();
     this.nativePreviewSaveDisposable = vscode.workspace.onDidSaveTextDocument(
       (document) => {
         this.handleNativePreviewDocumentSave(document);
@@ -173,14 +93,14 @@ export class TableDataPanelManager {
     const initialState = input.initialState ?? this.defaultState();
 
     if (!input.newTab) {
-      const reused = this.reusedPanels.get(key);
+      const reused = this.panelRegistry.getReusedPanel(key);
       if (reused) {
-        this.panelNodes.set(reused, input.node);
-        this.panelStates.set(reused, this.cloneTableState(initialState));
+        this.panelRegistry.setNode(reused, input.node);
+        this.panelRegistry.setState(reused, this.cloneTableState(initialState));
         if (initialLayout) {
-          this.panelLayouts.set(reused, initialLayout);
+          this.panelRegistry.setLayout(reused, initialLayout);
         } else {
-          this.panelLayouts.delete(reused);
+          this.panelRegistry.deleteLayout(reused);
         }
         reused.title = `${input.node.objectName}`;
         reused.reveal(vscode.ViewColumn.Active, false);
@@ -209,20 +129,20 @@ export class TableDataPanelManager {
       this.getShowQueryEditor(),
       this.getHideTabHeader(),
     );
-    this.panelNodes.set(panel, input.node);
-    this.panelIsNewTab.set(panel, input.newTab);
-    this.panelStates.set(panel, this.cloneTableState(initialState));
+    this.panelRegistry.setNode(panel, input.node);
+    this.panelRegistry.setIsNewTab(panel, input.newTab);
+    this.panelRegistry.setState(panel, this.cloneTableState(initialState));
     if (initialLayout) {
-      this.panelLayouts.set(panel, initialLayout);
+      this.panelRegistry.setLayout(panel, initialLayout);
     } else {
-      this.panelLayouts.delete(panel);
+      this.panelRegistry.deleteLayout(panel);
     }
 
     if (!input.newTab) {
       panel.iconPath = vscode.Uri.file(
         this.context.asAbsolutePath("resources/icons/table-global.svg"),
       );
-      this.reusedPanels.set(key, panel);
+      this.panelRegistry.setReusedPanel(key, panel);
     } else {
       panel.iconPath = {
         light: vscode.Uri.file(
@@ -238,7 +158,7 @@ export class TableDataPanelManager {
 
     const disposable = panel.webview.onDidReceiveMessage(
       async (message: WebviewMessage) => {
-        const currentNode = this.panelNodes.get(panel) ?? input.node;
+        const currentNode = this.panelRegistry.getNode(panel) ?? input.node;
 
         if (message.type === "ready") {
           panel.webview.postMessage({
@@ -256,7 +176,10 @@ export class TableDataPanelManager {
         }
 
         if (message.type === "reload") {
-          this.panelStates.set(panel, this.cloneTableState(message.state));
+          this.panelRegistry.setState(
+            panel,
+            this.cloneTableState(message.state),
+          );
           this.saveOpenTabs();
           if (message.clearSelectionAndPreview === true) {
             await this.clearNativePreviewContent(panel);
@@ -266,14 +189,20 @@ export class TableDataPanelManager {
         }
 
         if (message.type === "updateState") {
-          this.panelStates.set(panel, this.cloneTableState(message.state));
+          this.panelRegistry.setState(
+            panel,
+            this.cloneTableState(message.state),
+          );
           this.saveOpenTabs();
           return;
         }
 
         if (message.type === "save") {
           try {
-            this.panelStates.set(panel, this.cloneTableState(message.state));
+            this.panelRegistry.setState(
+              panel,
+              this.cloneTableState(message.state),
+            );
             this.saveOpenTabs();
             await this.postgresService.saveTableData(
               currentNode.connection,
@@ -315,7 +244,7 @@ export class TableDataPanelManager {
 
         if (message.type === "copyAdvancedClipboard") {
           try {
-            const content = this.buildExportContent(
+            const content = buildExportContent(
               message.format,
               message.columns,
               message.rows,
@@ -432,7 +361,7 @@ export class TableDataPanelManager {
         }
 
         if (message.type === "updateLayout") {
-          this.panelLayouts.set(panel, message.layout);
+          this.panelRegistry.setLayout(panel, message.layout);
           if (this.getPersistLayoutOutsideRestore()) {
             await this.persistLayout(currentNode, message.layout);
           }
@@ -551,13 +480,9 @@ export class TableDataPanelManager {
     panel.onDidDispose(() => {
       disposable.dispose();
       void this.closeAndClearNativePreviewState(panel);
-      this.panelNodes.delete(panel);
-      this.panelIsNewTab.delete(panel);
-      this.panelLayouts.delete(panel);
-      this.panelStates.delete(panel);
-      this.panelPreviewTabIds.delete(panel);
+      this.panelRegistry.clearPanel(panel);
       if (!input.newTab) {
-        this.reusedPanels.delete(key);
+        this.panelRegistry.deleteReusedPanel(key);
       }
       this.saveOpenTabs();
     });
@@ -603,7 +528,7 @@ export class TableDataPanelManager {
           state,
           showQueryEditor: this.getShowQueryEditor(),
           dynamicDefaultColumnWidth: this.getDynamicDefaultColumnWidth(),
-          layout: this.panelLayouts.get(panel),
+          layout: this.panelRegistry.getLayout(panel),
         });
         return;
       } catch (error) {
@@ -638,13 +563,17 @@ export class TableDataPanelManager {
     let rows = Array.isArray(message.rows) ? [...message.rows] : [];
 
     if (message.dataScope === "all") {
-      const allResult = await this.fetchAllRowsForExport(node, message.state);
+      const allResult = await fetchAllRowsForExport(
+        this.postgresService,
+        node,
+        message.state,
+      );
       columns = allResult.columns;
       rows = allResult.rows;
     }
 
     const format = message.format === "csv" ? "csv" : "json";
-    const content = this.buildExportContent(format, columns, rows);
+    const content = buildExportContent(format, columns, rows);
     const language = format === "csv" ? "csv" : "json";
     const document = await vscode.workspace.openTextDocument({
       language,
@@ -662,108 +591,6 @@ export class TableDataPanelManager {
       kind: "ok",
       message: "Exportacao aberta em nova aba.",
     });
-  }
-
-  private async fetchAllRowsForExport(
-    node: DbObjectNodeRef,
-    state: TableState,
-  ): Promise<{ columns: string[]; rows: Array<Record<string, unknown>> }> {
-    const rows: Array<Record<string, unknown>> = [];
-    let columns: string[] = [];
-    let totalRows = 0;
-    let page = 1;
-    const limit = 500;
-
-    while (true) {
-      const result = await this.postgresService.getTableData(
-        node.connection,
-        node.databaseName,
-        node.schemaName,
-        node.objectName,
-        {
-          searchText: state.searchText,
-          searchMode: state.searchMode,
-          sortColumn: state.sortColumn,
-          sortDirection: state.sortDirection,
-          columnFilters: state.columnFilters,
-          limit,
-          page,
-        },
-      );
-
-      if (page === 1) {
-        columns = result.columns.map((column) => column.name);
-        totalRows = Number(result.totalRows || 0);
-      }
-
-      rows.push(...result.rows);
-
-      if (result.rows.length === 0 || rows.length >= totalRows) {
-        break;
-      }
-
-      page += 1;
-    }
-
-    return { columns, rows };
-  }
-
-  private buildExportContent(
-    format: "json" | "csv",
-    columns: string[],
-    rows: Array<Record<string, unknown>>,
-  ): string {
-    const normalizedColumns = columns.filter((columnName) =>
-      Boolean(columnName),
-    );
-
-    const pickRowValues = (
-      row: Record<string, unknown>,
-    ): Record<string, unknown> => {
-      if (normalizedColumns.length === 0) {
-        return { ...row };
-      }
-
-      const picked: Record<string, unknown> = {};
-      normalizedColumns.forEach((columnName) => {
-        picked[columnName] = row[columnName];
-      });
-      return picked;
-    };
-
-    if (format === "json") {
-      return JSON.stringify(
-        rows.map((row) => pickRowValues(row)),
-        null,
-        2,
-      );
-    }
-
-    const escapeCsv = (value: unknown): string => {
-      if (value === null || value === undefined) {
-        return "";
-      }
-
-      const text =
-        typeof value === "object" ? JSON.stringify(value) : String(value);
-      if (!/[",\n\r]/.test(text)) {
-        return text;
-      }
-
-      return `"${text.replace(/"/g, '""')}"`;
-    };
-
-    const header = normalizedColumns
-      .map((columnName) => escapeCsv(columnName))
-      .join(",");
-    const lines = rows.map((row) => {
-      const source = pickRowValues(row);
-      return normalizedColumns
-        .map((columnName) => escapeCsv(source[columnName]))
-        .join(",");
-    });
-
-    return [header, ...lines].join("\n");
   }
 
   private isTimeoutError(error: unknown): boolean {
@@ -787,31 +614,11 @@ export class TableDataPanelManager {
   }
 
   private defaultState(): TableState {
-    return {
-      searchText: "",
-      searchMode: "local",
-      sortColumn: undefined,
-      sortDirection: undefined,
-      columnFilters: {},
-      limit: this.getDefaultPageSize(),
-      page: 1,
-    };
+    return createDefaultTableState(this.getDefaultPageSize());
   }
 
   private cloneTableState(state: TableState): TableState {
-    return {
-      searchText: String(state.searchText || ""),
-      searchMode: state.searchMode === "query" ? "query" : "local",
-      sortColumn: state.sortColumn,
-      sortDirection: state.sortDirection,
-      columnFilters: { ...(state.columnFilters || {}) },
-      limit: Number.isFinite(Number(state.limit))
-        ? Math.max(1, Math.trunc(Number(state.limit)))
-        : this.getDefaultPageSize(),
-      page: Number.isFinite(Number(state.page))
-        ? Math.max(1, Math.trunc(Number(state.page)))
-        : 1,
-    };
+    return cloneTableStateWithPageSize(state, this.getDefaultPageSize());
   }
 
   private errorMessage(error: unknown): string {
@@ -819,83 +626,60 @@ export class TableDataPanelManager {
   }
 
   private layoutStorageKey(node: DbObjectNodeRef): string {
-    return [
-      "dbadmin.tableLayout",
-      node.connection.id,
-      node.databaseName,
-      node.schemaName,
-      node.objectName,
-    ].join(":");
+    return buildTableLayoutStorageKey(node);
   }
 
   private readStoredLayout(
     node: DbObjectNodeRef,
   ): TableLayoutState | undefined {
-    return this.context.globalState.get<TableLayoutState>(
-      this.layoutStorageKey(node),
-    );
+    return readLayoutFromStore(this.context, node);
   }
 
   private async persistLayout(
     node: DbObjectNodeRef,
     layout: TableLayoutState,
   ): Promise<void> {
-    await this.context.globalState.update(this.layoutStorageKey(node), layout);
+    await persistStoredLayout(this.context, node, layout);
   }
 
   private getShowQueryEditor(): boolean {
-    return vscode.workspace
-      .getConfiguration()
-      .get<boolean>(SHOW_QUERY_SETTING, true);
+    return this.panelConfig.getShowQueryEditor();
   }
 
   private getHideTabHeader(): boolean {
-    return vscode.workspace
-      .getConfiguration()
-      .get<boolean>(HIDE_TAB_HEADER_SETTING, false);
+    return this.panelConfig.getHideTabHeader();
   }
 
   private getPersistLayoutOutsideRestore(): boolean {
-    return vscode.workspace
-      .getConfiguration()
-      .get<boolean>(PERSIST_LAYOUT_SETTING, false);
+    return this.panelConfig.getPersistLayoutOutsideRestore();
   }
 
   private getDefaultPageSize(): number {
-    const configured = vscode.workspace
-      .getConfiguration()
-      .get<number>(DEFAULT_PAGE_SIZE_SETTING, 50);
-    const numeric = Number(configured);
-    if (!Number.isFinite(numeric)) {
-      return 50;
-    }
-    return Math.max(1, Math.min(500, Math.trunc(numeric)));
+    return this.panelConfig.getDefaultPageSize();
   }
 
   private getDynamicDefaultColumnWidth(): boolean {
-    return vscode.workspace
-      .getConfiguration()
-      .get<boolean>(DYNAMIC_DEFAULT_COLUMN_WIDTH_SETTING, true);
+    return this.panelConfig.getDynamicDefaultColumnWidth();
   }
 
   public notifyQueryVisibilityChanged(): void {
     const showQueryEditor = this.getShowQueryEditor();
-    this.panelNodes.forEach((_node, panel) => {
-      panel.webview.postMessage({
+    for (const [_panel, panelNode] of this.panelRegistry.getAllNodes()) {
+      _panel.webview.postMessage({
         type: "queryVisibility",
         showQueryEditor,
       });
-    });
+    }
   }
 
   public notifyHeaderVisibilityChanged(): void {
     const hideTabHeader = this.getHideTabHeader();
-    this.panelNodes.forEach((_node, panel) => {
-      panel.webview.postMessage({
+    for (const [_panel, panelNode] of this.panelRegistry.getAllNodes()) {
+      _panel.webview.postMessage({
         type: "headerVisibility",
         hideTabHeader,
       });
-    });
+    }
   }
 
   private async updateNativePreviewContent(
@@ -903,7 +687,7 @@ export class TableDataPanelManager {
     content: string,
     options?: { preserveFocus?: boolean },
   ): Promise<void> {
-    const formatted = this.tryFormatJson(String(content ?? ""));
+    const formatted = formatPreviewJson(String(content ?? ""));
     if (state.document.getText() === formatted) {
       return;
     }
@@ -919,7 +703,7 @@ export class TableDataPanelManager {
   private async clearNativePreviewContent(
     panel: vscode.WebviewPanel,
   ): Promise<void> {
-    const state = this.panelNativePreview.get(panel);
+    const state = this.panelRegistry.getNativePreview(panel);
     if (!state) {
       return;
     }
@@ -928,180 +712,21 @@ export class TableDataPanelManager {
     state.rowKey = null;
   }
 
-  private sanitizeFileNamePart(value: string): string {
-    const sanitized = String(value || "")
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "");
-    return sanitized || "na";
-  }
-
   private getOrCreatePanelPreviewTabId(panel: vscode.WebviewPanel): string {
-    const existing = this.panelPreviewTabIds.get(panel);
+    const existing = this.panelRegistry.getPreviewTabId(panel);
     if (existing) {
       return existing;
     }
-    const id = `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
-    this.previewTabIdSequence += 1;
-    this.panelPreviewTabIds.set(panel, id);
+    const id = this.panelRegistry.generatePreviewTabId();
+    this.panelRegistry.setPreviewTabId(panel, id);
     return id;
   }
 
   private getNativePreviewFilePrefix(panel: vscode.WebviewPanel): string {
-    const node = this.panelNodes.get(panel);
-    const tablePart = this.sanitizeFileNamePart(node?.objectName ?? "tabela");
-    const tabId = this.sanitizeFileNamePart(
+    const node = this.panelRegistry.getNode(panel);
+    return buildNativePreviewFilePrefix(
+      node?.objectName ?? "tabela",
       this.getOrCreatePanelPreviewTabId(panel),
-    );
-    return `${tablePart}_dbadmin_${tabId}`;
-  }
-
-  private cleanupNativePreviewTempFilesByPrefix(
-    prefix: string,
-    keepPath?: string,
-  ): void {
-    try {
-      const tmpDir = os.tmpdir();
-      const keep = keepPath ? path.normalize(keepPath).toLowerCase() : null;
-      const entries = fs.readdirSync(tmpDir);
-      for (const entry of entries) {
-        const isTarget =
-          entry.startsWith(prefix) &&
-          (entry.endsWith(".json") || entry.endsWith(".txt"));
-        if (!isTarget) {
-          continue;
-        }
-        const fullPath = path.join(tmpDir, entry);
-        const normalized = path.normalize(fullPath).toLowerCase();
-        if (keep && normalized === keep) {
-          continue;
-        }
-        try {
-          fs.unlinkSync(fullPath);
-        } catch {
-          // Ignore inaccessible files during prefix cleanup.
-        }
-      }
-    } catch {
-      // Ignore cleanup issues.
-    }
-  }
-
-  private async createNativePreviewTempDocument(
-    panel: vscode.WebviewPanel,
-    content: string,
-    isJson: boolean,
-  ): Promise<{
-    document: vscode.TextDocument;
-    tmpFilePath: string;
-    tmpFilePrefix: string;
-  }> {
-    const formattedContent = this.tryFormatJson(String(content ?? ""));
-    const extension = "preview";
-    const tmpFilePrefix = this.getNativePreviewFilePrefix(panel);
-    const tmpFilePath = path.join(os.tmpdir(), `${tmpFilePrefix}.${extension}`);
-    fs.writeFileSync(tmpFilePath, formattedContent, "utf8");
-    const openedDocument = await vscode.workspace.openTextDocument(
-      vscode.Uri.file(tmpFilePath),
-    );
-    const document = await vscode.languages.setTextDocumentLanguage(
-      openedDocument,
-      "json",
-    );
-    return { document, tmpFilePath, tmpFilePrefix };
-  }
-
-  private isNativePreviewTempPath(fsPath: string): boolean {
-    const name = path.basename(fsPath).toLowerCase();
-    const isNamedByPrefix =
-      name.includes("_dbadmin_") &&
-      (name.endsWith(".json") ||
-        name.endsWith(".txt") ||
-        name.endsWith(".preview"));
-    return isNamedByPrefix;
-  }
-
-  private async closeDocumentTabByUri(uri: vscode.Uri): Promise<void> {
-    const tab = vscode.window.tabGroups.all
-      .flatMap((group) => group.tabs)
-      .find((candidate) => {
-        const input = candidate.input;
-        return (
-          input instanceof vscode.TabInputText &&
-          input.uri.toString() === uri.toString()
-        );
-      });
-
-    if (tab) {
-      await vscode.window.tabGroups.close(tab, true);
-      return;
-    }
-
-    const editor = vscode.window.visibleTextEditors.find(
-      (candidate) => candidate.document.uri.toString() === uri.toString(),
-    );
-    if (!editor) {
-      return;
-    }
-
-    await vscode.window.showTextDocument(editor.document, {
-      preview: false,
-      preserveFocus: true,
-      viewColumn: editor.viewColumn,
-    });
-    await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
-  }
-
-  private scrollNativePreviewToTop(document: vscode.TextDocument): void {
-    const top = new vscode.Position(0, 0);
-    const topRange = new vscode.Range(top, top);
-    vscode.window.visibleTextEditors.forEach((editor) => {
-      if (editor.document.uri.toString() !== document.uri.toString()) {
-        return;
-      }
-      editor.selection = new vscode.Selection(top, top);
-      editor.revealRange(topRange, vscode.TextEditorRevealType.AtTop);
-    });
-  }
-
-  private findPreviewTabGroupViewColumn(): vscode.ViewColumn | undefined {
-    for (const tabGroup of vscode.window.tabGroups.all) {
-      for (const tab of tabGroup.tabs) {
-        const tabInput = tab.input as {
-          uri?: vscode.Uri;
-          modified?: vscode.Uri;
-          original?: vscode.Uri;
-        };
-        const candidateUris = [
-          tabInput.uri,
-          tabInput.modified,
-          tabInput.original,
-        ].filter((uri): uri is vscode.Uri => uri !== undefined);
-
-        for (const uri of candidateUris) {
-          const pathStr = uri.fsPath || uri.path;
-          if (pathStr.includes("_dbadmin_") && pathStr.endsWith(".preview")) {
-            return tabGroup.viewColumn;
-          }
-        }
-      }
-    }
-    return undefined;
-  }
-
-  private isDocumentActiveInEditor(document: vscode.TextDocument): boolean {
-    return (
-      vscode.window.activeTextEditor?.document.uri.toString() ===
-      document.uri.toString()
-    );
-  }
-
-  private getVisibleEditorForDocument(
-    document: vscode.TextDocument,
-  ): vscode.TextEditor | undefined {
-    return vscode.window.visibleTextEditors.find(
-      (editor) => editor.document.uri.toString() === document.uri.toString(),
     );
   }
 
@@ -1119,23 +744,23 @@ export class TableDataPanelManager {
     forceOpen: boolean,
   ): Promise<void> {
     const isJson = payload.isJson !== false;
-    let state = this.panelNativePreview.get(panel);
+    let state = this.panelRegistry.getNativePreview(panel);
 
     if (!state && !forceOpen && payload.open !== true) {
       return;
     }
 
     if (!state) {
-      const { document, tmpFilePath, tmpFilePrefix } =
-        await this.createNativePreviewTempDocument(
-          panel,
-          payload.content,
-          isJson,
-        );
-      this.cleanupNativePreviewTempFilesByPrefix(tmpFilePrefix, tmpFilePath);
+      const tmpFilePrefix = this.getNativePreviewFilePrefix(panel);
+      const {
+        document,
+        tmpFilePath,
+        tmpFilePrefix: createdTmpFilePrefix,
+      } = await createNativePreviewTempDocument(payload.content, tmpFilePrefix);
+      cleanupNativePreviewTempFilesByPrefix(tmpFilePrefix, tmpFilePath);
 
       let targetViewColumn = vscode.ViewColumn.Active;
-      const previewTabGroupViewColumn = this.findPreviewTabGroupViewColumn();
+      const previewTabGroupViewColumn = findPreviewTabGroupViewColumn();
 
       if (previewTabGroupViewColumn) {
         // Reutiliza tab group existente com preview
@@ -1160,15 +785,18 @@ export class TableDataPanelManager {
       state = {
         document,
         tmpFilePath,
-        tmpFilePrefix,
+        tmpFilePrefix: createdTmpFilePrefix,
         isJson,
         ctid: payload.ctid ?? null,
         rowKey: payload.rowKey ?? null,
         columnName: payload.columnName,
         viewColumn: shownEditor.viewColumn,
       };
-      this.panelNativePreview.set(panel, state);
-      this.nativePreviewDocumentToPanel.set(document.uri.toString(), panel);
+      this.panelRegistry.setNativePreview(panel, state);
+      this.panelRegistry.setPreviewDocumentPanel(
+        document.uri.toString(),
+        panel,
+      );
 
       if (payload.preserveFocus) {
         panel.reveal(panel.viewColumn, false);
@@ -1185,14 +813,12 @@ export class TableDataPanelManager {
       preserveFocus: !forceOpen,
     });
 
-    if (!forceOpen && !this.isDocumentActiveInEditor(state.document)) {
-      this.scrollNativePreviewToTop(state.document);
+    if (!forceOpen && !isDocumentActiveInEditor(state.document)) {
+      scrollPreviewDocumentToTop(state.document);
     }
 
     if (forceOpen) {
-      const existingVisibleEditor = this.getVisibleEditorForDocument(
-        state.document,
-      );
+      const existingVisibleEditor = getVisibleEditorForDocument(state.document);
       if (!existingVisibleEditor) {
         try {
           await vscode.commands.executeCommand(
@@ -1221,16 +847,16 @@ export class TableDataPanelManager {
   }
 
   private handleNativePreviewDocumentSave(document: vscode.TextDocument): void {
-    const panel = this.nativePreviewDocumentToPanel.get(
+    const panel = this.panelRegistry.getPanelByPreviewDocument(
       document.uri.toString(),
     );
     if (!panel) {
       return;
     }
 
-    const state = this.panelNativePreview.get(panel);
+    const state = this.panelRegistry.getNativePreview(panel);
     if (!state || state.document.uri.toString() !== document.uri.toString()) {
-      this.nativePreviewDocumentToPanel.delete(document.uri.toString());
+      this.panelRegistry.deletePreviewDocumentPanel(document.uri.toString());
       return;
     }
 
@@ -1246,7 +872,7 @@ export class TableDataPanelManager {
   private handleNativePreviewDocumentClose(
     document: vscode.TextDocument,
   ): void {
-    const panel = this.nativePreviewDocumentToPanel.get(
+    const panel = this.panelRegistry.getPanelByPreviewDocument(
       document.uri.toString(),
     );
 
@@ -1259,13 +885,13 @@ export class TableDataPanelManager {
   private async closeAndClearNativePreviewState(
     panel: vscode.WebviewPanel,
   ): Promise<void> {
-    const state = this.panelNativePreview.get(panel);
+    const state = this.panelRegistry.getNativePreview(panel);
     if (!state) {
       return;
     }
 
     try {
-      await this.closeDocumentTabByUri(state.document.uri);
+      await closeDocumentTabByUri(state.document.uri);
     } catch {
       // Best effort: still clear state if closing the editor tab fails.
     }
@@ -1274,115 +900,41 @@ export class TableDataPanelManager {
   }
 
   private clearNativePreviewState(panel: vscode.WebviewPanel): void {
-    const state = this.panelNativePreview.get(panel);
+    const state = this.panelRegistry.getNativePreview(panel);
     if (!state) {
       return;
     }
-    this.nativePreviewDocumentToPanel.delete(state.document.uri.toString());
-    this.panelNativePreview.delete(panel);
+    this.panelRegistry.deletePreviewDocumentPanel(
+      state.document.uri.toString(),
+    );
+    this.panelRegistry.deleteNativePreview(panel);
     try {
       fs.unlinkSync(state.tmpFilePath);
     } catch {
       // Temp file may already be gone or locked.
     }
-    this.cleanupNativePreviewTempFilesByPrefix(state.tmpFilePrefix);
-  }
-
-  private cleanupStaleNativePreviewTempFiles(): void {
-    try {
-      const tmpDir = os.tmpdir();
-      const openDocs = new Set(
-        vscode.workspace.textDocuments.map((doc) =>
-          path.normalize(doc.uri.fsPath).toLowerCase(),
-        ),
-      );
-      const entries = fs.readdirSync(tmpDir);
-      for (const entry of entries) {
-        const isNamedByPrefix = entry.includes("_dbadmin_");
-        if (!isNamedByPrefix) {
-          continue;
-        }
-        if (
-          !entry.endsWith(".json") &&
-          !entry.endsWith(".txt") &&
-          !entry.endsWith(".preview")
-        ) {
-          continue;
-        }
-        const fullPath = path.join(tmpDir, entry);
-        const normalized = path.normalize(fullPath).toLowerCase();
-        if (openDocs.has(normalized)) {
-          continue;
-        }
-        try {
-          fs.unlinkSync(fullPath);
-        } catch {
-          // Ignore inaccessible files in temp cleanup.
-        }
-      }
-    } catch {
-      // Ignore temp cleanup issues.
-    }
-  }
-
-  private tryFormatJson(content: string): string {
-    try {
-      return JSON.stringify(JSON.parse(content), null, 2);
-    } catch {
-      return content;
-    }
+    cleanupNativePreviewTempFilesByPrefix(state.tmpFilePrefix);
   }
 
   private saveOpenTabs(): void {
-    const openTabs = Array.from(this.panelNodes.entries())
-      .map(([panel, node]) => {
-        if (!node || !node.connection) {
-          return null;
-        }
-
-        return {
-          connectionId: node.connection.id,
-          databaseName: node.databaseName,
-          schemaName: node.schemaName,
-          objectName: node.objectName,
-          newTab: this.panelIsNewTab.get(panel) ?? false,
-          layout: this.panelLayouts.get(panel),
-          state: this.cloneTableState(
-            this.panelStates.get(panel) ?? this.defaultState(),
-          ),
-        };
-      })
-      .filter(
-        (
-          tab,
-        ): tab is {
-          connectionId: string;
-          databaseName: string;
-          schemaName: string;
-          objectName: string;
-          newTab: boolean;
-          layout: TableLayoutState | undefined;
-          state: TableState;
-        } => tab !== null,
-      );
-
-    this.context.globalState.update("dbadmin.openTabs", openTabs);
+    const panelNodesMap = new Map(this.panelRegistry.getAllNodes());
+    const panelIsNewTabMap = new Map(this.panelRegistry.getAllIsNewTab());
+    const panelLayoutsMap = new Map(this.panelRegistry.getAllLayouts());
+    const panelStatesMap = new Map(this.panelRegistry.getAllStates());
+    const openTabs = buildOpenTabsSnapshot(
+      panelNodesMap,
+      panelIsNewTabMap,
+      panelLayoutsMap,
+      panelStatesMap,
+      (state) => this.cloneTableState(state),
+      this.defaultState(),
+    );
+    void persistOpenTabs(this.context, openTabs);
   }
 
   public async restoreOpenTabs(store: ConnectionStore): Promise<void> {
     try {
-      const openTabs = this.context.globalState.get(
-        "dbadmin.openTabs",
-        [],
-      ) as Array<{
-        connectionId: string;
-        databaseName: string;
-        schemaName: string;
-        objectName: string;
-        newTab: boolean;
-        layout?: TableLayoutState;
-        state?: TableState;
-      }>;
+      const openTabs = getStoredOpenTabs(this.context) as StoredOpenTab[];
 
       if (!openTabs || openTabs.length === 0) {
         return;
@@ -1601,9 +1153,13 @@ export class TableDataPanelManager {
     .menu > button:last-child,
     .menu-submenu > button:last-child { border-bottom: 0; }
     .header-menu .header-view-btn + .header-view-btn { margin-top: 4px; }
-    .header-view-btn.active { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); font-weight: 600; }
-    .header-view-btn.active:hover:not(:disabled) {
+    .header-view-btn.active {
       background: var(--vscode-button-hoverBackground, var(--vscode-button-background));
+      color: var(--vscode-button-foreground, var(--vscode-list-activeSelectionForeground));
+      font-weight: 600;
+    }
+    .header-view-btn.active:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--vscode-button-hoverBackground, var(--vscode-button-background)) 90%, var(--vscode-button-background));
       color: var(--vscode-button-foreground, var(--vscode-list-activeSelectionForeground));
       border-color: var(--vscode-button-border, transparent);
     }
@@ -2165,6 +1721,8 @@ export class TableDataPanelManager {
   <div class="overlay-backdrop" id="menuBackdrop"></div>
   <div class="menu simple-menu overlay-surface overlay-scroll" id="cellMenu">
     <button data-action="copy"><span>Copiar</span></button>
+    <button data-action="paste"><span>Colar</span></button>
+    <button data-action="pasteRaw"><span>Colar como texto</span></button>
     <div class="menu-submenu-wrap">
       <button type="button"><span>Copiar avancado</span><svg class="submenu-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 3.5L10.5 8L6 12.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       <div class="menu-submenu simple-menu overlay-surface overlay-submenu">
@@ -2588,6 +2146,17 @@ export class TableDataPanelManager {
     let currentRangeSelection = null; // { anchor: { rowIndex, colIndex }, focus: { rowIndex, colIndex } }
     let cellDragMode = 'replace'; // replace | add | remove
     let cellDragBaseCounts = new Map(); // rowKey -> Map(colName -> count)
+    
+    // Clipboard state for smart paste
+    let clipboardData = []; // 2D array of values
+    let clipboardRows = 0; // number of rows in clipboard
+    let clipboardCols = 0; // number of columns in clipboard
+    let clipboardColumnNames = []; // column names in clipboard (for structured paste)
+    const MAX_CELL_HISTORY = 10;
+    let cellUndoStack = [];
+    let cellRedoStack = [];
+    let pendingCellHistoryChanges = null;
+    let isApplyingCellHistory = false;
     // DOM element maps for lightweight selection update (avoids full re-render)
     let trElements = new Map(); // rowKey -> tr element
     let selectionTdElements = new Map(); // rowKey -> selection-col td
@@ -2629,6 +2198,25 @@ export class TableDataPanelManager {
 
     function shouldIgnoreTransientBlur() {
       return Date.now() <= focusGuardUntil;
+    }
+
+    function isSearchInputFocused() {
+      return document.activeElement === searchInputEl;
+    }
+
+    function isTextInputFocusedOutsideGridEditing() {
+      const active = document.activeElement;
+      return isTextEditingElement(active) && active !== editingCellInput;
+    }
+
+    function focusGridSurface() {
+      clearStickyFocus();
+      if (isSearchInputFocused()) {
+        searchInputEl.blur();
+      }
+      if (tableWrapEl instanceof HTMLElement) {
+        tableWrapEl.focus({ preventScroll: true });
+      }
     }
 
     function isTextEditingElement(element) {
@@ -2743,14 +2331,22 @@ export class TableDataPanelManager {
     document.addEventListener('pointerdown', (event) => {
       if (event.target instanceof HTMLElement) {
         lastPointerTarget = event.target;
-        beginStickyFocus(event.target);
+        if (isFocusableElement(event.target)) {
+          beginStickyFocus(event.target);
+        } else {
+          clearStickyFocus();
+        }
       }
     }, true);
 
     document.addEventListener('click', (event) => {
       if (event.target instanceof HTMLElement) {
         lastPointerTarget = event.target;
-        beginStickyFocus(event.target);
+        if (isFocusableElement(event.target)) {
+          beginStickyFocus(event.target);
+        } else {
+          clearStickyFocus();
+        }
       }
     }, true);
 
@@ -3080,9 +2676,124 @@ export class TableDataPanelManager {
 
 
 
-    function applyCellValue(row, column, ctid, nextValue, input) {
+    function getRowKeyForCell(row, ctid) {
+      if (ctid) {
+        return String(ctid);
+      }
+
+      for (const [rowKey, candidate] of rowKeyToRow.entries()) {
+        if (candidate === row) {
+          return rowKey;
+        }
+      }
+
+      return null;
+    }
+
+    function queueCellHistoryChange(change) {
+      if (isApplyingCellHistory || !change || change.beforeValue === change.afterValue) {
+        return;
+      }
+
+      if (!pendingCellHistoryChanges) {
+        pendingCellHistoryChanges = [];
+      }
+
+      const existing = pendingCellHistoryChanges.find(
+        (entry) => entry.rowKey === change.rowKey && entry.colName === change.colName
+      );
+      if (existing) {
+        existing.afterValue = change.afterValue;
+        return;
+      }
+
+      pendingCellHistoryChanges.push(change);
+    }
+
+    function flushPendingCellHistory() {
+      if (isApplyingCellHistory || !pendingCellHistoryChanges || pendingCellHistoryChanges.length === 0) {
+        pendingCellHistoryChanges = null;
+        return;
+      }
+
+      const changes = pendingCellHistoryChanges.filter((change) => change.beforeValue !== change.afterValue);
+      pendingCellHistoryChanges = null;
+      if (changes.length === 0) {
+        return;
+      }
+
+      cellUndoStack.push(changes);
+      if (cellUndoStack.length > MAX_CELL_HISTORY) {
+        cellUndoStack.shift();
+      }
+      cellRedoStack = [];
+    }
+
+    function applyCellHistoryOperation(changes, direction) {
+      if (!Array.isArray(changes) || changes.length === 0) {
+        return false;
+      }
+
+      isApplyingCellHistory = true;
+      try {
+        changes.forEach((change) => {
+          const row = rowKeyToRow.get(change.rowKey);
+          const col = columns.find((column) => column.name === change.colName);
+          if (!row || !col) {
+            return;
+          }
+
+          const nextValue = direction === 'undo' ? change.beforeValue : change.afterValue;
+          const ctid = rowKeyToCtid.get(change.rowKey) || null;
+          const inputMap = inputElements.get(change.rowKey);
+          const input = inputMap ? inputMap.get(change.colName) : null;
+          applyCellValue(row, col, ctid, nextValue, input || null, { recordHistory: false });
+        });
+      } finally {
+        isApplyingCellHistory = false;
+      }
+
+      renderSelectionState();
+      return true;
+    }
+
+    function undoCellChanges() {
+      flushPendingCellHistory();
+      const changes = cellUndoStack.pop();
+      if (!changes) {
+        return false;
+      }
+
+      if (applyCellHistoryOperation(changes, 'undo')) {
+        cellRedoStack.push(changes);
+        return true;
+      }
+
+      cellUndoStack.push(changes);
+      return false;
+    }
+
+    function redoCellChanges() {
+      const changes = cellRedoStack.pop();
+      if (!changes) {
+        return false;
+      }
+
+      if (applyCellHistoryOperation(changes, 'redo')) {
+        cellUndoStack.push(changes);
+        return true;
+      }
+
+      cellRedoStack.push(changes);
+      return false;
+    }
+
+    function applyCellValue(row, column, ctid, nextValue, input, options) {
+      const shouldRecordHistory = options?.recordHistory !== false;
       const nextInputValue = toCellInputText(nextValue, column);
       const baseCurrentText = toCellInputText(row[column.name], column);
+      const rowKey = getRowKeyForCell(row, ctid);
+      const beforeValue = toCellInputText(getEffectiveCellValue(row, column.name, ctid), column);
 
       if (input) {
         input.value = nextInputValue;
@@ -3112,6 +2823,15 @@ export class TableDataPanelManager {
         }
       } else {
         row[column.name] = nextInputValue;
+      }
+
+      if (shouldRecordHistory && rowKey) {
+        queueCellHistoryChange({
+          rowKey,
+          colName: column.name,
+          beforeValue,
+          afterValue: nextInputValue,
+        });
       }
 
       updateSaveButtonState();
@@ -3830,6 +3550,7 @@ export class TableDataPanelManager {
       }
       editingCellInput = input;
       input.classList.add('editing');
+      input.setAttribute('data-edit-initial-value', input.value);
       input.setSelectionRange(0, input.value.length);
       input.focus();
     }
@@ -4549,6 +4270,42 @@ export class TableDataPanelManager {
       return selectedCount > 1 ? lines.join(NEWLINE) : '';
     }
 
+    function extractSelectedCellsData() {
+      // Returns 2D array of selected cell values with layout info
+      const data = [];
+      const colNamesList = [];
+      let rowCount = 0;
+
+      displayedRowKeys.forEach((rowKey) => {
+        const row = rowKeyToRow.get(rowKey);
+        const cellSet = selectedCells.get(rowKey);
+        if (!row || !cellSet || cellSet.size === 0) {
+          return;
+        }
+
+        const rowData = [];
+        displayedColNames.forEach((colName) => {
+          if (!cellSet.has(colName)) {
+            return;
+          }
+          const col = columns.find((column) => column.name === colName);
+          const value = col ? getEffectiveCellValue(row, col.name, row.__dbadmin_ctid) : '';
+          rowData.push(value);
+          
+          if (rowCount === 0) {
+            colNamesList.push(colName);
+          }
+        });
+
+        if (rowData.length > 0) {
+          data.push(rowData);
+          rowCount += 1;
+        }
+      });
+
+      return { data, colNames: colNamesList, rows: rowCount, cols: colNamesList.length };
+    }
+
     function getFocusedCellFallbackText() {
       if (activeCell) {
         const activeCol = columns.find((c) => c.name === activeCell.colName);
@@ -4577,12 +4334,29 @@ export class TableDataPanelManager {
       let value = '';
       if (editingCellInput) {
         value = editingCellInput.value;
+        // If editing a cell, just copy its value
+        clipboardData = [];
+        clipboardRows = 0;
+        clipboardCols = 0;
+        clipboardColumnNames = [];
       } else {
         value = getSelectedCellsText();
-      }
-
-      if (!value) {
-        value = getFocusedCellFallbackText();
+        // Extract structured data for smart paste
+        if (value) {
+          const extracted = extractSelectedCellsData();
+          clipboardData = extracted.data;
+          clipboardRows = extracted.rows;
+          clipboardCols = extracted.cols;
+          clipboardColumnNames = extracted.colNames;
+        } else {
+          const fallbackValue = getFocusedCellFallbackText();
+          value = fallbackValue;
+          // Single cell fallback
+          clipboardData = [[fallbackValue]];
+          clipboardRows = 1;
+          clipboardCols = 1;
+          clipboardColumnNames = lastSelectedCell ? [lastSelectedCell.colName] : [];
+        }
       }
 
       navigator.clipboard.writeText(value || '').catch(() => {});
@@ -4628,8 +4402,154 @@ export class TableDataPanelManager {
       const inputMap = inputElements.get(lastSelectedCell.rowKey);
       const input = inputMap ? inputMap.get(col.name) : null;
       applyCellValue(row, col, ctid, value, input || null);
+      flushPendingCellHistory();
       renderSelectionState();
       return true;
+    }
+
+    function pasteIntoSelectedCells(isRaw) {
+      // Smart paste: if raw mode or no clipboard data, paste as text
+      if (isRaw || clipboardData.length === 0) {
+        // Raw paste into single focused cell
+        navigator.clipboard.readText().then((text) => {
+          pasteIntoEditingOrSelectedCell(text);
+        }).catch(() => {});
+        return true;
+      }
+
+      // Smart paste logic
+      const selectedRows = Array.from(selectedCells.keys());
+      if (selectedRows.length === 0) {
+        return false;
+      }
+
+      // Get first selected row and first selected column position for anchor
+      const firstRowKey = selectedRows[0];
+      const firstColSet = selectedCells.get(firstRowKey);
+      const colNames = Array.from(firstColSet).sort((a, b) => 
+        displayedColNames.indexOf(a) - displayedColNames.indexOf(b)
+      );
+      
+      if (colNames.length === 0) {
+        return false;
+      }
+
+      const firstColName = colNames[0];
+      const firstColIndex = displayedColNames.indexOf(firstColName);
+      const firstRowIndex = displayedRowKeys.indexOf(firstRowKey);
+
+      if (firstColIndex === -1 || firstRowIndex === -1) {
+        return false;
+      }
+
+      // Determine paste behavior
+      const totalSelectedCells = Array.from(selectedCells.values())
+        .reduce((sum, set) => sum + set.size, 0);
+
+      const isSingleCellCopied = clipboardRows === 1 && clipboardCols === 1;
+      const isMultipleCellsCopied = clipboardRows > 1 || clipboardCols > 1;
+
+      let pastedCount = 0;
+
+      if (isSingleCellCopied) {
+        // Paste same value to all selected cells
+        const singleValue = clipboardData[0][0];
+        selectedCells.forEach((colSet, rowKey) => {
+          const row = rowKeyToRow.get(rowKey);
+          if (!row) return;
+
+          colSet.forEach((colName) => {
+            const col = columns.find((c) => c.name === colName);
+            if (!col) return;
+
+            const ctid = rowKeyToCtid.get(rowKey) || null;
+            const inputMap = inputElements.get(rowKey);
+            const input = inputMap ? inputMap.get(colName) : null;
+            applyCellValue(row, col, ctid, singleValue, input || null);
+            pastedCount += 1;
+          });
+        });
+      } else if (isMultipleCellsCopied && totalSelectedCells >= clipboardRows * clipboardCols) {
+        // Distribute clipboard data across selection (like Excel)
+        // This works when pasting a rectangular selection into another rectangular area
+        const selectedRowsArray = Array.from(selectedCells.entries());
+        let pasteRowIndex = 0;
+
+        for (const [rowKey, colSet] of selectedRowsArray) {
+          if (pasteRowIndex >= clipboardRows) break;
+
+          const row = rowKeyToRow.get(rowKey);
+          if (!row) continue;
+
+          const sortedCols = Array.from(colSet).sort((a, b) =>
+            displayedColNames.indexOf(a) - displayedColNames.indexOf(b)
+          );
+
+          const clipboardRowData = clipboardData[pasteRowIndex];
+          let pasteColIndex = 0;
+
+          for (const colName of sortedCols) {
+            if (pasteColIndex >= clipboardCols) break;
+
+            const col = columns.find((c) => c.name === colName);
+            if (!col) continue;
+
+            const value = clipboardRowData[pasteColIndex];
+            const ctid = rowKeyToCtid.get(rowKey) || null;
+            const inputMap = inputElements.get(rowKey);
+            const input = inputMap ? inputMap.get(colName) : null;
+            applyCellValue(row, col, ctid, value, input || null);
+            pastedCount += 1;
+            pasteColIndex += 1;
+          }
+
+          pasteRowIndex += 1;
+        }
+      } else {
+        // Fallback: tile the clipboard data if selection is larger
+        const clipboard2DArray = clipboardData;
+        let currentRowIndex = firstRowIndex;
+        let rowsProcessed = 0;
+
+        for (const [rowKey, colSet] of Array.from(selectedCells.entries())) {
+          const rowPos = displayedRowKeys.indexOf(rowKey);
+          const clipboardRowIndex = (rowPos - firstRowIndex) % clipboardRows;
+          const row = rowKeyToRow.get(rowKey);
+          if (!row) continue;
+
+          const sortedCols = Array.from(colSet).sort((a, b) =>
+            displayedColNames.indexOf(a) - displayedColNames.indexOf(b)
+          );
+
+          const clipboardRowData = clipboard2DArray[clipboardRowIndex] || [];
+          let colIndex = 0;
+
+          for (const colName of sortedCols) {
+            const colPos = displayedColNames.indexOf(colName);
+            const clipboardColIndex = (colPos - firstColIndex) % clipboardCols;
+            const value = clipboardRowData[clipboardColIndex];
+
+            const col = columns.find((c) => c.name === colName);
+            if (col && typeof value !== 'undefined') {
+              const ctid = rowKeyToCtid.get(rowKey) || null;
+              const inputMap = inputElements.get(rowKey);
+              const input = inputMap ? inputMap.get(colName) : null;
+              applyCellValue(row, col, ctid, value, input || null);
+              pastedCount += 1;
+            }
+            colIndex += 1;
+          }
+          rowsProcessed += 1;
+        }
+      }
+
+      if (pastedCount > 0) {
+        flushPendingCellHistory();
+        renderSelectionState();
+        return true;
+      }
+
+      return false;
     }
 
     function render() {
@@ -4975,6 +4895,7 @@ export class TableDataPanelManager {
           }
           event.preventDefault();
           event.stopPropagation();
+          focusGridSurface();
           isRowSelectionDragging = true;
           rowSelectionDragPreserve = event.ctrlKey || event.metaKey;
           if (event.shiftKey && rowShiftSelectAnchorIndex !== null) {
@@ -5003,6 +4924,8 @@ export class TableDataPanelManager {
           input.className = 'cell-input';
           input.readOnly = true;
           input.tabIndex = -1;
+          input.setAttribute('data-row-key', rowKey);
+          input.setAttribute('data-col-name', col.name);
           inputElements.get(rowKey).set(col.name, input);
           tdElements.get(rowKey).set(col.name, td);
 
@@ -5059,9 +4982,9 @@ export class TableDataPanelManager {
             }
             event.stopPropagation();
             isDragging = true;
+            focusGridSurface();
 
             const anchorPosition = getSelectionAnchorPosition();
-              searchInputEl.blur();
             if (event.shiftKey && anchorPosition) {
               isDragging = false;
               dragAnchor = null;
@@ -5138,6 +5061,20 @@ export class TableDataPanelManager {
 
           input.addEventListener('blur', () => {
             if (input === editingCellInput) {
+              const initialValue = input.getAttribute('data-edit-initial-value');
+              if (initialValue !== null && initialValue !== input.value) {
+                const inputRowKey = input.getAttribute('data-row-key');
+                const inputColName = input.getAttribute('data-col-name');
+                if (inputRowKey && inputColName) {
+                  queueCellHistoryChange({
+                    rowKey: inputRowKey,
+                    colName: inputColName,
+                    beforeValue: initialValue,
+                    afterValue: input.value,
+                  });
+                  flushPendingCellHistory();
+                }
+              }
               disableCellEditing(input);
             }
           });
@@ -5391,6 +5328,10 @@ export class TableDataPanelManager {
     // Prevent duplicate paste in global search when grid selection should receive Ctrl+V.
     searchInputEl.addEventListener('paste', (event) => {
       if (currentView !== 'data') {
+        return;
+      }
+
+      if (!isSearchInputFocused()) {
         return;
       }
 
@@ -5819,6 +5760,7 @@ export class TableDataPanelManager {
 
       const isCtrlOrMeta = event.ctrlKey || event.metaKey;
       const key = String(event.key || '').toLowerCase();
+      const textInputFocusedOutsideGridEditing = isTextInputFocusedOutsideGridEditing();
 
       if (isCtrlOrMeta && !event.altKey && !event.shiftKey && key === 's') {
         event.preventDefault();
@@ -5839,10 +5781,34 @@ export class TableDataPanelManager {
         return;
       }
 
+      // Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y: prevent browser native undo/redo from leaking into
+      // the search input when a grid cell is selected but not actively being edited.
+      // Handled before the input-target early return for the same reason as Ctrl+C/V.
+      if (isCtrlOrMeta && !event.altKey && (key === 'z' || key === 'y')) {
+        if (textInputFocusedOutsideGridEditing) {
+          return;
+        }
+
+        if (lastSelectedCell && !editingCellInput) {
+          event.preventDefault();
+          const handled = key === 'y' || event.shiftKey
+            ? redoCellChanges()
+            : undoCellChanges();
+          if (!handled) {
+            event.stopPropagation();
+          }
+          return;
+        }
+      }
+
       // Ctrl+C: copy active editing value or last selected cell value.
       // Handle before input-target early return so grid shortcuts still work
       // after selecting a cell, even if another input kept focus.
       if (isCtrlOrMeta && !event.altKey && !event.shiftKey && key === 'c') {
+        if (textInputFocusedOutsideGridEditing) {
+          return;
+        }
+
         if (editingCellInput || lastSelectedCell) {
           copyDefaultSelectionToClipboard();
           event.preventDefault();
@@ -5850,17 +5816,59 @@ export class TableDataPanelManager {
         }
       }
 
-      // Ctrl+V: paste into current editing cell or last selected cell.
-      // Handle before input-target early return for consistent grid behavior.
-      if (isCtrlOrMeta && !event.altKey && !event.shiftKey && key === 'v') {
-        if (!(editingCellInput || lastSelectedCell)) {
+      // Ctrl+Shift+V: paste raw text into current editing cell or last selected cell.
+      if (isCtrlOrMeta && event.shiftKey && !event.altKey && key === 'v') {
+        if (textInputFocusedOutsideGridEditing) {
+          return;
+        }
+
+        // When a cell input is actively editing, let native paste run to avoid duplicate insertion.
+        if (editingCellInput) {
+          return;
+        }
+
+        if (!lastSelectedCell) {
           return;
         }
 
         event.preventDefault();
-        navigator.clipboard.readText().then((value) => {
-          pasteIntoEditingOrSelectedCell(value);
-        }).catch(() => {});
+        pasteIntoSelectedCells(true); // true = raw mode
+        return;
+      }
+
+      // Ctrl+V: smart paste into selected cells or current editing cell.
+      // Handle before input-target early return for consistent grid behavior.
+      if (isCtrlOrMeta && !event.altKey && !event.shiftKey && key === 'v') {
+        if (textInputFocusedOutsideGridEditing) {
+          return;
+        }
+
+        // When a cell input is actively editing, let native paste run to avoid duplicate insertion.
+        if (editingCellInput) {
+          return;
+        }
+
+        if (!(lastSelectedCell || selectedCells.size > 0)) {
+          return;
+        }
+
+        event.preventDefault();
+        
+        // If only one cell is selected, use raw paste.
+        if (selectedCells.size === 1 && lastSelectedCell) {
+          navigator.clipboard.readText().then((value) => {
+            pasteIntoEditingOrSelectedCell(value);
+          }).catch(() => {});
+        } else {
+          // Try smart paste first, fall back to clipboard if no structured data
+          if (clipboardData.length === 0) {
+            navigator.clipboard.readText().then((value) => {
+              pasteIntoEditingOrSelectedCell(value);
+            }).catch(() => {});
+          } else {
+            pasteIntoSelectedCells(false); // false = smart mode
+          }
+        }
         return;
       }
 
@@ -6127,6 +6135,14 @@ export class TableDataPanelManager {
             copyDefaultSelectionToClipboard();
           }
 
+          if (action === 'paste') {
+            pasteIntoSelectedCells(false); // false = smart mode
+          }
+
+          if (action === 'pasteRaw') {
+            pasteIntoSelectedCells(true); // true = raw mode
+          }
+
           if (action === 'copyAdvancedCsv') {
             copyAdvancedToClipboard('csv');
           }
@@ -6241,6 +6257,9 @@ export class TableDataPanelManager {
         state.page = message.state.page || 1;
         dynamicDefaultColumnWidth = message.dynamicDefaultColumnWidth !== false;
         editedRows = new Map();
+        cellUndoStack = [];
+        cellRedoStack = [];
+        pendingCellHistoryChanges = null;
         insertedRows = [];
         removedCtids = new Set();
         clearSelectionForViewChange();
