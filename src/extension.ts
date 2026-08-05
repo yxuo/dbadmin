@@ -11,6 +11,7 @@ import {
   PostgresConnection,
   SchemaNodeRef,
   TableSectionItemNodeRef,
+  TreeNodeRef,
 } from "./models";
 import { PostgresService } from "./postgresService";
 import { TableDataPanelManager } from "./tableDataPanel";
@@ -46,9 +47,7 @@ interface SqlSchemaRelation {
 }
 
 export function activate(context: vscode.ExtensionContext): void {
-  const workspaceRoot = ConnectionStore.getWorkspaceRoot();
-  const storageRoot = workspaceRoot || context.globalStorageUri.fsPath;
-  const store = new ConnectionStore(storageRoot);
+  const store = new ConnectionStore(context.globalStorageUri.fsPath);
   const postgresService = new PostgresService();
   const treeProvider = new DatabaseTreeProvider(
     store,
@@ -67,12 +66,44 @@ export function activate(context: vscode.ExtensionContext): void {
     context,
     postgresService,
   );
+  const expandedTreeItems = new Set<string>();
 
-  if (!workspaceRoot) {
-    // void vscode.window.showWarningMessage(
-    //   'Nenhuma pasta aberta no Extension Host. As conexoes serao salvas no armazenamento global da extensão.'
-    // );
-  }
+  const updateCollapseAllContext = async (): Promise<void> => {
+    await vscode.commands.executeCommand(
+      'setContext',
+      'dbadmin.hasExpandedTreeItems',
+      expandedTreeItems.size > 0,
+    );
+  };
+
+  const treeItemKey = (item: TreeNodeRef): string => {
+    switch (item.type) {
+      case 'connection':
+        return `connection:${item.connection.id}`;
+      case 'database':
+        return `database:${item.connection.id}:${item.databaseName}`;
+      case 'databaseGroup':
+        return `databaseGroup:${item.connection.id}:${item.databaseName}:${item.kind}`;
+      case 'schema':
+        return `schema:${item.connection.id}:${item.databaseName}:${item.schemaName}`;
+      case 'objectGroup':
+        return `objectGroup:${item.connection.id}:${item.databaseName}:${item.schemaName}:${item.kind}`;
+      case 'dbObject':
+        return `dbObject:${item.connection.id}:${item.databaseName}:${item.schemaName}:${item.kind}:${item.objectName}`;
+      case 'extension':
+        return `extension:${item.connection.id}:${item.databaseName}:${item.extensionName}`;
+      case 'tableSection':
+        return `tableSection:${item.connection.id}:${item.databaseName}:${item.schemaName}:${item.tableName}:${item.section}`;
+      case 'tableSectionItem':
+        return `tableSectionItem:${item.connection.id}:${item.databaseName}:${item.schemaName}:${item.tableName}:${item.section}:${item.itemKind}:${item.itemName}`;
+      case 'filterControl':
+        return `filterControl:${item.value}`;
+      case 'placeholder':
+        return `placeholder:${item.message}`;
+      default:
+        return JSON.stringify(item);
+    }
+  };
 
   // Restaura abas abertas anteriormente
   void tablePanels.restoreOpenTabs(store);
@@ -110,8 +141,46 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const treeView = vscode.window.createTreeView("databaseExplorer", {
     treeDataProvider: treeProvider,
-    showCollapseAll: true,
+    showCollapseAll: false,
   });
+
+  const syncExpandedState = async (element: TreeNodeRef, isExpanded: boolean): Promise<void> => {
+    const key = treeItemKey(element);
+    if (isExpanded) {
+      expandedTreeItems.add(key);
+    } else {
+      expandedTreeItems.delete(key);
+    }
+    await updateCollapseAllContext();
+  };
+
+  context.subscriptions.push(
+    treeView.onDidExpandElement((event) => {
+      void syncExpandedState(event.element, true);
+    }),
+  );
+
+  context.subscriptions.push(
+    treeView.onDidCollapseElement((event) => {
+      void syncExpandedState(event.element, false);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('dbadmin.collapseAllExplorer', async () => {
+      if (expandedTreeItems.size === 0) {
+        return;
+      }
+
+      await vscode.commands.executeCommand(
+        'workbench.actions.treeView.databaseExplorer.collapseAll',
+      );
+      expandedTreeItems.clear();
+      await updateCollapseAllContext();
+    }),
+  );
+
+  void updateCollapseAllContext();
 
   const initialShowFilterLabel = vscode.workspace
     .getConfiguration()
@@ -139,9 +208,7 @@ export function activate(context: vscode.ExtensionContext): void {
   };
 
   const collapseAllExplorer = async (): Promise<void> => {
-    await vscode.commands.executeCommand(
-      "workbench.actions.treeView.databaseExplorer.collapseAll",
-    );
+    await vscode.commands.executeCommand("dbadmin.collapseAllExplorer");
   };
 
   let filterRunSeq = 0;

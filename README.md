@@ -14,3 +14,13 @@ Extensão VS Code para gerenciar conexoes de banco de dados.
 - Testar conexão no wizard
 - SecretStorage para senha
 - Query runner e resultados
+
+## Distribuição da extensão
+
+Para empacotar e instalar localmente via VSIX, veja:
+
+- [docs/extension.md](docs/extension.md)
+
+Para publicar no Visual Studio Marketplace, veja:
+
+- [docs/publish.md](docs/publish.md)

@@ -3,5 +3,9 @@
 out/test/**
 src/**
 .gitignore
-README.md
 *.tsbuildinfo
+local_dev/**
+scripts/**
+.github/**
+.git/**
+*.vsix

@@ -370,7 +370,8 @@ export class SettingsPanelManager {
 
       <div class="item">
         <div class="meta">
-          <span class="title">Arquivo de conexões</span>
+          <span class="title">Arquivo global de conexões</span>
+          <span class="desc">Compartilhado entre todos os workspaces deste usuário no VS Code.</span>
           <span class="desc path" id="storagePath"></span>
         </div>
         <button id="openConnectionsFile" class="secondary">Abrir</button>

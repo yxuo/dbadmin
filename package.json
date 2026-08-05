@@ -4,6 +4,11 @@
   "description": "Database manager for VS Code.",
   "version": "0.0.1",
   "publisher": "local",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yxuo/database-vscode.git"
+  },
+  "icon": "resources/icons/extension.png",
   "engines": {
     "vscode": "^1.95.0"
   },
@@ -74,7 +79,7 @@
         {
           "id": "dbadmin",
           "title": "DBAdmin",
-          "icon": "resources/icons/database.svg"
+          "icon": "resources/icons/extension.svg"
         }
       ]
     },
@@ -121,6 +126,12 @@
         "command": "dbadmin.refresh",
         "title": "Atualizar",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "dbadmin.collapseAllExplorer",
+        "title": "Recolher tudo",
+        "icon": "$(collapse-all)",
+        "enablement": "dbadmin.hasExpandedTreeItems"
       },
       {
         "command": "dbadmin.refreshConnection",
@@ -342,6 +353,11 @@
           "command": "dbadmin.editTableFilter",
           "when": "view == databaseExplorer",
           "group": "navigation@3"
+        },
+        {
+          "command": "dbadmin.collapseAllExplorer",
+          "when": "view == databaseExplorer",
+          "group": "navigation@4"
         }
       ],
       "view/item/context": [

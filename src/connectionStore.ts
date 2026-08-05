@@ -1,6 +1,5 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import * as vscode from 'vscode';
 import { ConnectionsFile, PostgresConnection, PostgresConnectionInput } from './models';
 
 const STORAGE_FOLDER = '.dbadmin';
@@ -8,10 +7,6 @@ const STORAGE_FILE = 'connections.json';
 
 export class ConnectionStore {
   public constructor(private readonly storageRoot: string) {}
-
-  public getStorageRoot(): string {
-    return this.storageRoot;
-  }
 
   public async getStorageFilePath(): Promise<string> {
     return this.ensureStorageFile();
@@ -174,10 +169,5 @@ export class ConnectionStore {
 
   private generateId(): string {
     return `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
-  }
-
-  public static getWorkspaceRoot(): string {
-    const folder = vscode.workspace.workspaceFolders?.[0];
-    return folder?.uri.fsPath ?? '';
   }
 }
