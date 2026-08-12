@@ -16,6 +16,8 @@ export interface TableColumnMeta {
   isNullable: boolean;
   hasDefault: boolean;
   isPrimaryKey: boolean;
+  /** True when the column participates in a UNIQUE constraint (not just PK). */
+  isUnique: boolean;
   isForeignKey: boolean;
   foreignKeyTargetSchema: string | null;
   foreignKeyTargetTable: string | null;
@@ -442,11 +444,12 @@ export class PostgresService {
       }
 
       if (results.length > 1) {
+        const last = results[results.length - 1];
         return {
-          columns: [],
-          rows: [],
-          rowCount: 0,
-          command: "",
+          columns: last.columns,
+          rows: last.rows,
+          rowCount: last.rowCount,
+          command: last.command,
           results: results,
         };
       }
@@ -931,6 +934,7 @@ export class PostgresService {
         is_nullable: "YES" | "NO";
         column_default: string | null;
         is_primary_key: boolean;
+        is_unique: boolean;
         is_foreign_key: boolean;
         foreign_key_target_schema: string | null;
         foreign_key_target_table: string | null;
@@ -952,6 +956,17 @@ export class PostgresService {
                AND kcu.table_name = c.table_name
                AND kcu.column_name = c.column_name
            ) AS is_primary_key,
+           EXISTS (
+             SELECT 1
+             FROM information_schema.table_constraints tc
+             JOIN information_schema.key_column_usage kcu
+               ON tc.constraint_name = kcu.constraint_name
+              AND tc.constraint_schema = kcu.constraint_schema
+             WHERE tc.constraint_type = 'UNIQUE'
+               AND kcu.table_schema = c.table_schema
+               AND kcu.table_name = c.table_name
+               AND kcu.column_name = c.column_name
+           ) AS is_unique,
            EXISTS (
              SELECT 1
              FROM information_schema.key_column_usage kcu
@@ -1002,6 +1017,7 @@ export class PostgresService {
         isNullable: row.is_nullable === "YES",
         hasDefault: row.column_default !== null,
         isPrimaryKey: Boolean(row.is_primary_key),
+        isUnique: Boolean(row.is_unique),
         isForeignKey: Boolean(row.is_foreign_key),
         foreignKeyTargetSchema: row.foreign_key_target_schema,
         foreignKeyTargetTable: row.foreign_key_target_table,
@@ -1656,6 +1672,138 @@ VALUES (${insertValuesSql.join(", ")})`;
     }
   }
 
+  /**
+   * Lists rows in tables that reference {@link targetSchema}.{@link targetTable}.{@link targetColumn}
+   * with the given value (incoming FK mentions).
+   */
+  public async findForeignKeyMentions(
+    connection: PostgresConnection,
+    databaseName: string,
+    targetSchema: string,
+    targetTable: string,
+    targetColumn: string,
+    value: unknown,
+    options?: { perTableLimit?: number },
+  ): Promise<SqlQueryResult & { sql: string }> {
+    const schema = String(targetSchema || "").trim();
+    const table = String(targetTable || "").trim();
+    const column = String(targetColumn || "").trim();
+    if (!schema || !table || !column) {
+      throw new Error("Alvo da chave estrangeira incompleto.");
+    }
+    if (value === null || value === undefined || String(value).trim() === "") {
+      throw new Error("Valor vazio para pesquisar menções.");
+    }
+
+    const perTableLimit = Math.max(
+      1,
+      Math.min(500, Math.trunc(options?.perTableLimit ?? 100)),
+    );
+
+    const client = await this.connect({
+      ...connection,
+      database: databaseName,
+    });
+
+    try {
+      const reverseResult = await client.query<{
+        from_schema: string;
+        from_table: string;
+        from_column: string;
+        to_column: string;
+      }>(
+        `SELECT
+           n.nspname       AS from_schema,
+           c.relname       AS from_table,
+           a.attname       AS from_column,
+           ta.attname      AS to_column
+         FROM pg_constraint con
+         JOIN pg_class c       ON c.oid  = con.conrelid
+         JOIN pg_namespace n   ON n.oid  = c.relnamespace
+         JOIN pg_class tc      ON tc.oid = con.confrelid
+         JOIN pg_namespace tn  ON tn.oid = tc.relnamespace
+         CROSS JOIN LATERAL (
+           SELECT unnest(con.conkey) AS la, unnest(con.confkey) AS ra
+         ) AS cols
+         JOIN pg_attribute a   ON a.attrelid  = c.oid  AND a.attnum = cols.la
+         JOIN pg_attribute ta  ON ta.attrelid = tc.oid AND ta.attnum = cols.ra
+         WHERE con.contype = 'f'
+           AND tn.nspname = $1
+           AND tc.relname = $2
+           AND ta.attname = $3
+         ORDER BY n.nspname, c.relname, a.attname`,
+        [schema, table, column],
+      );
+
+      const refs = reverseResult.rows;
+      if (refs.length === 0) {
+        return {
+          columns: ["tabela", "coluna", "id"],
+          rows: [],
+          rowCount: 0,
+          command: "SELECT",
+          sql: `-- Nenhuma FK apontando para ${schema}.${table}.${column}`,
+        };
+      }
+
+      const rows: Array<Record<string, unknown>> = [];
+      const sqlParts: string[] = [];
+
+      for (const ref of refs) {
+        const fromSchemaSql = this.quoteIdentifier(ref.from_schema);
+        const fromTableSql = this.quoteIdentifier(ref.from_table);
+        const fromColumnSql = this.quoteIdentifier(ref.from_column);
+        const qualified = `${ref.from_schema}.${ref.from_table}`;
+
+        const fromColumns = await this.queryColumnsWithClient(
+          client,
+          ref.from_schema,
+          ref.from_table,
+        );
+        const pkColumns = fromColumns
+          .filter((col) => col.isPrimaryKey)
+          .map((col) => col.name);
+
+        let idExpr: string;
+        if (pkColumns.length === 1) {
+          idExpr = `${this.quoteIdentifier(pkColumns[0])}::text`;
+        } else if (pkColumns.length > 1) {
+          idExpr = `concat_ws('|', ${pkColumns
+            .map((name) => `${this.quoteIdentifier(name)}::text`)
+            .join(", ")})`;
+        } else {
+          idExpr = `ctid::text`;
+        }
+
+        const cleanSql = `SELECT
+  '${qualified.replace(/'/g, "''")}' AS tabela,
+  '${ref.from_column.replace(/'/g, "''")}' AS coluna,
+  ${idExpr} AS id
+FROM ${fromSchemaSql}.${fromTableSql}
+WHERE ${fromColumnSql} IS NOT DISTINCT FROM $1
+LIMIT ${perTableLimit}`;
+
+        sqlParts.push(cleanSql);
+        const result = await client.query<Record<string, unknown>>(cleanSql, [
+          value,
+        ]);
+        for (const row of result.rows) {
+          rows.push(row);
+        }
+      }
+
+      return {
+        columns: ["tabela", "coluna", "id"],
+        rows,
+        rowCount: rows.length,
+        command: "SELECT",
+        sql: sqlParts.join("\n\n-- next table\n\n"),
+      };
+    } finally {
+      await client.end();
+    }
+  }
+
   private async queryColumnsWithClient(
     client: Client,
     schemaName: string,
@@ -1667,6 +1815,7 @@ VALUES (${insertValuesSql.join(", ")})`;
       is_nullable: boolean;
       column_default: string | null;
       is_primary_key: boolean;
+      is_unique: boolean;
       is_foreign_key: boolean;
       foreign_key_target_schema: string | null;
       foreign_key_target_table: string | null;
@@ -1682,6 +1831,11 @@ VALUES (${insertValuesSql.join(", ")})`;
            WHERE pk.conrelid = a.attrelid AND pk.contype = 'p'
              AND a.attnum = ANY(pk.conkey)
          ) AS is_primary_key,
+         EXISTS (
+           SELECT 1 FROM pg_constraint uq
+           WHERE uq.conrelid = a.attrelid AND uq.contype = 'u'
+             AND a.attnum = ANY(uq.conkey)
+         ) AS is_unique,
          fk.fk_target_schema IS NOT NULL AS is_foreign_key,
          fk.fk_target_schema             AS foreign_key_target_schema,
          fk.fk_target_table              AS foreign_key_target_table,
@@ -1718,6 +1872,7 @@ VALUES (${insertValuesSql.join(", ")})`;
       isNullable: Boolean(row.is_nullable),
       hasDefault: row.column_default !== null,
       isPrimaryKey: Boolean(row.is_primary_key),
+      isUnique: Boolean(row.is_unique),
       isForeignKey: Boolean(row.is_foreign_key),
       foreignKeyTargetSchema: row.foreign_key_target_schema,
       foreignKeyTargetTable: row.foreign_key_target_table,
@@ -1740,6 +1895,7 @@ VALUES (${insertValuesSql.join(", ")})`;
       is_nullable: boolean;
       column_default: string | null;
       is_primary_key: boolean;
+      is_unique: boolean;
       is_foreign_key: boolean;
       foreign_key_target_schema: string | null;
       foreign_key_target_table: string | null;
@@ -1757,6 +1913,11 @@ VALUES (${insertValuesSql.join(", ")})`;
            WHERE pk.conrelid = a.attrelid AND pk.contype = 'p'
              AND a.attnum = ANY(pk.conkey)
          ) AS is_primary_key,
+         EXISTS (
+           SELECT 1 FROM pg_constraint uq
+           WHERE uq.conrelid = a.attrelid AND uq.contype = 'u'
+             AND a.attnum = ANY(uq.conkey)
+         ) AS is_unique,
          fk.fk_target_schema IS NOT NULL AS is_foreign_key,
          fk.fk_target_schema             AS foreign_key_target_schema,
          fk.fk_target_table              AS foreign_key_target_table,
@@ -1803,6 +1964,7 @@ VALUES (${insertValuesSql.join(", ")})`;
         isNullable: Boolean(row.is_nullable),
         hasDefault: row.column_default !== null,
         isPrimaryKey: Boolean(row.is_primary_key),
+        isUnique: Boolean(row.is_unique),
         isForeignKey: Boolean(row.is_foreign_key),
         foreignKeyTargetSchema: row.foreign_key_target_schema,
         foreignKeyTargetTable: row.foreign_key_target_table,

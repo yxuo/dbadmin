@@ -1,88 +1,49 @@
-# Publicar no Visual Studio Marketplace
+# Publicar no VS Code Marketplace
 
-Este guia mostra como publicar a extensão na loja oficial do VS Code.
+Este guia apresenta o fluxo de publicação no Marketplace de forma genérica.
 
-## Checklist de publicação
+## 1) Pré-requisitos
 
-Antes de publicar, garanta:
+- Conta Microsoft com acesso ao publisher da extensão.
+- PAT (Personal Access Token) criado no Azure DevOps.
+- Projeto compilando e empacotando sem erros.
 
-- `publisher` em `package.json` aponta para seu publisher real (não `local`)
-- versão (`version`) atualizada em `package.json`
-- build passando (`npm run compile`)
-- arquivo de licença presente (`LICENSE`, `LICENSE.md` ou `LICENSE.txt`)
-- campo `repository` definido em `package.json`
-- `activationEvents` revisado (evitar `*` para melhor performance e revisão)
-- `.vscodeignore` revisado para não empacotar arquivos desnecessários
+## 2) Criar PAT
 
-## 1) Criar publisher no Marketplace
+1. Acesse `https://aex.dev.azure.com/me`.
+2. Abra `Personal access tokens`.
+3. Crie um novo token com:
+   - Scope: `Custom defined`
+   - Marketplace: `Manage` (e `Publish` se o painel separar permissões)
+4. Não use `Full access`.
 
-1. Entre em: https://marketplace.visualstudio.com/manage
-2. Crie um publisher (se ainda não existir).
-3. Anote o ID do publisher.
-
-## 2) Criar Personal Access Token (PAT)
-
-1. Acesse: https://dev.azure.com
-2. Crie um PAT com escopo para Marketplace (manage/publish).
-3. Guarde o token em local seguro.
-
-## 3) Ajustar manifesto
-
-No `package.json`:
-
-- `publisher`: seu publisher
-- `version`: próxima versão semântica
-- `repository`: URL do repositório
-
-Exemplo:
-
-```json
-{
-  "publisher": "seu-publisher",
-  "version": "0.0.2",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/yxuo/database-vscode"
-  }
-}
-```
-
-## 4) Login no vsce
+## 3) Login
 
 ```bash
-npx @vscode/vsce login seu-publisher
+npx @vscode/vsce login <publisher-id>
 ```
 
-Quando solicitado, cole o PAT.
-
-## 5) Publicar
-
-Publicação direta:
+## 4) Publicar
 
 ```bash
 npx @vscode/vsce publish
 ```
 
-Ou publicando com incremento automático:
+ou:
 
 ```bash
-npx @vscode/vsce publish patch
+npx @vscode/vsce publish <versao>
 ```
 
-## 6) Validação pós-publicação
+## 5) Boas práticas
 
-- Verifique a página da extensão no Marketplace
-- Instale a extensão publicada em uma instância limpa do VS Code
-- Valide ativação e funcionalidades principais
+- Usar PAT com escopo mínimo.
+- Definir expiração curta e rotacionar periodicamente.
+- Em CI, salvar o PAT em secrets.
+- Nunca versionar PAT no repositório.
 
-## Revisão específica deste projeto
+## 6) Guia completo para dev
 
-Pontos que você precisa ajustar para publicar agora:
+Para fluxo completo de desenvolvimento (build, VSIX, validação do pacote e release), consulte:
 
-1. Trocar `publisher: local` no `package.json`.
-2. Adicionar campo `repository` no `package.json`.
-3. Adicionar arquivo de licença no repositório.
-4. Revisar `activationEvents` para remover `*` se possível.
-5. Subir versão antes do `publish`.
-
-Sem esses ajustes, o empacotamento/publicação tende a exibir avisos e exigir confirmações interativas.
+- [docs/development.md](docs/development.md)

@@ -3,7 +3,7 @@
   "displayName": "DBAdmin",
   "description": "Database manager for VS Code.",
   "version": "0.0.1",
-  "publisher": "local",
+  "publisher": "yxuo",
   "repository": {
     "type": "git",
     "url": "https://github.com/yxuo/database-vscode.git"
@@ -16,64 +16,82 @@
     "Other"
   ],
   "activationEvents": [
-    "onStartupFinished",
-    "*"
+    "onStartupFinished"
   ],
   "main": "./out/extension.js",
   "contributes": {
-    "configuration": {
-      "title": "DBAdmin",
-      "properties": {
-        "dbadmin.showQueryEditor": {
-          "type": "boolean",
-          "default": true,
-          "description": "Mostrar o editor de query na visualização de tabela."
-        },
-        "dbadmin.hideTabHeader": {
-          "type": "boolean",
-          "default": false,
-          "description": "Ocultar o cabeçalho do painel de abas da tabela e mover o botão de menu para a toolbar."
-        },
-        "dbadmin.persistColumnLayout": {
-          "type": "boolean",
-          "default": false,
-          "description": "Persistir ocultação, ordem e largura de colunas mesmo fora da restauração automática de abas."
-        },
-        "dbadmin.pgAdminBinPath": {
-          "type": "string",
-          "default": "",
-          "description": "Caminho para o diretório dos binários do pgAdmin (pg_dump, pg_restore). Deixe vazio para detectar automaticamente."
-        },
-        "dbadmin.showFilterLabel": {
-          "type": "boolean",
-          "default": true,
-          "description": "Mostrar o label do filtro no topo do DBAdmin quando houver filtro ativo."
-        },
-        "dbadmin.defaultPageSize": {
-          "type": "integer",
-          "default": 50,
-          "minimum": 1,
-          "maximum": 500,
-          "scope": "window",
-          "order": 50,
-          "description": "Número padrão de itens por página na visualização de tabela."
-        },
-        "dbadmin.dynamicDefaultColumnWidth": {
-          "type": "boolean",
-          "default": true,
-          "scope": "window",
-          "order": 51,
-          "description": "Quando ativo, calcula a largura padrão das colunas de forma dinâmica com base no conteúdo visível. Quando desativado, usa largura fixa (170)."
-        },
-        "dbadmin.expandFilterResults": {
-          "type": "boolean",
-          "default": false,
-          "scope": "window",
-          "order": 52,
-          "description": "Quando ativo, ao digitar no filtro de tabelas recolhe e expande automaticamente os resultados na árvore."
+    "configuration": [
+      {
+        "title": "DBAdmin",
+        "properties": {
+          "dbadmin.showQueryEditor": {
+            "type": "boolean",
+            "default": true,
+            "description": "Mostrar o editor de query na visualização de tabela."
+          },
+          "dbadmin.hideTabHeader": {
+            "type": "boolean",
+            "default": false,
+            "description": "Ocultar o cabeçalho do painel de abas da tabela e mover o botão de menu para a toolbar."
+          },
+          "dbadmin.persistColumnLayout": {
+            "type": "boolean",
+            "default": false,
+            "description": "Persistir ocultação, ordem e largura de colunas mesmo fora da restauração automática de abas."
+          },
+          "dbadmin.pgAdminBinPath": {
+            "type": "string",
+            "default": "",
+            "description": "Caminho para o diretório dos binários do pgAdmin (pg_dump, pg_restore). Deixe vazio para detectar automaticamente."
+          },
+          "dbadmin.showFilterLabel": {
+            "type": "boolean",
+            "default": true,
+            "description": "Mostrar o label do filtro no topo do DBAdmin quando houver filtro ativo."
+          },
+          "dbadmin.defaultPageSize": {
+            "type": "integer",
+            "default": 50,
+            "minimum": 1,
+            "maximum": 500,
+            "scope": "window",
+            "order": 50,
+            "description": "Número padrão de itens por página na visualização de tabela."
+          },
+          "dbadmin.dynamicDefaultColumnWidth": {
+            "type": "boolean",
+            "default": true,
+            "scope": "window",
+            "order": 51,
+            "description": "Quando ativo, calcula a largura padrão das colunas de forma dinâmica com base no conteúdo visível. Quando desativado, usa largura fixa (170)."
+          },
+          "dbadmin.expandFilterResults": {
+            "type": "boolean",
+            "default": false,
+            "scope": "window",
+            "order": 52,
+            "description": "Quando ativo, ao digitar no filtro de tabelas recolhe e expande automaticamente os resultados na árvore."
+          }
+        }
+      },
+      {
+        "title": "SQLBook",
+        "properties": {
+          "dbadmin.sqlbookIntegratedTable": {
+            "type": "boolean",
+            "default": false,
+            "order": 1,
+            "description": "Mostrar tabela integrada no SQL Book (resultado inline na célula em vez de abrir o painel)."
+          },
+          "dbadmin.sqlbookRunPerQuery": {
+            "type": "boolean",
+            "default": false,
+            "order": 2,
+            "description": "Mostrar um botão Executar em cada query quando a célula do SQL Book tiver duas ou mais instruções (separadas por ponto e vírgula ou linha em branco)."
+          }
         }
       }
-    },
+    ],
     "viewsContainers": {
       "activitybar": [
         {
@@ -88,13 +106,13 @@
         {
           "id": "databaseExplorer",
           "name": "DBAdmin",
-          "icon": "resources/icons/database.svg",
+          "icon": "resources/icons/extension.svg",
           "order": 1
         },
         {
           "id": "databaseExplorerFilter",
           "name": "Filtro de tabelas",
-          "icon": "resources/icons/database.svg",
+          "icon": "resources/icons/extension.svg",
           "type": "webview",
           "order": 2
         }
@@ -311,8 +329,82 @@
       {
         "command": "dbadmin.sqlRunner.selectSchema",
         "title": "SQL Runner: Selecionar Schema"
+      },
+      {
+        "command": "dbadmin.toggleSqlBookIntegratedTable",
+        "title": "Mostrar tabela integrada",
+        "category": "DBAdmin"
+      },
+      {
+        "command": "dbadmin.toggleSqlBookIntegratedTableChecked",
+        "title": "✓ Mostrar tabela integrada",
+        "category": "DBAdmin",
+        "icon": "$(check)"
+      },
+      {
+        "command": "dbadmin.toggleSqlBookRunPerQuery",
+        "title": "Botão executar por query",
+        "category": "DBAdmin"
+      },
+      {
+        "command": "dbadmin.toggleSqlBookRunPerQueryChecked",
+        "title": "✓ Botão executar por query",
+        "category": "DBAdmin",
+        "icon": "$(check)"
+      },
+      {
+        "command": "dbadmin.executeSqlBookStatement",
+        "title": "Executar query do SQL Book",
+        "category": "DBAdmin"
+      },
+      {
+        "command": "dbadmin.openLastSqlBookResult",
+        "title": "Abrir último resultado do SQL Book",
+        "category": "DBAdmin"
       }
     ],
+    "languages": [
+      {
+        "id": "sql",
+        "extensions": [
+          ".sql"
+        ],
+        "aliases": [
+          "SQL",
+          "sql"
+        ]
+      },
+      {
+        "id": "sqlbook",
+        "extensions": [
+          ".sqlbook"
+        ],
+        "aliases": [
+          "SQL Book",
+          "sqlbook"
+        ]
+      }
+    ],
+    "configurationDefaults": {
+      "vsicons.associations.files": [
+        {
+          "icon": "sql",
+          "extensions": [
+            "sqlbook"
+          ],
+          "languages": [
+            {
+              "ids": "sqlbook",
+              "defaultExtension": "sqlbook"
+            }
+          ],
+          "format": "svg"
+        }
+      ],
+      "material-icon-theme.files.associations": {
+        "*.sqlbook": "sql"
+      }
+    },
     "notebooks": [
       {
         "type": "sqlbook",
@@ -324,6 +416,17 @@
         ]
       }
     ],
+    "notebookRenderer": [
+      {
+        "id": "dbadmin-sqlbook-table",
+        "displayName": "DBAdmin SQL Book Table",
+        "entrypoint": "./resources/sqlBookTableRenderer.js",
+        "mimeTypes": [
+          "application/vnd.dbadmin.sqlbook-table+json"
+        ],
+        "requiresMessaging": "optional"
+      }
+    ],
     "keybindings": [
       {
         "command": "dbadmin.executeSqlFromActiveEditor",
@@ -333,6 +436,42 @@
       }
     ],
     "menus": {
+      "notebook/toolbar": [
+        {
+          "command": "dbadmin.toggleSqlBookIntegratedTable",
+          "when": "notebookType == 'sqlbook' && config.dbadmin.sqlbookIntegratedTable != true && dbadmin.sqlbookIntegratedTable != true",
+          "group": "notebookLayout@35"
+        },
+        {
+          "command": "dbadmin.toggleSqlBookIntegratedTableChecked",
+          "when": "notebookType == 'sqlbook' && (config.dbadmin.sqlbookIntegratedTable == true || dbadmin.sqlbookIntegratedTable == true)",
+          "group": "notebookLayout@35"
+        },
+        {
+          "command": "dbadmin.toggleSqlBookRunPerQuery",
+          "when": "notebookType == 'sqlbook' && config.dbadmin.sqlbookRunPerQuery != true && dbadmin.sqlbookRunPerQuery != true",
+          "group": "notebookLayout@36"
+        },
+        {
+          "command": "dbadmin.toggleSqlBookRunPerQueryChecked",
+          "when": "notebookType == 'sqlbook' && (config.dbadmin.sqlbookRunPerQuery == true || dbadmin.sqlbookRunPerQuery == true)",
+          "group": "notebookLayout@36"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "dbadmin.toggleSqlBookIntegratedTableChecked",
+          "when": "false"
+        },
+        {
+          "command": "dbadmin.toggleSqlBookRunPerQueryChecked",
+          "when": "false"
+        },
+        {
+          "command": "dbadmin.executeSqlBookStatement",
+          "when": "false"
+        }
+      ],
       "view/title": [
         {
           "command": "dbadmin.openSettings",

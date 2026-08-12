@@ -34,6 +34,7 @@ export interface MessageHandlers {
   openJsonInNativeEditor?: MessageHandler;
   syncNativeJsonPreview?: MessageHandler;
   openForeignKeyTarget?: MessageHandler;
+  searchForeignKeyMentions?: MessageHandler;
   toggleQueryVisibility?: MessageHandler;
   toggleHeaderVisibility?: MessageHandler;
   updateLayout?: MessageHandler;
@@ -118,6 +119,8 @@ export class MessageRouter {
         return this.handlers.syncNativeJsonPreview;
       case "openForeignKeyTarget":
         return this.handlers.openForeignKeyTarget;
+      case "searchForeignKeyMentions":
+        return this.handlers.searchForeignKeyMentions;
       case "toggleQueryVisibility":
         return this.handlers.toggleQueryVisibility;
       case "toggleHeaderVisibility":

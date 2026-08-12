@@ -5,6 +5,7 @@ export interface PostgresConnection {
   host: string;
   port: number;
   database: string;
+  visibleDatabases?: string[];
   user: string;
   password: string;
   ssl: boolean;

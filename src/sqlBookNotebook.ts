@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { ConnectionStore } from './connectionStore';
 import { PostgresService, SqlQueryResult } from './postgresService';
 import { PostgresConnection } from './models';
+import { getSqlBookIntegratedTableEnabled } from './sqlBookIntegratedTable';
 
 const CELL_CODE_MARKER = '-- SQLBook: Code';
 const CELL_MARKUP_MARKER = '-- SQLBook: Markup';
@@ -17,6 +18,27 @@ interface CellRunnerContext {
   connectionPort?: number;
   databaseName?: string;
   schemaName?: string;
+}
+
+export interface SqlBookExecutionResult {
+  connection: PostgresConnection;
+  databaseName: string;
+  schemaName?: string;
+  sql: string;
+  result: SqlQueryResult;
+  source: "sqlBook";
+  integratedTableMode?: boolean;
+  forceOpenPanel?: boolean;
+}
+
+export const SQLBOOK_TABLE_MIME =
+  "application/vnd.dbadmin.sqlbook-table+json";
+
+export interface SqlBookTablePayload {
+  columns: string[];
+  rows: Record<string, unknown>[];
+  rowCount: number;
+  command: string;
 }
 
 // ---------- Serializer ----------
@@ -87,10 +109,12 @@ export class SqlBookSerializer implements vscode.NotebookSerializer {
 
 export class SqlBookController {
   private readonly _controller: vscode.NotebookController;
+  private lastExecutionResult: SqlBookExecutionResult | null = null;
 
   constructor(
     private readonly store: ConnectionStore,
-    private readonly postgresService: PostgresService
+    private readonly postgresService: PostgresService,
+    private readonly onResult?: (payload: SqlBookExecutionResult) => Promise<void> | void,
   ) {
     this._controller = vscode.notebooks.createNotebookController(
       'dbadmin-sqlbook',
@@ -104,6 +128,13 @@ export class SqlBookController {
     };
   }
 
+  public async executeCellStatement(
+    cell: vscode.NotebookCell,
+    sql: string,
+  ): Promise<void> {
+    await this._executeCell(cell, this._controller, sql);
+  }
+
   private async _executeAll(
     cells: vscode.NotebookCell[],
     controller: vscode.NotebookController
@@ -115,7 +146,8 @@ export class SqlBookController {
 
   private async _executeCell(
     cell: vscode.NotebookCell,
-    controller: vscode.NotebookController
+    controller: vscode.NotebookController,
+    sqlOverride?: string,
   ): Promise<void> {
     if (cell.kind !== vscode.NotebookCellKind.Code) {
       return;
@@ -127,7 +159,8 @@ export class SqlBookController {
 
     try {
       const cellText = cell.document.getText();
-      const { context, sql } = parseCellContent(cellText);
+      const { context, sql: cellSql } = parseCellContent(cellText);
+      const sql = String(sqlOverride || cellSql).trim();
 
       if (!sql.trim()) {
         execution.end(true, Date.now());
@@ -151,28 +184,69 @@ export class SqlBookController {
       const databaseName = context.databaseName?.trim() || connection.database;
       const result = await this.postgresService.querySql(connection, databaseName, sql);
 
-      execution.replaceOutput([
-        new vscode.NotebookCellOutput([
-          vscode.NotebookCellOutputItem.text(formatResultHtml(result), 'text/html'),
-          vscode.NotebookCellOutputItem.json(result.rows),
-        ]),
-      ]);
+      const executionPayload: SqlBookExecutionResult = {
+        connection,
+        databaseName,
+        schemaName: context.schemaName,
+        sql,
+        result,
+        source: "sqlBook",
+      };
+
+      this.lastExecutionResult = executionPayload;
+
+      const integratedTableMode = getSqlBookIntegratedTableEnabled();
+      executionPayload.integratedTableMode = integratedTableMode;
+
+      if (this.onResult && !integratedTableMode) {
+        await this.onResult(executionPayload);
+      }
+
+      if (integratedTableMode) {
+        execution.replaceOutput([
+          new vscode.NotebookCellOutput([
+            vscode.NotebookCellOutputItem.json(
+              toSqlBookTablePayload(result),
+              SQLBOOK_TABLE_MIME,
+            ),
+          ]),
+        ]);
+      } else {
+        execution.replaceOutput([]);
+      }
 
       execution.end(true, Date.now());
     } catch (error) {
+      const friendlyMessage = formatFriendlySqlError(error);
+
       execution.replaceOutput([
         new vscode.NotebookCellOutput([
-          vscode.NotebookCellOutputItem.error(
-            error instanceof Error ? error : new Error(String(error))
+          vscode.NotebookCellOutputItem.text(
+            `<div style="font-family:var(--vscode-font-family);font-size:12px;color:var(--vscode-errorForeground);padding:4px 0;white-space:pre-wrap;">${escHtml(
+              friendlyMessage,
+            )}</div>`,
+            'text/html',
           ),
+          vscode.NotebookCellOutputItem.text(friendlyMessage, 'text/plain'),
         ]),
       ]);
+
+      console.error('[dbadmin][sqlbook] execution failed:', error);
       execution.end(false, Date.now());
     }
   }
 
   dispose(): void {
     this._controller.dispose();
+  }
+
+  public async openLastResultInPanel(): Promise<void> {
+    if (!this.lastExecutionResult || !this.onResult) {
+      return;
+    }
+
+    const payload = { ...this.lastExecutionResult, forceOpenPanel: true };
+    await this.onResult(payload);
   }
 }
 
@@ -245,40 +319,62 @@ function quoteIdent(identifier: string): string {
   return `"${String(identifier || '').replace(/"/g, '""')}"`;
 }
 
-function formatResultHtml(result: SqlQueryResult): string {
-  if (result.rows.length === 0) {
-    const msg = result.command
-      ? `${result.command} — ${result.rowCount} linha(s)`
-      : '(sem resultados)';
-    return `<p style="margin:4px 0;font-family:var(--vscode-font-family);font-size:var(--vscode-font-size);color:var(--vscode-foreground);opacity:0.7">${escHtml(msg)}</p>`;
+function toSqlBookTablePayload(result: SqlQueryResult): SqlBookTablePayload {
+  return {
+    columns: result.columns,
+    rows: result.rows as Record<string, unknown>[],
+    rowCount: result.rowCount,
+    command: result.command || "",
+  };
+}
+
+function formatFriendlySqlError(error: unknown): string {
+  const fallback = 'Falha ao executar SQL.';
+
+  if (!error || typeof error !== 'object') {
+    if (error instanceof Error && error.message) {
+      return `Erro SQL: ${error.message}`;
+    }
+    if (typeof error === 'string' && error.trim()) {
+      return `Erro SQL: ${error.trim()}`;
+    }
+    return fallback;
   }
 
-  const thCells = result.columns
-    .map(
-      (col) =>
-        `<th style="padding:3px 10px;border-bottom:1px solid var(--vscode-editorGroup-border);text-align:left;white-space:nowrap;font-weight:600;opacity:0.85">${escHtml(col)}</th>`
-    )
-    .join('');
+  const sqlError = error as {
+    message?: unknown;
+    code?: unknown;
+    detail?: unknown;
+    hint?: unknown;
+    position?: unknown;
+  };
 
-  const trRows = result.rows
-    .map((row) => {
-      const tdCells = result.columns
-        .map((col) => {
-          const val = row[col];
-          const display =
-            val === null || val === undefined
-              ? `<em style="opacity:0.4">null</em>`
-              : escHtml(String(val));
-          return `<td style="padding:2px 10px;border-bottom:1px solid var(--vscode-editorGroup-border);white-space:nowrap">${display}</td>`;
-        })
-        .join('');
-      return `<tr>${tdCells}</tr>`;
-    })
-    .join('');
+  const baseMessage =
+    typeof sqlError.message === 'string' && sqlError.message.trim()
+      ? sqlError.message.trim()
+      : error instanceof Error && error.message
+        ? error.message
+        : fallback;
 
-  const footer = `<p style="margin:4px 0;opacity:0.55;font-size:11px">${result.rowCount} linha(s) — ${escHtml(result.command)}</p>`;
+  const parts = [`Erro SQL: ${baseMessage}`];
 
-  return `<div style="font-family:var(--vscode-font-family);font-size:var(--vscode-font-size);color:var(--vscode-foreground);overflow:auto"><table style="border-collapse:collapse;min-width:max-content"><thead><tr>${thCells}</tr></thead><tbody>${trRows}</tbody></table>${footer}</div>`;
+  if (typeof sqlError.code === 'string' && sqlError.code.trim()) {
+    parts.push(`Código: ${sqlError.code.trim()}`);
+  }
+
+  if (typeof sqlError.detail === 'string' && sqlError.detail.trim()) {
+    parts.push(`Detalhe: ${sqlError.detail.trim()}`);
+  }
+
+  if (typeof sqlError.hint === 'string' && sqlError.hint.trim()) {
+    parts.push(`Dica: ${sqlError.hint.trim()}`);
+  }
+
+  if (typeof sqlError.position === 'string' && sqlError.position.trim()) {
+    parts.push(`Posição aproximada: ${sqlError.position.trim()}`);
+  }
+
+  return parts.join('\n');
 }
 
 function escHtml(str: string): string {

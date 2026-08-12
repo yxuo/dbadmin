@@ -258,9 +258,12 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
           ];
         }
 
-        const databases = Array.from(snapshot.databaseByName.keys()).sort((a, b) =>
-          a.localeCompare(b)
-        );
+        const configuredVisibleDatabases = this.getConfiguredVisibleDatabasesSet(element.connection);
+        const databases = Array.from(snapshot.databaseByName.keys())
+          .filter((databaseName) =>
+            !configuredVisibleDatabases || configuredVisibleDatabases.has(databaseName.toLowerCase())
+          )
+          .sort((a, b) => a.localeCompare(b));
 
         if (snapshot.status === 'error' && databases.length === 0) {
           return [
@@ -284,7 +287,9 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
           return [
             {
               type: 'placeholder',
-              message: 'Sem databases.',
+              message: configuredVisibleDatabases
+                ? 'Sem databases configuradas para exibicao.'
+                : 'Sem databases.',
             } satisfies PlaceholderNodeRef,
           ];
         }
@@ -1125,7 +1130,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
     this.refresh();
 
     this.logConnectionEvent(connection, 'listando bancos');
-    const databaseNames = await this.withTimeout(
+    const listedDatabaseNames = await this.withTimeout(
       this.postgresService.listDatabases(connection),
       this.databaseLoadTimeoutMs,
       'listar bancos'
@@ -1134,6 +1139,13 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
       this.logConnectionEvent(connection, 'listagem concluída, mas carga ficou obsoleta');
       return;
     }
+
+    const configuredVisibleDatabases = this.getConfiguredVisibleDatabasesSet(connection);
+    const databaseNames = configuredVisibleDatabases
+      ? listedDatabaseNames.filter((databaseName) =>
+          configuredVisibleDatabases.has(databaseName.toLowerCase())
+        )
+      : listedDatabaseNames;
     this.logConnectionEvent(connection, `bancos carregados: ${databaseNames.length}`);
 
     const validDatabaseNames = new Set(databaseNames);
@@ -1439,6 +1451,22 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
 
   private logConnectionEvent(connection: PostgresConnection, message: string): void {
     // console.log(`[dbadmin][tree][${connection.nickname}][${connection.host}:${connection.port}/${connection.database}] ${message}`);
+  }
+
+  private getConfiguredVisibleDatabasesSet(connection: PostgresConnection): Set<string> | undefined {
+    if (!Array.isArray(connection.visibleDatabases)) {
+      return undefined;
+    }
+
+    const normalized = connection.visibleDatabases
+      .map((name) => String(name ?? '').trim().toLowerCase())
+      .filter((name) => name.length > 0);
+
+    if (normalized.length === 0) {
+      return undefined;
+    }
+
+    return new Set(normalized);
   }
 
 }

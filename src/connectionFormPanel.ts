@@ -36,6 +36,7 @@ export async function showConnectionForm(
     host: current?.host ?? 'localhost',
     port: current?.port ?? 5432,
     database: current?.database ?? 'postgres',
+    visibleDatabases: current?.visibleDatabases ?? [],
     user: current?.user ?? 'postgres',
     password: current?.password ?? '',
     ssl: current?.ssl ?? false,
@@ -178,51 +179,49 @@ function getHtml(
   <style>
     :root {
       color-scheme: light dark;
+      --control-height: 28px;
+      --control-radius: 6px;
+    }
+    html, body {
+      height: 100%;
     }
     body {
       font-family: var(--vscode-font-family);
       color: var(--vscode-foreground);
       background: var(--vscode-editor-background);
       margin: 0;
-      padding: 24px;
+      padding: 16px;
+      box-sizing: border-box;
     }
     .shell {
       max-width: 760px;
       margin: 0 auto;
     }
-    .header {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      gap: 16px;
-      margin-bottom: 24px;
+    .card {
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 8px;
+      padding: 14px;
+      background: var(--vscode-editorWidget-background);
     }
     .title {
       margin: 0;
-      font-size: 24px;
+      font-size: 16px;
       font-weight: 700;
     }
     .subtitle {
-      margin: 6px 0 0;
+      margin: 6px 0 14px;
       color: var(--vscode-descriptionForeground);
-    }
-    .badge {
-      padding: 6px 10px;
-      border-radius: 999px;
-      background: color-mix(in srgb, var(--vscode-button-background) 18%, transparent);
-      color: var(--vscode-button-foreground);
-      font-size: 12px;
-      white-space: nowrap;
+      font-size: 13px;
     }
     .grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 16px;
+      gap: 12px 16px;
     }
     .field {
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 6px;
     }
     .field.full {
       grid-column: 1 / -1;
@@ -233,67 +232,71 @@ function getHtml(
       letter-spacing: 0.08em;
       color: var(--vscode-descriptionForeground);
     }
-    input, select {
+    input, textarea {
       border: 1px solid var(--vscode-input-border, transparent);
       background: var(--vscode-input-background);
       color: var(--vscode-input-foreground);
-      border-radius: 8px;
-      padding: 10px 12px;
+      border-radius: var(--control-radius);
+      min-height: var(--control-height);
+      box-sizing: border-box;
+      width: 100%;
+      padding: 0 10px;
       outline: none;
+      line-height: 1.35;
+      font-family: inherit;
+      font-size: 13px;
     }
-    input:focus, select:focus {
+    input:focus, textarea:focus {
       border-color: var(--vscode-focusBorder);
+    }
+    input[readonly] {
+      color: var(--vscode-descriptionForeground);
+      cursor: default;
+    }
+    textarea {
+      resize: vertical;
+      min-height: 84px;
+      padding: 8px 10px;
+      font-family: var(--vscode-editor-font-family, var(--vscode-font-family));
     }
     .row {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 10px;
     }
-    .toggle {
-      appearance: none;
-      width: 42px;
-      height: 24px;
-      border-radius: 999px;
-      background: var(--vscode-input-background);
-      position: relative;
-      border: 1px solid var(--vscode-input-border, transparent);
+    .row input[type="checkbox"] {
+      width: 14px;
+      height: 14px;
+      min-height: 14px;
+      margin: 0;
+      accent-color: var(--vscode-button-background);
       cursor: pointer;
-      padding: 0;
     }
-    .toggle::after {
-      content: '';
-      width: 18px;
-      height: 18px;
-      border-radius: 50%;
-      background: var(--vscode-button-foreground);
-      position: absolute;
-      left: 2px;
-      top: 2px;
-      transition: transform 0.15s ease;
-    }
-    .toggle:checked {
-      background: var(--vscode-button-background);
-    }
-    .toggle:checked::after {
-      transform: translateX(18px);
+    .row span {
+      color: var(--vscode-foreground);
     }
     .actions {
       display: flex;
       justify-content: flex-end;
       gap: 12px;
-      margin-top: 24px;
+      margin-top: 12px;
     }
     button {
       border: 1px solid var(--vscode-button-border, transparent);
-      border-radius: 8px;
-      padding: 10px 14px;
+      border-radius: var(--control-radius);
+      height: 28px;
+      padding: 0 12px;
       cursor: pointer;
       background: var(--vscode-button-secondaryBackground);
       color: var(--vscode-button-secondaryForeground);
+      font-family: inherit;
     }
     button.primary {
       background: var(--vscode-button-background);
       color: var(--vscode-button-foreground);
+    }
+    button:hover {
+      border-color: var(--vscode-focusBorder);
     }
     .status {
       margin-top: 18px;
@@ -315,60 +318,61 @@ function getHtml(
 </head>
 <body>
   <div class="shell">
-    <div class="header">
+    <div class="card">
       <div>
         <h1 class="title">${title}</h1>
         <p class="subtitle">Escolha o tipo de banco, configure a conexão, teste e salve.</p>
       </div>
-      <div class="badge">Database</div>
-    </div>
 
-    <div class="grid">
-      <div class="field full">
-        <label for="engine">Tipo de banco</label>
-        <select id="engine">
-          <option value="postgres">PostgreSQL</option>
-        </select>
-      </div>
-      <div class="field">
-        <label for="nickname">Apelido</label>
-        <input id="nickname" />
-      </div>
-      <div class="field">
-        <label for="host">Host</label>
-        <input id="host" />
-      </div>
-      <div class="field">
-        <label for="port">Porta</label>
-        <input id="port" type="number" min="1" max="65535" />
-      </div>
-      <div class="field">
-        <label for="database">Database</label>
-        <input id="database" />
-      </div>
-      <div class="field">
-        <label for="user">Usuario</label>
-        <input id="user" />
-      </div>
-      <div class="field">
-        <label for="password">Senha</label>
-        <input id="password" type="password" />
-      </div>
-      <div class="field full">
-        <label>SSL</label>
-        <div class="row">
-          <input id="ssl" class="toggle" type="checkbox" />
-          <span>Ativar SSL</span>
+      <div class="grid">
+        <div class="field full">
+          <label for="engine">Tipo de banco</label>
+          <input id="engine" readonly aria-readonly="true" value="PostgreSQL" />
+        </div>
+        <div class="field">
+          <label for="nickname">Apelido</label>
+          <input id="nickname" />
+        </div>
+        <div class="field">
+          <label for="host">Host</label>
+          <input id="host" />
+        </div>
+        <div class="field">
+          <label for="port">Porta</label>
+          <input id="port" type="number" min="1" max="65535" />
+        </div>
+        <div class="field">
+          <label for="database">Database</label>
+          <input id="database" />
+        </div>
+        <div class="field full">
+          <label for="visibleDatabases">Bancos visiveis na sidebar (opcional)</label>
+          <textarea id="visibleDatabases" placeholder="Um nome por linha ou separado por virgula"></textarea>
+        </div>
+        <div class="field">
+          <label for="user">Usuario</label>
+          <input id="user" />
+        </div>
+        <div class="field">
+          <label for="password">Senha</label>
+          <input id="password" type="password" />
+        </div>
+        <div class="field full">
+          <label>SSL</label>
+          <label class="row" for="ssl">
+            <input id="ssl" type="checkbox" />
+            <span>Ativar SSL</span>
+          </label>
         </div>
       </div>
-    </div>
 
-    <div id="status" class="status"></div>
+      <div id="status" class="status"></div>
 
-    <div class="actions">
-      <button id="cancel">Cancelar</button>
-      <button id="test">Testar conexão</button>
-      <button id="save" class="primary">Salvar</button>
+      <div class="actions">
+        <button id="cancel">Cancelar</button>
+        <button id="test">Testar conexão</button>
+        <button id="save" class="primary">Salvar</button>
+      </div>
     </div>
   </div>
 
@@ -382,20 +386,48 @@ function getHtml(
       host: document.getElementById('host'),
       port: document.getElementById('port'),
       database: document.getElementById('database'),
+      visibleDatabases: document.getElementById('visibleDatabases'),
       user: document.getElementById('user'),
       password: document.getElementById('password'),
       ssl: document.getElementById('ssl'),
     };
 
     function hydrate(data) {
-      fields.engine.value = 'postgres';
+      fields.engine.value = 'PostgreSQL';
       fields.nickname.value = data.nickname || '';
       fields.host.value = data.host || 'localhost';
       fields.port.value = String(data.port || 5432);
       fields.database.value = data.database || 'postgres';
+      fields.visibleDatabases.value = Array.isArray(data.visibleDatabases)
+        ? data.visibleDatabases.join('\\n')
+        : '';
       fields.user.value = data.user || 'postgres';
       fields.password.value = data.password || '';
       fields.ssl.checked = !!data.ssl;
+    }
+
+    function parseVisibleDatabases(rawValue) {
+      const parts = String(rawValue || '')
+        .split(/[\\n,]/)
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0);
+
+      if (parts.length === 0) {
+        return undefined;
+      }
+
+      const unique = [];
+      const seen = new Set();
+      for (const item of parts) {
+        const key = item.toLowerCase();
+        if (seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+        unique.push(item);
+      }
+
+      return unique.length > 0 ? unique : undefined;
     }
 
     function payload() {
@@ -404,6 +436,7 @@ function getHtml(
         host: fields.host.value.trim(),
         port: Number(fields.port.value),
         database: fields.database.value.trim(),
+        visibleDatabases: parseVisibleDatabases(fields.visibleDatabases.value),
         user: fields.user.value.trim(),
         password: fields.password.value,
         ssl: fields.ssl.checked,

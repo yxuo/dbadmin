@@ -2,6 +2,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { getSqlBookIntegratedTableEnabled, setSqlBookIntegratedTableEnabled } from './sqlBookIntegratedTable';
+import { getSqlBookRunPerQueryEnabled, setSqlBookRunPerQueryEnabled } from './sqlBookRunPerQuery';
 
 const SHOW_QUERY_SETTING = 'dbadmin.showQueryEditor';
 const HIDE_TAB_HEADER_SETTING = 'dbadmin.hideTabHeader';
@@ -9,6 +11,7 @@ const PERSIST_LAYOUT_SETTING = 'dbadmin.persistColumnLayout';
 const PGADMIN_BIN_PATH_SETTING = 'dbadmin.pgAdminBinPath';
 const SHOW_FILTER_LABEL_SETTING = 'dbadmin.showFilterLabel';
 const DEFAULT_PAGE_SIZE_SETTING = 'dbadmin.defaultPageSize';
+const SQLBOOK_INTEGRATED_TABLE_SETTING = 'dbadmin.sqlbookIntegratedTable';
 
 type SettingsWebviewMessage =
   | { type: 'ready' }
@@ -21,6 +24,8 @@ type SettingsWebviewMessage =
         persistColumnLayout: boolean;
         defaultPageSize: number;
         pgAdminBinPath: string;
+        sqlbookIntegratedTable: boolean;
+        sqlbookRunPerQuery: boolean;
       };
     }
   | { type: 'detectPgAdminBinPath' }
@@ -114,7 +119,24 @@ export class SettingsPanelManager {
               String(message.settings.pgAdminBinPath || ''),
               vscode.ConfigurationTarget.Global
             ),
+          setSqlBookIntegratedTableEnabled(
+            Boolean(message.settings.sqlbookIntegratedTable),
+          ),
+          setSqlBookRunPerQueryEnabled(
+            Boolean(message.settings.sqlbookRunPerQuery),
+          ),
         ]);
+
+        await vscode.commands.executeCommand(
+          'setContext',
+          'dbadmin.sqlbookIntegratedTable',
+          Boolean(message.settings.sqlbookIntegratedTable),
+        );
+        await vscode.commands.executeCommand(
+          'setContext',
+          'dbadmin.sqlbookRunPerQuery',
+          Boolean(message.settings.sqlbookRunPerQuery),
+        );
 
         await panel.webview.postMessage({ type: 'settingsSaved' });
         return;
@@ -181,6 +203,8 @@ export class SettingsPanelManager {
     const defaultPageSize = vscode.workspace
       .getConfiguration()
       .get<number>(DEFAULT_PAGE_SIZE_SETTING, 50);
+    const sqlbookIntegratedTable = getSqlBookIntegratedTableEnabled();
+    const sqlbookRunPerQuery = getSqlBookRunPerQueryEnabled();
 
     panel.webview.postMessage({
       type: 'settingsState',
@@ -190,6 +214,8 @@ export class SettingsPanelManager {
       persistColumnLayout,
       defaultPageSize,
       pgAdminBinPath,
+      sqlbookIntegratedTable,
+      sqlbookRunPerQuery,
       storagePath,
     });
   }
@@ -354,6 +380,30 @@ export class SettingsPanelManager {
     </div>
 
     <div class="card">
+      <h2 class="card-title">SQL Book</h2>
+
+      <div class="item">
+        <div class="meta">
+          <span class="title">Mostrar tabela integrada</span>
+          <span class="desc">Exibe o resultado inline na célula do SQL Book em vez de abrir o painel de resultados.</span>
+        </div>
+        <label>
+          <input id="sqlbookIntegratedTable" type="checkbox" />
+        </label>
+      </div>
+
+      <div class="item">
+        <div class="meta">
+          <span class="title">Botão executar por query</span>
+          <span class="desc">Quando a célula tiver duas ou mais queries, mostra um botão Executar em cada uma. O Executar da célula continua rodando o bloco inteiro.</span>
+        </div>
+        <label>
+          <input id="sqlbookRunPerQuery" type="checkbox" />
+        </label>
+      </div>
+    </div>
+
+    <div class="card">
       <h2 class="card-title">Outros</h2>
 
       <div class="item">
@@ -401,6 +451,8 @@ export class SettingsPanelManager {
     const persistColumnLayout = document.getElementById('persistColumnLayout');
     const defaultPageSize = document.getElementById('defaultPageSize');
     const pgAdminBinPath = document.getElementById('pgAdminBinPath');
+    const sqlbookIntegratedTable = document.getElementById('sqlbookIntegratedTable');
+    const sqlbookRunPerQuery = document.getElementById('sqlbookRunPerQuery');
     const storagePath = document.getElementById('storagePath');
     const saveSettingsBtn = document.getElementById('saveSettings');
     const saveStatus = document.getElementById('saveStatus');
@@ -554,6 +606,8 @@ export class SettingsPanelManager {
         persistColumnLayout: Boolean(persistColumnLayout.checked),
         defaultPageSize: clampPageSize(defaultPageSize.value),
         pgAdminBinPath: String(pgAdminBinPath.value || ''),
+        sqlbookIntegratedTable: Boolean(sqlbookIntegratedTable.checked),
+        sqlbookRunPerQuery: Boolean(sqlbookRunPerQuery.checked),
       };
     }
 
@@ -579,6 +633,14 @@ export class SettingsPanelManager {
     });
 
     pgAdminBinPath.addEventListener('change', () => {
+      setDirty(true);
+    });
+
+    sqlbookIntegratedTable.addEventListener('change', () => {
+      setDirty(true);
+    });
+
+    sqlbookRunPerQuery.addEventListener('change', () => {
       setDirty(true);
     });
 
@@ -629,6 +691,8 @@ export class SettingsPanelManager {
       persistColumnLayout.checked = Boolean(message.persistColumnLayout);
       defaultPageSize.value = String(message.defaultPageSize ?? 50);
       pgAdminBinPath.value = String(message.pgAdminBinPath || '');
+      sqlbookIntegratedTable.checked = Boolean(message.sqlbookIntegratedTable);
+      sqlbookRunPerQuery.checked = Boolean(message.sqlbookRunPerQuery);
       storagePath.textContent = String(message.storagePath || '');
       storagePath.title = String(message.storagePath || '');
       setDirty(false);

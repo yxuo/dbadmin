@@ -25,12 +25,13 @@ export class ConnectionStore {
   public async createConnection(
     input: PostgresConnectionInput
   ): Promise<PostgresConnection> {
-    this.validateInput(input);
+    const normalizedInput = this.normalizeInput(input);
+    this.validateInput(normalizedInput);
     const data = await this.readFile();
 
     const duplicated = data.connections.some(
       (connection) =>
-        connection.nickname.trim().toLowerCase() === input.nickname.trim().toLowerCase()
+        connection.nickname.trim().toLowerCase() === normalizedInput.nickname.trim().toLowerCase()
     );
 
     if (duplicated) {
@@ -39,7 +40,7 @@ export class ConnectionStore {
 
     const now = new Date().toISOString();
     const created: PostgresConnection = {
-      ...input,
+      ...normalizedInput,
       id: this.generateId(),
       engine: 'postgres',
       createdAt: now,
@@ -56,7 +57,8 @@ export class ConnectionStore {
     id: string,
     patch: PostgresConnectionInput
   ): Promise<PostgresConnection> {
-    this.validateInput(patch);
+    const normalizedPatch = this.normalizeInput(patch);
+    this.validateInput(normalizedPatch);
     const data = await this.readFile();
     const index = data.connections.findIndex((connection) => connection.id === id);
 
@@ -67,7 +69,7 @@ export class ConnectionStore {
     const duplicated = data.connections.some(
       (connection) =>
         connection.id !== id &&
-        connection.nickname.trim().toLowerCase() === patch.nickname.trim().toLowerCase()
+        connection.nickname.trim().toLowerCase() === normalizedPatch.nickname.trim().toLowerCase()
     );
 
     if (duplicated) {
@@ -77,7 +79,7 @@ export class ConnectionStore {
     const current = data.connections[index];
     const updated: PostgresConnection = {
       ...current,
-      ...patch,
+      ...normalizedPatch,
       updatedAt: new Date().toISOString(),
     };
 
@@ -118,6 +120,10 @@ export class ConnectionStore {
     if (!input.user.trim()) {
       throw new Error('Usuario e obrigatorio.');
     }
+
+    if (input.visibleDatabases && !Array.isArray(input.visibleDatabases)) {
+      throw new Error('Lista de bancos visiveis invalida.');
+    }
   }
 
   private async ensureStorageFile(): Promise<string> {
@@ -151,7 +157,9 @@ export class ConnectionStore {
 
       return {
         version: 1,
-        connections: parsed.connections as PostgresConnection[],
+        connections: (parsed.connections as PostgresConnection[]).map((connection) =>
+          this.sanitizeConnection(connection)
+        ),
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erro desconhecido';
@@ -169,5 +177,41 @@ export class ConnectionStore {
 
   private generateId(): string {
     return `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+  }
+
+  private normalizeInput(input: PostgresConnectionInput): PostgresConnectionInput {
+    return {
+      ...input,
+      visibleDatabases: this.normalizeVisibleDatabases(input.visibleDatabases),
+    };
+  }
+
+  private sanitizeConnection(connection: PostgresConnection): PostgresConnection {
+    return {
+      ...connection,
+      visibleDatabases: this.normalizeVisibleDatabases(connection.visibleDatabases),
+    };
+  }
+
+  private normalizeVisibleDatabases(value: unknown): string[] | undefined {
+    if (!Array.isArray(value)) {
+      return undefined;
+    }
+
+    const uniqueByLower = new Map<string, string>();
+    for (const item of value) {
+      const name = String(item ?? '').trim();
+      if (!name) {
+        continue;
+      }
+
+      const key = name.toLowerCase();
+      if (!uniqueByLower.has(key)) {
+        uniqueByLower.set(key, name);
+      }
+    }
+
+    const normalized = Array.from(uniqueByLower.values());
+    return normalized.length > 0 ? normalized : undefined;
   }
 }

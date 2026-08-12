@@ -77,8 +77,16 @@ export type WebviewMessage =
       targetTableName: string;
       targetColumnName: string;
     }
+  | {
+      type: "searchForeignKeyMentions";
+      sourceValue: string;
+      targetSchemaName: string;
+      targetTableName: string;
+      targetColumnName: string;
+    }
   | { type: "toggleQueryVisibility" }
   | { type: "toggleHeaderVisibility" }
+  | { type: "toggleIntegratedTable" }
   | { type: "updateLayout"; layout: TableLayoutState }
   | { type: "loadDiagram"; mainColumns?: TableColumnMeta[] }
   | {
@@ -108,3 +116,5 @@ export const PERSIST_LAYOUT_SETTING = "dbadmin.persistColumnLayout";
 export const DEFAULT_PAGE_SIZE_SETTING = "dbadmin.defaultPageSize";
 export const DYNAMIC_DEFAULT_COLUMN_WIDTH_SETTING =
   "dbadmin.dynamicDefaultColumnWidth";
+export const SQLBOOK_INTEGRATED_TABLE_SETTING =
+  "dbadmin.sqlbookIntegratedTable";
