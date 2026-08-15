@@ -143,6 +143,24 @@ function buildBackupHtml(webview: vscode.Webview, node: SchemaNodeRef): string {
   <style>
     *, *::before, *::after { box-sizing: border-box; }
     html, body { height: 100%; margin: 0; }
+    :root { --dbadmin-input-focus: #007acc; accent-color: var(--dbadmin-input-focus); }
+    input, textarea, select {
+      accent-color: var(--dbadmin-input-focus);
+      caret-color: var(--vscode-editorCursor-foreground, var(--dbadmin-input-focus));
+    }
+    input:focus, textarea:focus, select:focus,
+    input:focus-visible, textarea:focus-visible, select:focus-visible {
+      outline: none;
+      border-color: var(--dbadmin-input-focus);
+    }
+    input:-webkit-autofill,
+    input:-webkit-autofill:hover,
+    input:-webkit-autofill:focus {
+      -webkit-text-fill-color: var(--vscode-input-foreground);
+      caret-color: var(--dbadmin-input-focus);
+      box-shadow: 0 0 0 1000px var(--vscode-input-background) inset;
+      border-color: var(--dbadmin-input-focus);
+    }
     body {
       background: var(--vscode-editor-background);
       color: var(--vscode-foreground);
@@ -198,6 +216,8 @@ function buildBackupHtml(webview: vscode.Webview, node: SchemaNodeRef): string {
       border: 1px solid var(--vscode-input-border, transparent);
       border-radius: 4px;
       padding: 4px 8px;
+      overflow: hidden;
+      background-clip: padding-box;
       font-family: inherit;
       font-size: inherit;
     }

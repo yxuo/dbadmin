@@ -84,9 +84,8 @@ export type WebviewMessage =
       targetTableName: string;
       targetColumnName: string;
     }
-  | { type: "toggleQueryVisibility" }
-  | { type: "toggleHeaderVisibility" }
   | { type: "toggleIntegratedTable" }
+  | { type: "openConnectionManager" }
   | { type: "updateLayout"; layout: TableLayoutState }
   | { type: "loadDiagram"; mainColumns?: TableColumnMeta[] }
   | {
@@ -110,8 +109,6 @@ export interface NativeJsonPreviewState {
 }
 
 export const GLOBAL_REUSED_KEY = "__global__";
-export const SHOW_QUERY_SETTING = "dbadmin.showQueryEditor";
-export const HIDE_TAB_HEADER_SETTING = "dbadmin.hideTabHeader";
 export const PERSIST_LAYOUT_SETTING = "dbadmin.persistColumnLayout";
 export const DEFAULT_PAGE_SIZE_SETTING = "dbadmin.defaultPageSize";
 export const DYNAMIC_DEFAULT_COLUMN_WIDTH_SETTING =

@@ -35,8 +35,7 @@ export interface MessageHandlers {
   syncNativeJsonPreview?: MessageHandler;
   openForeignKeyTarget?: MessageHandler;
   searchForeignKeyMentions?: MessageHandler;
-  toggleQueryVisibility?: MessageHandler;
-  toggleHeaderVisibility?: MessageHandler;
+  openConnectionManager?: MessageHandler;
   updateLayout?: MessageHandler;
   loadDiagram?: MessageHandler;
   exportDiagram?: MessageHandler;
@@ -121,10 +120,8 @@ export class MessageRouter {
         return this.handlers.openForeignKeyTarget;
       case "searchForeignKeyMentions":
         return this.handlers.searchForeignKeyMentions;
-      case "toggleQueryVisibility":
-        return this.handlers.toggleQueryVisibility;
-      case "toggleHeaderVisibility":
-        return this.handlers.toggleHeaderVisibility;
+      case "openConnectionManager":
+        return this.handlers.openConnectionManager;
       case "updateLayout":
         return this.handlers.updateLayout;
       case "loadDiagram":

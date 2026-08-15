@@ -185,6 +185,24 @@ function getHtml(
     html, body {
       height: 100%;
     }
+    :root { --dbadmin-input-focus: #007acc; accent-color: var(--dbadmin-input-focus); }
+    input, textarea, select {
+      accent-color: var(--dbadmin-input-focus);
+      caret-color: var(--vscode-editorCursor-foreground, var(--dbadmin-input-focus));
+    }
+    input:focus, textarea:focus, select:focus,
+    input:focus-visible, textarea:focus-visible, select:focus-visible {
+      outline: none;
+      border-color: var(--dbadmin-input-focus);
+    }
+    input:-webkit-autofill,
+    input:-webkit-autofill:hover,
+    input:-webkit-autofill:focus {
+      -webkit-text-fill-color: var(--vscode-input-foreground);
+      caret-color: var(--dbadmin-input-focus);
+      box-shadow: 0 0 0 1000px var(--vscode-input-background) inset;
+      border-color: var(--dbadmin-input-focus);
+    }
     body {
       font-family: var(--vscode-font-family);
       color: var(--vscode-foreground);
@@ -245,9 +263,11 @@ function getHtml(
       line-height: 1.35;
       font-family: inherit;
       font-size: 13px;
+      overflow: hidden;
+      background-clip: padding-box;
     }
     input:focus, textarea:focus {
-      border-color: var(--vscode-focusBorder);
+      border-color: var(--dbadmin-input-focus);
     }
     input[readonly] {
       color: var(--vscode-descriptionForeground);
@@ -269,7 +289,7 @@ function getHtml(
       height: 14px;
       min-height: 14px;
       margin: 0;
-      accent-color: var(--vscode-button-background);
+      accent-color: var(--dbadmin-input-focus);
       cursor: pointer;
     }
     .row span {

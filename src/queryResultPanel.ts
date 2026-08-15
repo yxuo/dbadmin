@@ -159,6 +159,24 @@ export class QueryResultPanelManager {
     html, body {
       height: 100%;
     }
+    :root { --dbadmin-input-focus: #007acc; accent-color: var(--dbadmin-input-focus); }
+    input, textarea, select {
+      accent-color: var(--dbadmin-input-focus);
+      caret-color: var(--vscode-editorCursor-foreground, var(--dbadmin-input-focus));
+    }
+    input:focus, textarea:focus, select:focus,
+    input:focus-visible, textarea:focus-visible, select:focus-visible {
+      outline: none;
+      border-color: var(--dbadmin-input-focus);
+    }
+    input:-webkit-autofill,
+    input:-webkit-autofill:hover,
+    input:-webkit-autofill:focus {
+      -webkit-text-fill-color: var(--vscode-input-foreground);
+      caret-color: var(--dbadmin-input-focus);
+      box-shadow: 0 0 0 1000px var(--vscode-input-background) inset;
+      border-color: var(--dbadmin-input-focus);
+    }
     body {
       margin: 0;
       padding: 10px;
@@ -213,9 +231,11 @@ export class QueryResultPanelManager {
       padding: 0 10px;
       box-sizing: border-box;
       outline: none;
+      overflow: hidden;
+      background-clip: padding-box;
     }
     .search:focus {
-      border-color: var(--vscode-focusBorder);
+      border-color: var(--dbadmin-input-focus);
     }
     button {
       height: var(--control-height);
@@ -293,8 +313,13 @@ export class QueryResultPanelManager {
       min-width: 10px;
       text-align: right;
     }
-    th .filter {
+    th .filter-wrap {
       margin-top: 4px;
+      width: 100%;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    th .filter {
       width: 100%;
       height: 22px;
       border-radius: 4px;
@@ -305,9 +330,13 @@ export class QueryResultPanelManager {
       box-sizing: border-box;
       font-size: 11px;
       outline: none;
+      overflow: hidden;
+      background-clip: padding-box;
     }
     th .filter:focus {
-      border-color: var(--vscode-focusBorder);
+      border-color: var(--dbadmin-input-focus);
+      outline: none;
+      box-shadow: none;
     }
     td {
       max-width: 460px;
@@ -496,7 +525,7 @@ export class QueryResultPanelManager {
             '<span>' + esc(colName) + '</span>' +
             '<span class="sort">' + headSort(colName) + '</span>' +
           '</div>' +
-          '<input class="filter" data-filter-col="' + esc(colName) + '" value="' + currentFilter + '" placeholder="Filtro" />' +
+          '<div class="filter-wrap"><input class="filter" data-filter-col="' + esc(colName) + '" value="' + currentFilter + '" placeholder="Filtro" /></div>' +
         '</th>';
       }).join('');
 

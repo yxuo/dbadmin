@@ -314,6 +314,9 @@ function buildTable(data, context) {
       setColumnFilter(colIdx, colFilter.value, { from: "row" });
     });
 
+    const colFilterWrap = el("div", { className: "dbadmin-it__col-filter-wrap" });
+    colFilterWrap.append(colFilter);
+
     const resizer = el("div", { className: "dbadmin-it__resizer" });
     resizer.addEventListener("mousedown", (event) => {
       event.preventDefault();
@@ -321,7 +324,7 @@ function buildTable(data, context) {
       startResize(colIdx, event.clientX, resizer);
     });
 
-    stack.append(titleRow, colFilter);
+    stack.append(titleRow, colFilterWrap);
     th.append(stack, resizer);
     headerRow.appendChild(th);
   });
@@ -924,9 +927,6 @@ function injectStyles(root) {
   style.textContent = `
     .dbadmin-it {
       position: relative;
-      font-family: var(--vscode-font-family);
-      font-size: var(--vscode-font-size);
-      color: var(--vscode-foreground);
       display: flex;
       flex-direction: column;
       max-width: 100%;
@@ -934,6 +934,26 @@ function injectStyles(root) {
       border-radius: 4px;
       overflow: visible;
       background: var(--vscode-editor-background);
+      font-family: var(--vscode-font-family);
+      font-size: var(--vscode-font-size);
+      color: var(--vscode-foreground);
+      --dbadmin-input-focus: #007acc;
+      accent-color: var(--dbadmin-input-focus);
+    }
+    .dbadmin-it input,
+    .dbadmin-it textarea,
+    .dbadmin-it select {
+      accent-color: var(--dbadmin-input-focus);
+      caret-color: var(--vscode-editorCursor-foreground, var(--dbadmin-input-focus));
+    }
+    .dbadmin-it input:focus,
+    .dbadmin-it textarea:focus,
+    .dbadmin-it select:focus,
+    .dbadmin-it input:focus-visible,
+    .dbadmin-it textarea:focus-visible,
+    .dbadmin-it select:focus-visible {
+      outline: none;
+      border-color: var(--dbadmin-input-focus);
     }
     .dbadmin-it.is-resizing,
     .dbadmin-it.is-resizing * {
@@ -959,6 +979,8 @@ function injectStyles(root) {
       position: relative;
       display: flex;
       align-items: center;
+      border-radius: 2px;
+      overflow: hidden;
     }
     .dbadmin-it__search {
       flex: 1 1 auto;
@@ -973,6 +995,8 @@ function injectStyles(root) {
       outline: none;
       font-size: 12px;
       box-sizing: border-box;
+      overflow: hidden;
+      background-clip: padding-box;
     }
     .dbadmin-it__search:hover {
       border-color: var(--vscode-editorGroup-border);
@@ -983,7 +1007,9 @@ function injectStyles(root) {
       background: var(--vscode-input-background);
     }
     .dbadmin-it__search:focus {
-      border-color: var(--vscode-focusBorder);
+      border-color: var(--dbadmin-input-focus);
+      outline: none;
+      box-shadow: none;
     }
     .dbadmin-it__search-lupa {
       position: absolute;
@@ -1210,6 +1236,12 @@ function injectStyles(root) {
     .dbadmin-it__lupa[hidden] {
       display: none !important;
     }
+    .dbadmin-it__col-filter-wrap {
+      width: 100%;
+      min-width: 0;
+      border-radius: 2px;
+      overflow: hidden;
+    }
     .dbadmin-it__col-filter {
       display: block;
       width: 100%;
@@ -1224,9 +1256,14 @@ function injectStyles(root) {
       color: var(--vscode-input-foreground);
       font-size: 11px;
       outline: none;
+      overflow: hidden;
+      background-clip: padding-box;
     }
     .dbadmin-it__col-filter[hidden] {
       display: none !important;
+    }
+    .dbadmin-it__col-filter-wrap:has(> [hidden]) {
+      display: none;
     }
     .dbadmin-it__col-filter:hover {
       border-color: var(--vscode-editorGroup-border);
@@ -1237,7 +1274,9 @@ function injectStyles(root) {
       background: var(--vscode-input-background);
     }
     .dbadmin-it__col-filter:focus {
-      border-color: var(--vscode-focusBorder);
+      border-color: var(--dbadmin-input-focus);
+      outline: none;
+      box-shadow: none;
     }
     .dbadmin-it__popover {
       position: fixed;
@@ -1290,12 +1329,14 @@ function injectStyles(root) {
       min-width: 0;
       height: 20px;
       padding: 0 4px;
-      border: 1px solid var(--vscode-focusBorder, var(--vscode-editorGroup-border));
+      border: 1px solid var(--dbadmin-input-focus, #007acc);
       border-radius: 2px;
       background: var(--vscode-input-background);
       color: var(--vscode-input-foreground);
       font-size: 11px;
       outline: none;
+      overflow: hidden;
+      background-clip: padding-box;
     }
     .dbadmin-it__popover-clear {
       width: 18px;

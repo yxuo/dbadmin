@@ -18,6 +18,8 @@ import { TableDataPanelManager } from "./tableDataPanel";
 import { buildExportContent } from "./tableDataPanel/exportService";
 import { SettingsPanelManager } from "./settingsPanel";
 import { BackupPanelManager } from "./backupPanel";
+import { ConnectionActivityLog } from "./connectionActivityLog";
+import { ConnectionManagerPanelManager } from "./connectionManagerPanel";
 import { RestorePanelManager } from "./restorePanel";
 import { clearSchema } from "./backupRestoreService";
 import { TableMetadataPanelManager } from "./tableMetadataPanel";
@@ -35,6 +37,7 @@ import {
   syncSqlBookRunPerQueryContext,
   toggleSqlBookRunPerQueryEnabled,
 } from "./sqlBookRunPerQuery";
+import { copyDbAdminMcpConfig, openDbAdminMcpJson, setupDbAdminMcp } from "./mcp/register";
 
 const EXPAND_FILTER_RESULTS_SETTING = "dbadmin.expandFilterResults";
 const FILTER_INPUT_DEBOUNCE_MS = 180;
@@ -66,7 +69,11 @@ export function activate(context: vscode.ExtensionContext): void {
   void syncSqlBookRunPerQueryContext();
 
   const store = new ConnectionStore(context.globalStorageUri.fsPath);
+  const activityLog = new ConnectionActivityLog();
   const postgresService = new PostgresService();
+  const mcpRegistration = setupDbAdminMcp(context);
+  context.subscriptions.push(mcpRegistration);
+  postgresService.setActivityLog(activityLog);
   const treeProvider = new DatabaseTreeProvider(
     store,
     postgresService,
@@ -118,6 +125,14 @@ export function activate(context: vscode.ExtensionContext): void {
     store.getStorageFilePath(),
   );
   const backupPanels = new BackupPanelManager(context);
+  const connectionManagerPanels = new ConnectionManagerPanelManager(
+    context,
+    postgresService,
+    activityLog,
+  );
+  context.subscriptions.push({
+    dispose: () => connectionManagerPanels.dispose(),
+  });
   const restorePanels = new RestorePanelManager(context, async () => {
     await treeProvider.reloadAllMetadata();
   });
@@ -169,14 +184,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
-      if (event.affectsConfiguration("dbadmin.showQueryEditor")) {
-        tablePanels.notifyQueryVisibilityChanged();
-      }
-
-      if (event.affectsConfiguration("dbadmin.hideTabHeader")) {
-        tablePanels.notifyHeaderVisibilityChanged();
-      }
-
       if (event.affectsConfiguration("dbadmin.showFilterLabel")) {
         const nextShowFilterLabel = vscode.workspace
           .getConfiguration()
@@ -799,6 +806,28 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.commands.registerCommand(
+      "dbadmin.openConnectionManager",
+      async (node?: ConnectionNodeRef | { connection?: PostgresConnection }) => {
+        try {
+          const connection =
+            node && "type" in node && node.type === "connection"
+              ? node.connection
+              : node && "connection" in node && node.connection
+                ? node.connection
+                : await resolveConnectionFromNodeOrPicker(store);
+          if (!connection) {
+            return;
+          }
+          connectionManagerPanels.show(connection);
+        } catch (error) {
+          showError(error);
+        }
+      },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
       "dbadmin.deleteConnection",
       async (node?: { connection?: PostgresConnection }) => {
         try {
@@ -878,6 +907,27 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("dbadmin.openSettings", async () => {
       try {
         settingsPanel.show();
+      } catch (error) {
+        showError(error);
+      }
+    }),
+    vscode.commands.registerCommand("dbadmin.openMcpSettings", async () => {
+      try {
+        settingsPanel.show({ section: "mcp" });
+      } catch (error) {
+        showError(error);
+      }
+    }),
+    vscode.commands.registerCommand("dbadmin.openMcpJson", async () => {
+      try {
+        await openDbAdminMcpJson(context);
+      } catch (error) {
+        showError(error);
+      }
+    }),
+    vscode.commands.registerCommand("dbadmin.copyMcpConfig", async () => {
+      try {
+        await copyDbAdminMcpConfig(context);
       } catch (error) {
         showError(error);
       }
@@ -2637,6 +2687,24 @@ function buildFilterViewHtml(
       font-family: var(--vscode-font-family);
       overflow: hidden;
     }
+    :root { --dbadmin-input-focus: #007acc; accent-color: var(--dbadmin-input-focus); }
+    input, textarea, select {
+      accent-color: var(--dbadmin-input-focus);
+      caret-color: var(--vscode-editorCursor-foreground, var(--dbadmin-input-focus));
+    }
+    input:focus, textarea:focus, select:focus,
+    input:focus-visible, textarea:focus-visible, select:focus-visible {
+      outline: none;
+      border-color: var(--dbadmin-input-focus);
+    }
+    input:-webkit-autofill,
+    input:-webkit-autofill:hover,
+    input:-webkit-autofill:focus {
+      -webkit-text-fill-color: var(--vscode-input-foreground);
+      caret-color: var(--dbadmin-input-focus);
+      box-shadow: 0 0 0 1000px var(--vscode-input-background) inset;
+      border-color: var(--dbadmin-input-focus);
+    }
 
     .wrap {
       display: flex;
@@ -2660,6 +2728,8 @@ function buildFilterViewHtml(
       padding: 4px 8px;
       font-family: inherit;
       font-size: 12px;
+      overflow: hidden;
+      background-clip: padding-box;
     }
 
     .check-row {
@@ -2681,7 +2751,7 @@ function buildFilterViewHtml(
       border: 0;
       background: transparent;
       border-radius: 0;
-      accent-color: var(--vscode-focusBorder);
+      accent-color: var(--dbadmin-input-focus);
     }
 
   </style>

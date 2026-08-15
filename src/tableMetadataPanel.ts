@@ -196,9 +196,16 @@ export class TableMetadataPanelManager {
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <style>
     body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); background: var(--vscode-editor-background); padding: 16px; }
+    :root { --dbadmin-input-focus: #007acc; accent-color: var(--dbadmin-input-focus); }
+    input, textarea, select { accent-color: var(--dbadmin-input-focus); }
+    input:focus, textarea:focus, select:focus,
+    input:focus-visible, textarea:focus-visible, select:focus-visible {
+      outline: none;
+      border-color: var(--dbadmin-input-focus);
+    }
+    input[type=text] { width: 100%; height: 28px; padding: 4px 8px; border: 1px solid var(--vscode-input-border, transparent); background: var(--vscode-input-background); color: var(--vscode-input-foreground); overflow: hidden; background-clip: padding-box; }
     .field { margin-bottom: 12px; }
     label { display: block; margin-bottom: 4px; font-weight: 600; }
-    input[type=text] { width: 100%; height: 28px; padding: 4px 8px; border: 1px solid var(--vscode-input-border, transparent); background: var(--vscode-input-background); color: var(--vscode-input-foreground); }
     button { height: 30px; padding: 0 12px; border: 1px solid var(--vscode-button-border, transparent); background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
     .meta { color: var(--vscode-descriptionForeground); margin-bottom: 12px; }
   </style>

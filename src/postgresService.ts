@@ -1,6 +1,7 @@
 import { Client } from "pg";
 import { PostgresConnection, PostgresConnectionInput } from "./models";
 import { parseAdvancedFilterForDataType } from "./advancedFilter";
+import { ConnectionActivityLog } from "./connectionActivityLog";
 
 export interface SchemaObjectCounts {
   tables: number;
@@ -84,7 +85,91 @@ export interface SqlQueryResult {
   results?: SqlQueryResult[];
 }
 
+export interface ManagerServerInfo {
+  port: number;
+  version: string;
+  slowQueryLog: boolean | null;
+  activityTracking: boolean | null;
+  configFile: string | null;
+  dataDirectory: string | null;
+}
+
+export interface ManagerStatCounters {
+  blksRead: number;
+  blksHit: number;
+  tupInserted: number;
+  tupUpdated: number;
+  tupDeleted: number;
+  tupReturned: number;
+  tupFetched: number;
+  xactCommit: number;
+  xactRollback: number;
+  sessionsTotal: number;
+  sessionsActive: number;
+  sessionsIdle: number;
+}
+
+export interface ManagerDashboardSnapshot {
+  server: ManagerServerInfo;
+  counters: ManagerStatCounters | null;
+  sampledAt: string;
+}
+
 export class PostgresService {
+  private activityLog: ConnectionActivityLog | undefined;
+  private statementTimeoutMs = 0;
+
+  public setActivityLog(log: ConnectionActivityLog): void {
+    this.activityLog = log;
+  }
+
+  public setStatementTimeoutMs(ms: number | undefined): void {
+    const value = Number(ms);
+    this.statementTimeoutMs = Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+  }
+
+  private activity(
+    connectionId: string,
+    kind: "executing" | "result" | "completed" | "fail",
+    message: string,
+  ): void {
+    this.activityLog?.append(connectionId, kind, message);
+  }
+
+  private errorMessage(error: unknown): string {
+    if (error instanceof Error && error.message) {
+      return error.message;
+    }
+    return String(error || "Erro desconhecido");
+  }
+
+  private async withUserActivity<T>(
+    connectionId: string,
+    executingMessage: string,
+    run: () => Promise<T>,
+    onSuccess: (result: T, elapsedMs: number) => {
+      kind: "result" | "completed";
+      message: string;
+    },
+  ): Promise<T> {
+    this.activity(connectionId, "executing", executingMessage);
+    const started = Date.now();
+    try {
+      const result = await run();
+      const elapsedMs = Date.now() - started;
+      const success = onSuccess(result, elapsedMs);
+      this.activity(connectionId, success.kind, success.message);
+      return result;
+    } catch (error) {
+      this.activity(
+        connectionId,
+        "fail",
+        `Falha na execução : ${this.errorMessage(error)}`,
+      );
+      throw error;
+    }
+  }
+
   public async getVersion(connection: PostgresConnection): Promise<string> {
     return this.testConnection(connection);
   }
@@ -124,12 +209,26 @@ export class PostgresService {
     connection: PostgresConnection,
     name: string,
   ): Promise<void> {
-    const client = await this.connect({ ...connection, database: "postgres" });
-    try {
-      await client.query(`CREATE DATABASE ${this.quoteIdentifier(name)}`);
-    } finally {
-      await client.end();
-    }
+    const sql = `CREATE DATABASE ${this.quoteIdentifier(name)}`;
+    await this.withUserActivity(
+      connection.id,
+      `Executando: ${sql}`,
+      async () => {
+        const client = await this.connect({
+          ...connection,
+          database: "postgres",
+        });
+        try {
+          await client.query(sql);
+        } finally {
+          await client.end();
+        }
+      },
+      (_result, elapsedMs) => ({
+        kind: "completed",
+        message: `Concluído em ${elapsedMs}ms`,
+      }),
+    );
   }
 
   public async duplicateDatabase(
@@ -137,14 +236,26 @@ export class PostgresService {
     sourceName: string,
     targetName: string,
   ): Promise<void> {
-    const client = await this.connect({ ...connection, database: "postgres" });
-    try {
-      await client.query(
-        `CREATE DATABASE ${this.quoteIdentifier(targetName)} WITH TEMPLATE ${this.quoteIdentifier(sourceName)}`,
-      );
-    } finally {
-      await client.end();
-    }
+    const sql = `CREATE DATABASE ${this.quoteIdentifier(targetName)} WITH TEMPLATE ${this.quoteIdentifier(sourceName)}`;
+    await this.withUserActivity(
+      connection.id,
+      `Executando: ${sql}`,
+      async () => {
+        const client = await this.connect({
+          ...connection,
+          database: "postgres",
+        });
+        try {
+          await client.query(sql);
+        } finally {
+          await client.end();
+        }
+      },
+      (_result, elapsedMs) => ({
+        kind: "completed",
+        message: `Concluído em ${elapsedMs}ms`,
+      }),
+    );
   }
 
   public async renameDatabase(
@@ -152,26 +263,52 @@ export class PostgresService {
     oldName: string,
     newName: string,
   ): Promise<void> {
-    const client = await this.connect({ ...connection, database: "postgres" });
-    try {
-      await client.query(
-        `ALTER DATABASE ${this.quoteIdentifier(oldName)} RENAME TO ${this.quoteIdentifier(newName)}`,
-      );
-    } finally {
-      await client.end();
-    }
+    const sql = `ALTER DATABASE ${this.quoteIdentifier(oldName)} RENAME TO ${this.quoteIdentifier(newName)}`;
+    await this.withUserActivity(
+      connection.id,
+      `Executando: ${sql}`,
+      async () => {
+        const client = await this.connect({
+          ...connection,
+          database: "postgres",
+        });
+        try {
+          await client.query(sql);
+        } finally {
+          await client.end();
+        }
+      },
+      (_result, elapsedMs) => ({
+        kind: "completed",
+        message: `Concluído em ${elapsedMs}ms`,
+      }),
+    );
   }
 
   public async dropDatabase(
     connection: PostgresConnection,
     name: string,
   ): Promise<void> {
-    const client = await this.connect({ ...connection, database: "postgres" });
-    try {
-      await client.query(`DROP DATABASE ${this.quoteIdentifier(name)}`);
-    } finally {
-      await client.end();
-    }
+    const sql = `DROP DATABASE ${this.quoteIdentifier(name)}`;
+    await this.withUserActivity(
+      connection.id,
+      `Executando: ${sql}`,
+      async () => {
+        const client = await this.connect({
+          ...connection,
+          database: "postgres",
+        });
+        try {
+          await client.query(sql);
+        } finally {
+          await client.end();
+        }
+      },
+      (_result, elapsedMs) => ({
+        kind: "completed",
+        message: `Concluído em ${elapsedMs}ms`,
+      }),
+    );
   }
 
   public async createSchema(
@@ -179,15 +316,26 @@ export class PostgresService {
     databaseName: string,
     schemaName: string,
   ): Promise<void> {
-    const client = await this.connect({
-      ...connection,
-      database: databaseName,
-    });
-    try {
-      await client.query(`CREATE SCHEMA ${this.quoteIdentifier(schemaName)}`);
-    } finally {
-      await client.end();
-    }
+    const sql = `CREATE SCHEMA ${this.quoteIdentifier(schemaName)}`;
+    await this.withUserActivity(
+      connection.id,
+      `Executando: ${sql}`,
+      async () => {
+        const client = await this.connect({
+          ...connection,
+          database: databaseName,
+        });
+        try {
+          await client.query(sql);
+        } finally {
+          await client.end();
+        }
+      },
+      (_result, elapsedMs) => ({
+        kind: "completed",
+        message: `Concluído em ${elapsedMs}ms`,
+      }),
+    );
   }
 
   public async dropSchema(
@@ -195,17 +343,26 @@ export class PostgresService {
     databaseName: string,
     schemaName: string,
   ): Promise<void> {
-    const client = await this.connect({
-      ...connection,
-      database: databaseName,
-    });
-    try {
-      await client.query(
-        `DROP SCHEMA ${this.quoteIdentifier(schemaName)} CASCADE`,
-      );
-    } finally {
-      await client.end();
-    }
+    const sql = `DROP SCHEMA ${this.quoteIdentifier(schemaName)} CASCADE`;
+    await this.withUserActivity(
+      connection.id,
+      `Executando: ${sql}`,
+      async () => {
+        const client = await this.connect({
+          ...connection,
+          database: databaseName,
+        });
+        try {
+          await client.query(sql);
+        } finally {
+          await client.end();
+        }
+      },
+      (_result, elapsedMs) => ({
+        kind: "completed",
+        message: `Concluído em ${elapsedMs}ms`,
+      }),
+    );
   }
 
   public async truncateTable(
@@ -214,17 +371,26 @@ export class PostgresService {
     schemaName: string,
     tableName: string,
   ): Promise<void> {
-    const client = await this.connect({
-      ...connection,
-      database: databaseName,
-    });
-    try {
-      await client.query(
-        `TRUNCATE TABLE ${this.quoteIdentifier(schemaName)}.${this.quoteIdentifier(tableName)} CASCADE`,
-      );
-    } finally {
-      await client.end();
-    }
+    const sql = `TRUNCATE TABLE ${this.quoteIdentifier(schemaName)}.${this.quoteIdentifier(tableName)} CASCADE`;
+    await this.withUserActivity(
+      connection.id,
+      `Executando: ${sql}`,
+      async () => {
+        const client = await this.connect({
+          ...connection,
+          database: databaseName,
+        });
+        try {
+          await client.query(sql);
+        } finally {
+          await client.end();
+        }
+      },
+      (_result, elapsedMs) => ({
+        kind: "completed",
+        message: `Concluído em ${elapsedMs}ms`,
+      }),
+    );
   }
 
   public async listSchemas(
@@ -417,53 +583,74 @@ export class PostgresService {
       throw new Error("SQL vazio.");
     }
 
-    const client = await this.connect({
-      ...connection,
-      database: databaseName,
-    });
-    try {
-      const rawResult = await client.query(trimmed);
-      const result = rawResult;
-      const results = Array.isArray(rawResult)
-        ? rawResult.map((r) => ({
-            columns: (r.fields ?? []).map((f: { name: string }) => f.name),
-            rows: r.rows,
-            rowCount: r.rowCount ?? r.rows.length,
-            command: r.command ?? "",
-          }))
-        : [];
+    return this.withUserActivity(
+      connection.id,
+      `Executando: ${trimmed}`,
+      async () => {
+        const client = await this.connect({
+          ...connection,
+          database: databaseName,
+        });
+        try {
+          const rawResult = await client.query(trimmed);
+          const result = rawResult;
+          const results = Array.isArray(rawResult)
+            ? rawResult.map((r) => ({
+                columns: (r.fields ?? []).map((f: { name: string }) => f.name),
+                rows: r.rows,
+                rowCount: r.rowCount ?? r.rows.length,
+                command: r.command ?? "",
+              }))
+            : [];
 
-      if (!result) {
+          if (!result) {
+            return {
+              columns: [],
+              rows: [],
+              rowCount: 0,
+              command: "",
+              results: [],
+            };
+          }
+
+          if (results.length > 1) {
+            const last = results[results.length - 1];
+            return {
+              columns: last.columns,
+              rows: last.rows,
+              rowCount: last.rowCount,
+              command: last.command,
+              results: results,
+            };
+          }
+
+          return {
+            columns: (result.fields ?? []).map(
+              (f: { name: string }) => f.name,
+            ),
+            rows: result.rows,
+            rowCount: result.rowCount ?? result.rows.length,
+            command: result.command ?? "",
+            results: [],
+          };
+        } finally {
+          await client.end();
+        }
+      },
+      (result, elapsedMs) => {
+        const command = String(result.command || "").toUpperCase();
+        if (command === "SELECT" || result.columns.length > 0) {
+          return {
+            kind: "result",
+            message: `Resultado: ${result.rowCount} linhas em ${elapsedMs}ms`,
+          };
+        }
         return {
-          columns: [],
-          rows: [],
-          rowCount: 0,
-          command: "",
-          results: [],
+          kind: "completed",
+          message: `Concluído em ${elapsedMs}ms`,
         };
-      }
-
-      if (results.length > 1) {
-        const last = results[results.length - 1];
-        return {
-          columns: last.columns,
-          rows: last.rows,
-          rowCount: last.rowCount,
-          command: last.command,
-          results: results,
-        };
-      }
-
-      return {
-        columns: (result.fields ?? []).map((f: { name: string }) => f.name),
-        rows: result.rows,
-        rowCount: result.rowCount ?? result.rows.length,
-        command: result.command ?? "",
-        results: [],
-      };
-    } finally {
-      await client.end();
-    }
+      },
+    );
   }
 
   public async getFunctionDefinition(
@@ -514,16 +701,26 @@ export class PostgresService {
       "f",
       "function",
     );
-
-    const client = await this.connect({
-      ...connection,
-      database: databaseName,
-    });
-    try {
-      await client.query(`DROP FUNCTION ${row.signature}`);
-    } finally {
-      await client.end();
-    }
+    const sql = `DROP FUNCTION ${row.signature}`;
+    await this.withUserActivity(
+      connection.id,
+      `Executando: ${sql}`,
+      async () => {
+        const client = await this.connect({
+          ...connection,
+          database: databaseName,
+        });
+        try {
+          await client.query(sql);
+        } finally {
+          await client.end();
+        }
+      },
+      (_result, elapsedMs) => ({
+        kind: "completed",
+        message: `Concluído em ${elapsedMs}ms`,
+      }),
+    );
   }
 
   public async dropProcedure(
@@ -540,16 +737,26 @@ export class PostgresService {
       "p",
       "procedure",
     );
-
-    const client = await this.connect({
-      ...connection,
-      database: databaseName,
-    });
-    try {
-      await client.query(`DROP PROCEDURE ${row.signature}`);
-    } finally {
-      await client.end();
-    }
+    const sql = `DROP PROCEDURE ${row.signature}`;
+    await this.withUserActivity(
+      connection.id,
+      `Executando: ${sql}`,
+      async () => {
+        const client = await this.connect({
+          ...connection,
+          database: databaseName,
+        });
+        try {
+          await client.query(sql);
+        } finally {
+          await client.end();
+        }
+      },
+      (_result, elapsedMs) => ({
+        kind: "completed",
+        message: `Concluído em ${elapsedMs}ms`,
+      }),
+    );
   }
 
   public async getTriggerDefinition(
@@ -1035,6 +1242,32 @@ export class PostgresService {
     tableName: string,
     queryInput: TableDataQuery,
   ): Promise<TableDataResult> {
+    const executing = `Executando: SELECT * FROM ${this.quoteIdentifier(schemaName)}.${this.quoteIdentifier(tableName)} LIMIT ${Math.max(1, Math.min(500, Math.trunc(queryInput.limit || 100)))}`;
+    return this.withUserActivity(
+      connection.id,
+      executing,
+      () =>
+        this.fetchTableData(
+          connection,
+          databaseName,
+          schemaName,
+          tableName,
+          queryInput,
+        ),
+      (result, elapsedMs) => ({
+        kind: "result",
+        message: `Resultado: ${result.rows.length} linhas em ${elapsedMs}ms`,
+      }),
+    );
+  }
+
+  private async fetchTableData(
+    connection: PostgresConnection,
+    databaseName: string,
+    schemaName: string,
+    tableName: string,
+    queryInput: TableDataQuery,
+  ): Promise<TableDataResult> {
     const columns = await this.getTableColumns(
       connection,
       databaseName,
@@ -1196,137 +1429,152 @@ OFFSET ${offsetPlaceholder}`.trim();
     tableName: string,
     payload: TableSavePayload,
   ): Promise<void> {
-    const client = await this.connect({
-      ...connection,
-      database: databaseName,
-    });
+    const qualified = `${this.quoteIdentifier(schemaName)}.${this.quoteIdentifier(tableName)}`;
+    const changeCount =
+      (payload.updates?.length || 0) +
+      (payload.inserts?.length || 0) +
+      (payload.deletes?.length || 0);
+    await this.withUserActivity(
+      connection.id,
+      `Executando: SALVAR ${qualified} (${changeCount} alterações)`,
+      async () => {
+        const client = await this.connect({
+          ...connection,
+          database: databaseName,
+        });
 
-    try {
-      const columns = await this.getTableColumns(
-        connection,
-        databaseName,
-        schemaName,
-        tableName,
-      );
-      const validColumns = new Set(columns.map((column) => column.name));
-      const columnsByName = new Map(
-        columns.map((column) => [column.name, column]),
-      );
-      const qualifiedTable = `${this.quoteIdentifier(schemaName)}.${this.quoteIdentifier(tableName)}`;
-      const deleteSet = new Set((payload.deletes ?? []).filter(Boolean));
+        try {
+          const columns = await this.getTableColumns(
+            connection,
+            databaseName,
+            schemaName,
+            tableName,
+          );
+          const validColumns = new Set(columns.map((column) => column.name));
+          const columnsByName = new Map(
+            columns.map((column) => [column.name, column]),
+          );
+          const qualifiedTable = `${this.quoteIdentifier(schemaName)}.${this.quoteIdentifier(tableName)}`;
+          const deleteSet = new Set((payload.deletes ?? []).filter(Boolean));
 
-      await client.query("BEGIN");
+          await client.query("BEGIN");
 
-      for (const ctid of deleteSet) {
-        await client.query(
-          `DELETE FROM ${qualifiedTable} WHERE ctid::text = $1`,
-          [ctid],
-        );
-      }
-
-      for (const update of payload.updates) {
-        if (!update.ctid) {
-          continue;
-        }
-
-        if (deleteSet.has(update.ctid)) {
-          continue;
-        }
-
-        const assignments: string[] = [];
-        const params: unknown[] = [];
-
-        for (const [columnName, value] of Object.entries(update.values)) {
-          if (!validColumns.has(columnName)) {
-            continue;
-          }
-
-          const columnMeta = columnsByName.get(columnName);
-          if (!columnMeta) {
-            continue;
-          }
-
-          const quotedColumn = this.quoteIdentifier(columnName);
-
-          if (value === "__DBADMIN_DEFAULT__") {
-            assignments.push(`${quotedColumn} = DEFAULT`);
-          } else {
-            const normalizedValue = this.normalizeValueForColumn(
-              value,
-              columnMeta,
-            );
-            params.push(normalizedValue);
-            const placeholder = `$${params.length}`;
-            assignments.push(
-              `${quotedColumn} = ${this.castValuePlaceholder(placeholder, columnMeta)}`,
+          for (const ctid of deleteSet) {
+            await client.query(
+              `DELETE FROM ${qualifiedTable} WHERE ctid::text = $1`,
+              [ctid],
             );
           }
-        }
 
-        if (assignments.length === 0) {
-          continue;
-        }
+          for (const update of payload.updates) {
+            if (!update.ctid) {
+              continue;
+            }
 
-        params.push(update.ctid);
-        const ctidParam = `$${params.length}`;
+            if (deleteSet.has(update.ctid)) {
+              continue;
+            }
 
-        const sql = `UPDATE ${qualifiedTable}
+            const assignments: string[] = [];
+            const params: unknown[] = [];
+
+            for (const [columnName, value] of Object.entries(update.values)) {
+              if (!validColumns.has(columnName)) {
+                continue;
+              }
+
+              const columnMeta = columnsByName.get(columnName);
+              if (!columnMeta) {
+                continue;
+              }
+
+              const quotedColumn = this.quoteIdentifier(columnName);
+
+              if (value === "__DBADMIN_DEFAULT__") {
+                assignments.push(`${quotedColumn} = DEFAULT`);
+              } else {
+                const normalizedValue = this.normalizeValueForColumn(
+                  value,
+                  columnMeta,
+                );
+                params.push(normalizedValue);
+                const placeholder = `$${params.length}`;
+                assignments.push(
+                  `${quotedColumn} = ${this.castValuePlaceholder(placeholder, columnMeta)}`,
+                );
+              }
+            }
+
+            if (assignments.length === 0) {
+              continue;
+            }
+
+            params.push(update.ctid);
+            const ctidParam = `$${params.length}`;
+
+            const sql = `UPDATE ${qualifiedTable}
 SET ${assignments.join(", ")}
 WHERE ctid::text = ${ctidParam}`;
 
-        await client.query(sql, params);
-      }
-
-      for (const insertRow of payload.inserts) {
-        const insertColumns: string[] = [];
-        const insertValuesSql: string[] = [];
-        const params: unknown[] = [];
-
-        for (const [columnName, value] of Object.entries(insertRow)) {
-          if (!validColumns.has(columnName)) {
-            continue;
+            await client.query(sql, params);
           }
 
-          const columnMeta = columnsByName.get(columnName);
-          if (!columnMeta) {
-            continue;
-          }
+          for (const insertRow of payload.inserts) {
+            const insertColumns: string[] = [];
+            const insertValuesSql: string[] = [];
+            const params: unknown[] = [];
 
-          insertColumns.push(this.quoteIdentifier(columnName));
+            for (const [columnName, value] of Object.entries(insertRow)) {
+              if (!validColumns.has(columnName)) {
+                continue;
+              }
 
-          if (value === "__DBADMIN_DEFAULT__") {
-            insertValuesSql.push("DEFAULT");
-          } else {
-            const normalizedValue = this.normalizeValueForColumn(
-              value,
-              columnMeta,
-            );
-            params.push(normalizedValue);
-            const placeholder = `$${params.length}`;
-            insertValuesSql.push(
-              this.castValuePlaceholder(placeholder, columnMeta),
-            );
-          }
-        }
+              const columnMeta = columnsByName.get(columnName);
+              if (!columnMeta) {
+                continue;
+              }
 
-        if (insertColumns.length === 0) {
-          await client.query(`INSERT INTO ${qualifiedTable} DEFAULT VALUES`);
-          continue;
-        }
+              insertColumns.push(this.quoteIdentifier(columnName));
 
-        const sql = `INSERT INTO ${qualifiedTable} (${insertColumns.join(", ")})
+              if (value === "__DBADMIN_DEFAULT__") {
+                insertValuesSql.push("DEFAULT");
+              } else {
+                const normalizedValue = this.normalizeValueForColumn(
+                  value,
+                  columnMeta,
+                );
+                params.push(normalizedValue);
+                const placeholder = `$${params.length}`;
+                insertValuesSql.push(
+                  this.castValuePlaceholder(placeholder, columnMeta),
+                );
+              }
+            }
+
+            if (insertColumns.length === 0) {
+              await client.query(`INSERT INTO ${qualifiedTable} DEFAULT VALUES`);
+              continue;
+            }
+
+            const sql = `INSERT INTO ${qualifiedTable} (${insertColumns.join(", ")})
 VALUES (${insertValuesSql.join(", ")})`;
 
-        await client.query(sql, params);
-      }
+            await client.query(sql, params);
+          }
 
-      await client.query("COMMIT");
-    } catch (error: unknown) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      await client.end();
-    }
+          await client.query("COMMIT");
+        } catch (error: unknown) {
+          await client.query("ROLLBACK");
+          throw error;
+        } finally {
+          await client.end();
+        }
+      },
+      (_result, elapsedMs) => ({
+        kind: "completed",
+        message: `Concluído em ${elapsedMs}ms`,
+      }),
+    );
   }
 
   private parseNullFilterToken(value: string): "null" | "not-null" | undefined {
@@ -1974,6 +2222,254 @@ LIMIT ${perTableLimit}`;
     return map;
   }
 
+  public async connectClient(
+    connection: PostgresConnectionInput,
+  ): Promise<Client> {
+    return this.connect(connection);
+  }
+
+  public async getManagerDashboardSnapshot(
+    client: Client,
+    connection: PostgresConnection,
+  ): Promise<ManagerDashboardSnapshot> {
+    const server = await this.fetchManagerServerInfo(client, connection);
+    let counters: ManagerStatCounters | null = null;
+    try {
+      counters = await this.fetchManagerStatCounters(
+        client,
+        connection.database,
+      );
+    } catch {
+      counters = null;
+    }
+    return {
+      server,
+      counters,
+      sampledAt: new Date().toISOString(),
+    };
+  }
+
+  private async fetchManagerServerInfo(
+    client: Client,
+    connection: PostgresConnection,
+  ): Promise<ManagerServerInfo> {
+    const result = await client.query<{
+      version: string;
+      slow_query: string | null;
+      track_activities: string | null;
+      config_file: string | null;
+      data_directory: string | null;
+    }>(
+      `SELECT
+         version() AS version,
+         current_setting('log_min_duration_statement', true) AS slow_query,
+         current_setting('track_activities', true) AS track_activities,
+         current_setting('config_file', true) AS config_file,
+         current_setting('data_directory', true) AS data_directory`,
+    );
+    const row = result.rows[0];
+    const versionRaw = row?.version ?? "Unknown";
+    const versionMatch = versionRaw.match(/PostgreSQL\s+([\d.]+)/i);
+    const slowRaw = String(row?.slow_query ?? "").trim();
+    let slowQueryLog: boolean | null = null;
+    if (slowRaw) {
+      slowQueryLog = slowRaw !== "-1";
+    }
+    const trackRaw = String(row?.track_activities ?? "")
+      .trim()
+      .toLowerCase();
+    let activityTracking: boolean | null = null;
+    if (trackRaw === "on" || trackRaw === "off") {
+      activityTracking = trackRaw === "on";
+    }
+
+    return {
+      port: connection.port,
+      version: versionMatch?.[1] ?? versionRaw,
+      slowQueryLog,
+      activityTracking,
+      configFile: row?.config_file || null,
+      dataDirectory: row?.data_directory || null,
+    };
+  }
+
+  public async fetchManagerStatCounters(
+    client: Client,
+    databaseName: string,
+  ): Promise<ManagerStatCounters> {
+    void databaseName;
+    const [dbResult, sessionResult] = await Promise.all([
+      client.query<{
+        blks_read: string;
+        blks_hit: string;
+        tup_inserted: string;
+        tup_updated: string;
+        tup_deleted: string;
+        tup_returned: string;
+        tup_fetched: string;
+        xact_commit: string;
+        xact_rollback: string;
+      }>(
+        `SELECT
+           blks_read::text,
+           blks_hit::text,
+           tup_inserted::text,
+           tup_updated::text,
+           tup_deleted::text,
+           tup_returned::text,
+           tup_fetched::text,
+           xact_commit::text,
+           xact_rollback::text
+         FROM pg_stat_database
+         WHERE datname = current_database()
+         LIMIT 1`,
+      ),
+      client.query<{
+        total: string;
+        active: string;
+        idle: string;
+      }>(
+        `SELECT
+           count(*)::text AS total,
+           count(*) FILTER (WHERE state = 'active')::text AS active,
+           count(*) FILTER (WHERE state = 'idle')::text AS idle
+         FROM pg_stat_activity
+         WHERE pid <> pg_backend_pid()`,
+      ),
+    ]);
+    const row = dbResult.rows[0];
+    const sessions = sessionResult.rows[0];
+    return {
+      blksRead: Number(row?.blks_read || 0),
+      blksHit: Number(row?.blks_hit || 0),
+      tupInserted: Number(row?.tup_inserted || 0),
+      tupUpdated: Number(row?.tup_updated || 0),
+      tupDeleted: Number(row?.tup_deleted || 0),
+      tupReturned: Number(row?.tup_returned || 0),
+      tupFetched: Number(row?.tup_fetched || 0),
+      xactCommit: Number(row?.xact_commit || 0),
+      xactRollback: Number(row?.xact_rollback || 0),
+      sessionsTotal: Number(sessions?.total || 0),
+      sessionsActive: Number(sessions?.active || 0),
+      sessionsIdle: Number(sessions?.idle || 0),
+    };
+  }
+
+  /** @deprecated Prefer getManagerDashboardSnapshot with a reused client. */
+  public async getConnectionDashboard(
+    connection: PostgresConnection,
+  ): Promise<{
+    version: string;
+    host: string;
+    port: number;
+    database: string;
+    user: string;
+    startTime: string | null;
+    maxConnections: string | null;
+    activeConnections: number;
+  }> {
+    const client = await this.connect(connection);
+    try {
+      const snapshot = await this.getManagerDashboardSnapshot(
+        client,
+        connection,
+      );
+      return {
+        version: snapshot.server.version,
+        host: connection.host,
+        port: connection.port,
+        database: connection.database,
+        user: connection.user,
+        startTime: null,
+        maxConnections: null,
+        activeConnections: 0,
+      };
+    } finally {
+      await client.end();
+    }
+  }
+
+  public async listConnectionProcesses(
+    connection: PostgresConnection,
+    client?: Client,
+  ): Promise<
+    Array<{
+      pid: number;
+      usename: string | null;
+      datname: string | null;
+      applicationName: string | null;
+      clientAddr: string | null;
+      state: string | null;
+      query: string | null;
+      backendStart: string | null;
+    }>
+  > {
+    const owned = !client;
+    const active = client ?? (await this.connect(connection));
+    try {
+      const result = await active.query<{
+        pid: number;
+        usename: string | null;
+        datname: string | null;
+        application_name: string | null;
+        client_addr: string | null;
+        state: string | null;
+        query: string | null;
+        backend_start: Date | null;
+      }>(
+        `SELECT
+           pid,
+           usename,
+           datname,
+           application_name,
+           host(client_addr) AS client_addr,
+           state,
+           query,
+           backend_start
+         FROM pg_stat_activity
+         WHERE pid <> pg_backend_pid()
+         ORDER BY backend_start DESC NULLS LAST
+         LIMIT 200`,
+      );
+      return result.rows.map((row) => ({
+        pid: row.pid,
+        usename: row.usename,
+        datname: row.datname,
+        applicationName: row.application_name,
+        clientAddr: row.client_addr,
+        state: row.state,
+        query: row.query,
+        backendStart: row.backend_start
+          ? new Date(row.backend_start).toISOString()
+          : null,
+      }));
+    } finally {
+      if (owned) {
+        await active.end();
+      }
+    }
+  }
+
+  public async terminateConnectionBackend(
+    connection: PostgresConnection,
+    pid: number,
+    client?: Client,
+  ): Promise<boolean> {
+    const owned = !client;
+    const active = client ?? (await this.connect(connection));
+    try {
+      const result = await active.query<{ ok: boolean }>(
+        `SELECT pg_terminate_backend($1) AS ok`,
+        [pid],
+      );
+      return Boolean(result.rows[0]?.ok);
+    } finally {
+      if (owned) {
+        await active.end();
+      }
+    }
+  }
+
   private async connect(connection: PostgresConnectionInput): Promise<Client> {
     const client = new Client({
       host: connection.host,
@@ -1986,6 +2482,11 @@ LIMIT ${perTableLimit}`;
     });
 
     await client.connect();
+    if (this.statementTimeoutMs > 0) {
+      await client.query("SELECT set_config('statement_timeout', $1, false)", [
+        String(this.statementTimeoutMs),
+      ]);
+    }
     return client;
   }
 }

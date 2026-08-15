@@ -52,8 +52,6 @@ import {
 } from "./tableDataPanel/types";
 import {
   PanelConfig,
-  SHOW_QUERY_SETTING,
-  HIDE_TAB_HEADER_SETTING,
 } from "./tableDataPanel/config";
 import { PanelRegistry } from "./tableDataPanel/panelRegistry";
 import {
@@ -151,11 +149,7 @@ export class TableDataPanelManager {
       },
     );
 
-    panel.webview.html = this.buildHtml(
-      panel.webview,
-      this.getShowQueryEditor(),
-      this.getHideTabHeader(),
-    );
+    panel.webview.html = this.buildHtml(panel.webview);
     this.panelRegistry.setNode(panel, input.node);
     this.panelRegistry.setIsNewTab(panel, input.newTab);
     this.panelRegistry.setState(panel, this.cloneTableState(initialState));
@@ -188,14 +182,6 @@ export class TableDataPanelManager {
         const currentNode = this.panelRegistry.getNode(panel) ?? input.node;
 
         if (message.type === "ready") {
-          panel.webview.postMessage({
-            type: "queryVisibility",
-            showQueryEditor: this.getShowQueryEditor(),
-          });
-          panel.webview.postMessage({
-            type: "headerVisibility",
-            hideTabHeader: this.getHideTabHeader(),
-          });
           await this.refreshPanel(panel, currentNode, initialState, {
             retryTimeout: input.restoringOnStartup === true,
           });
@@ -442,29 +428,14 @@ export class TableDataPanelManager {
           return;
         }
 
-        if (message.type === "toggleQueryVisibility") {
-          const current = this.getShowQueryEditor();
-          await vscode.workspace
-            .getConfiguration()
-            .update(
-              SHOW_QUERY_SETTING,
-              !current,
-              vscode.ConfigurationTarget.Global,
-            );
-          this.notifyQueryVisibilityChanged();
-          return;
-        }
-
-        if (message.type === "toggleHeaderVisibility") {
-          const current = this.getHideTabHeader();
-          await vscode.workspace
-            .getConfiguration()
-            .update(
-              HIDE_TAB_HEADER_SETTING,
-              !current,
-              vscode.ConfigurationTarget.Global,
-            );
-          this.notifyHeaderVisibilityChanged();
+        if (message.type === "openConnectionManager") {
+          await vscode.commands.executeCommand(
+            "dbadmin.openConnectionManager",
+            {
+              type: "connection",
+              connection: currentNode.connection,
+            },
+          );
           return;
         }
 
@@ -629,11 +600,7 @@ export class TableDataPanelManager {
         },
       );
 
-      panel.webview.html = this.buildHtml(
-        panel.webview,
-        this.getShowQueryEditor(),
-        this.getHideTabHeader(),
-      );
+      panel.webview.html = this.buildHtml(panel.webview);
 
       panel.iconPath = vscode.Uri.file(
         this.context.asAbsolutePath("resources/icons/table-global.svg"),
@@ -647,14 +614,6 @@ export class TableDataPanelManager {
           }
 
           if (message.type === "ready") {
-            panel!.webview.postMessage({
-              type: "queryVisibility",
-              showQueryEditor: this.getShowQueryEditor(),
-            });
-            panel!.webview.postMessage({
-              type: "headerVisibility",
-              hideTabHeader: this.getHideTabHeader(),
-            });
             await this.postQueryResultData(panel!, context.input, context.state);
             return;
           }
@@ -812,7 +771,6 @@ export class TableDataPanelManager {
         ...state,
         searchMode: "local",
       },
-      showQueryEditor: true,
       dynamicDefaultColumnWidth: this.getDynamicDefaultColumnWidth(),
       layout: undefined,
       readOnlyResultMode: true,
@@ -885,7 +843,6 @@ export class TableDataPanelManager {
           tableName: node.objectName,
           result,
           state,
-          showQueryEditor: this.getShowQueryEditor(),
           dynamicDefaultColumnWidth: this.getDynamicDefaultColumnWidth(),
           layout: this.panelRegistry.getLayout(panel),
         });
@@ -1001,14 +958,6 @@ export class TableDataPanelManager {
     await persistStoredLayout(this.context, node, layout);
   }
 
-  private getShowQueryEditor(): boolean {
-    return this.panelConfig.getShowQueryEditor();
-  }
-
-  private getHideTabHeader(): boolean {
-    return this.panelConfig.getHideTabHeader();
-  }
-
   private getPersistLayoutOutsideRestore(): boolean {
     return this.panelConfig.getPersistLayoutOutsideRestore();
   }
@@ -1019,26 +968,6 @@ export class TableDataPanelManager {
 
   private getDynamicDefaultColumnWidth(): boolean {
     return this.panelConfig.getDynamicDefaultColumnWidth();
-  }
-
-  public notifyQueryVisibilityChanged(): void {
-    const showQueryEditor = this.getShowQueryEditor();
-    for (const [_panel, panelNode] of this.panelRegistry.getAllNodes()) {
-      _panel.webview.postMessage({
-        type: "queryVisibility",
-        showQueryEditor,
-      });
-    }
-  }
-
-  public notifyHeaderVisibilityChanged(): void {
-    const hideTabHeader = this.getHideTabHeader();
-    for (const [_panel, panelNode] of this.panelRegistry.getAllNodes()) {
-      _panel.webview.postMessage({
-        type: "headerVisibility",
-        hideTabHeader,
-      });
-    }
   }
 
   public notifyIntegratedTableModeChanged(): void {
@@ -1349,16 +1278,13 @@ export class TableDataPanelManager {
     }
   }
 
-  private buildHtml(
-    webview: vscode.Webview,
-    initialShowQueryEditor: boolean = true,
-    initialHideTabHeader: boolean = false,
-  ): string {
+  private buildHtml(webview: vscode.Webview): string {
     const nonce = String(Date.now());
     const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource}; script-src 'nonce-${nonce}'; connect-src ${webview.cspSource};`;
     const defaultPageSize = this.getDefaultPageSize();
     const codeEditorStyles = buildCodeEditorStyles();
     const codeEditorMarkup = buildCodeEditorMarkup();
+    const queryCodeEditorMarkup = buildCodeEditorMarkup("queryCodeEditor");
     const codeEditorScript = buildCodeEditorScript();
     const codiconsCssUri = webview.asWebviewUri(
       vscode.Uri.joinPath(
@@ -1390,6 +1316,24 @@ export class TableDataPanelManager {
   <link href="${codiconsCssUri}" rel="stylesheet" />
   <style>
     html, body { height: 100%; }
+    :root { --dbadmin-input-focus: #007acc; accent-color: var(--dbadmin-input-focus); }
+    input, textarea, select {
+      accent-color: var(--dbadmin-input-focus);
+      caret-color: var(--vscode-editorCursor-foreground, var(--dbadmin-input-focus));
+    }
+    input:focus, textarea:focus, select:focus,
+    input:focus-visible, textarea:focus-visible, select:focus-visible {
+      outline: none;
+      border-color: var(--dbadmin-input-focus);
+    }
+    input:-webkit-autofill,
+    input:-webkit-autofill:hover,
+    input:-webkit-autofill:focus {
+      -webkit-text-fill-color: var(--vscode-input-foreground);
+      caret-color: var(--dbadmin-input-focus);
+      box-shadow: 0 0 0 1000px var(--vscode-input-background) inset;
+      border-color: var(--dbadmin-input-focus);
+    }
     body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); background: var(--vscode-editor-background); margin: 0; padding: 0; overflow: hidden; }
     .shell { height: 100vh; min-height: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; margin-top: 2px; position: relative; }
     .loading-bar { position: fixed; top: 0; left: 0; right: 0; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; transition: opacity 120ms ease; z-index: 90; }
@@ -1399,7 +1343,7 @@ export class TableDataPanelManager {
       0% { left: -21%; }
       100% { left: 100%; }
     }
-    .header { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; padding: 0px 4px; }
+    .header { display: none; }
     .title { font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
     .title svg { width: 14px; height: 14px; margin-top: 4px; }
     .title .info-item { display: inline-flex; align-items: center; gap: 2px; min-width: 0; }
@@ -1436,7 +1380,7 @@ export class TableDataPanelManager {
     .simple-menu .menu-submenu > button { border-radius: 6px; padding: 0 4px; }
     .query-container { padding: 0 4px; flex: 0 0 auto; margin-bottom: -2px; position: relative; }
     .query { width: 100%; box-sizing: border-box; resize: none; border: 1px solid var(--vscode-input-border, transparent); background: var(--vscode-input-background); color: var(--vscode-input-foreground); border-radius: 6px; padding: 6px 34px 6px 8px; line-height: 1.2; height: 28px; min-height: 28px; overflow: auto; outline: none; font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; }
-    .query:focus { border-color: var(--vscode-focusBorder); }
+    .query:focus { border-color: var(--dbadmin-input-focus); }
     .query { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--vscode-descriptionForeground) 35%, transparent) transparent; }
     .query::-webkit-scrollbar { width: 8px; height: 8px; }
     .query::-webkit-scrollbar-button { display: none; }
@@ -1446,15 +1390,49 @@ export class TableDataPanelManager {
     .query-resizer { position: absolute; right: 5px; bottom: 4px; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; cursor: ns-resize; user-select: none; }
     .query-resizer svg { width: 14px; height: 14px; pointer-events: none; }
     .toolbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 0 4px; flex: 0 0 auto; }
-    #toolbarMenuBtn { display: none; margin-left: auto; }
-    body.header-hidden .header { display: none; }
-    body.header-hidden #toolbarMenuBtn { display: inline-flex; }
+    #toolbarMenuBtn { display: inline-flex; margin-left: auto; }
     .grow { flex: 1 1 150px; min-width: 150px; }
-    .search-wrap { position: relative; }
-    .search-wrap .input { width: 100%; }
+    .search-wrap { position: relative; border-radius: 6px; overflow: hidden; }
+    .search-wrap .input {
+      width: 100%;
+      border: 1px solid transparent;
+      background: transparent;
+      padding-right: 30px;
+      outline: none;
+    }
+    .search-wrap:hover .input:not(:focus) {
+      border-color: color-mix(in srgb, var(--vscode-foreground) 16%, var(--vscode-panel-border));
+    }
+    .search-wrap.is-active .input,
+    .search-wrap.has-value .input,
+    .search-wrap .input:focus {
+      background: var(--vscode-input-background);
+      color: var(--vscode-input-foreground);
+    }
+    .search-wrap.has-value .input:not(:focus) {
+      border-color: var(--vscode-input-border, color-mix(in srgb, var(--vscode-foreground) 22%, var(--vscode-panel-border)));
+    }
+    .search-wrap.is-active .input,
+    .search-wrap .input:focus {
+      border-color: var(--dbadmin-input-focus);
+    }
+    .search-icon {
+      position: absolute;
+      right: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 16px;
+      height: 16px;
+      color: var(--vscode-descriptionForeground);
+      pointer-events: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .search-icon .codicon { font-size: 16px; line-height: 1; }
     .search-context-placeholder {
       position: absolute;
-      inset: 0;
+      inset: 1px 30px 1px 1px;
       padding: 0 8px;
       display: none;
       align-items: center;
@@ -1465,19 +1443,91 @@ export class TableDataPanelManager {
       overflow: hidden;
       white-space: nowrap;
       text-overflow: ellipsis;
+      border-radius: 5px;
     }
     .search-context-placeholder svg { width: 12px; height: 12px; flex: 0 0 auto; }
     .search-context-placeholder .codicon { font-size: 13px; line-height: 1; margin-right: 1px; }
     .search-context-placeholder .info-item { display: inline-flex; align-items: center; gap: 0; min-width: 0; }
     .search-context-placeholder .info-fixed { flex: 0 0 auto; white-space: nowrap; }
     .search-context-placeholder .info-conn { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-    .input { border: 1px solid var(--vscode-input-border, transparent); background: var(--vscode-input-background); color: var(--vscode-input-foreground); border-radius: 6px; padding: 0 8px; height: 28px; box-sizing: border-box; }
+    .input { border: 1px solid var(--vscode-input-border, color-mix(in srgb, var(--vscode-foreground) 18%, var(--vscode-panel-border))); background: var(--vscode-input-background); color: var(--vscode-input-foreground); border-radius: 6px; padding: 0 8px; height: 28px; box-sizing: border-box; overflow: hidden; background-clip: padding-box; }
     .btn-icon-fix { padding: 0px 0px 2px 0px !important; }
     button { border: 1px solid var(--vscode-button-border, transparent); background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-radius: 6px; padding: 0 10px; height: 28px; cursor: pointer; box-sizing: border-box; }
     button.secondary { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
     button:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground)); border-color: var(--vscode-focusBorder); }
     button.primary:hover:not(:disabled) { background: var(--vscode-button-hoverBackground); border-color: var(--vscode-button-border, transparent); }
     button:focus-visible { outline: none; box-shadow: 0 0 0 1px var(--vscode-focusBorder) inset; }
+    .toolbar > button.btn-icon,
+    .toolbar > div > button.btn-icon,
+    .toolbar .mode-select > button.btn-icon,
+    .diagram-toolbar > button.btn-icon {
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--vscode-foreground);
+    }
+    .toolbar > button.btn-icon.secondary,
+    .toolbar > div > button.btn-icon.secondary,
+    .toolbar .mode-select > button.btn-icon.secondary,
+    .diagram-toolbar > button.btn-icon.secondary {
+      background: transparent;
+      color: var(--vscode-foreground);
+    }
+    .toolbar > button.btn-icon.primary,
+    .toolbar > div > button.btn-icon.primary,
+    .diagram-toolbar > button.btn-icon.primary {
+      background: transparent;
+      border-color: transparent;
+      color: var(--vscode-button-background);
+    }
+    .toolbar > button.btn-icon:hover:not(:disabled),
+    .toolbar > div > button.btn-icon:hover:not(:disabled),
+    .toolbar .mode-select > button.btn-icon:hover:not(:disabled),
+    .diagram-toolbar > button.btn-icon:hover:not(:disabled) {
+      background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+      border-color: transparent;
+      color: var(--vscode-foreground);
+    }
+    .toolbar > button.btn-icon.primary:hover:not(:disabled),
+    .toolbar > div > button.btn-icon.primary:hover:not(:disabled),
+    .diagram-toolbar > button.btn-icon.primary:hover:not(:disabled) {
+      background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+      border-color: transparent;
+      color: var(--vscode-button-background);
+    }
+    .toolbar > button:not(.btn-icon),
+    .toolbar > div > button:not(.btn-icon),
+    .diagram-toolbar > button:not(.btn-icon) {
+      border: 1px solid color-mix(in srgb, var(--vscode-foreground) 14%, var(--vscode-panel-border));
+      background: color-mix(in srgb, var(--vscode-foreground) 3.5%, transparent);
+      color: var(--vscode-foreground);
+    }
+    .toolbar > button.primary:not(.btn-icon),
+    .toolbar > div > button.primary:not(.btn-icon),
+    .diagram-toolbar > button.primary:not(.btn-icon) {
+      border-color: color-mix(in srgb, var(--vscode-button-background) 40%, var(--vscode-panel-border));
+      background: color-mix(in srgb, var(--vscode-button-background) 8%, transparent);
+      color: var(--vscode-button-background);
+    }
+    .toolbar > button:not(.btn-icon):hover:not(:disabled),
+    .toolbar > div > button:not(.btn-icon):hover:not(:disabled),
+    .diagram-toolbar > button:not(.btn-icon):hover:not(:disabled) {
+      background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+      border-color: color-mix(in srgb, var(--vscode-foreground) 24%, var(--vscode-panel-border));
+      color: var(--vscode-foreground);
+    }
+    .toolbar > button.primary:not(.btn-icon):hover:not(:disabled),
+    .toolbar > div > button.primary:not(.btn-icon):hover:not(:disabled),
+    .diagram-toolbar > button.primary:not(.btn-icon):hover:not(:disabled) {
+      background: color-mix(in srgb, var(--vscode-button-background) 14%, transparent);
+      border-color: color-mix(in srgb, var(--vscode-button-background) 50%, var(--vscode-panel-border));
+      color: var(--vscode-button-background);
+    }
+    .toolbar > button:focus-visible,
+    .toolbar > div > button:focus-visible,
+    .toolbar .mode-select > button:focus-visible,
+    .diagram-toolbar > button:focus-visible {
+      box-shadow: 0 0 0 1px var(--vscode-focusBorder) inset;
+    }
     #pageInfo {
       min-width: 60px;
       white-space: nowrap;
@@ -1522,7 +1572,8 @@ export class TableDataPanelManager {
     }
     .mode-select { position: relative; display: inline-flex; }
     .header-menu { z-index: 40; min-width: 180px; }
-    .header-menu hr.menu-separator { border: none; border-top: 1px solid var(--vscode-panel-border); margin: 4px 0; }
+    .header-menu hr.menu-separator,
+    .menu hr.menu-separator { border: none; border-top: 1px solid var(--vscode-panel-border); margin: 4px 0; }
     .header-menu button:last-child,
     .mode-dropdown button:last-child,
     .menu > button:last-child,
@@ -1532,13 +1583,16 @@ export class TableDataPanelManager {
     .header-menu button {
       display: flex;
       align-items: center;
+      gap: 6px;
     }
     .header-menu .menu-item-check {
       display: inline-flex;
-      width: 14px;
-      min-width: 14px;
+      width: 16px;
+      min-width: 16px;
+      height: 16px;
       justify-content: center;
-      margin-right: 6px;
+      align-items: center;
+      flex: 0 0 auto;
       font-size: 12px;
       line-height: 1;
       opacity: 0;
@@ -1549,15 +1603,11 @@ export class TableDataPanelManager {
     .header-menu .menu-item-check.is-checked::before {
       content: "✓";
     }
-    .header-view-btn.active {
-      background: var(--vscode-button-hoverBackground, var(--vscode-button-background));
-      color: var(--vscode-button-foreground, var(--vscode-list-activeSelectionForeground));
-      font-weight: 600;
+    .header-view-btn.active .menu-item-check {
+      opacity: 1;
     }
-    .header-view-btn.active:hover:not(:disabled) {
-      background: color-mix(in srgb, var(--vscode-button-hoverBackground, var(--vscode-button-background)) 90%, var(--vscode-button-background));
-      color: var(--vscode-button-foreground, var(--vscode-list-activeSelectionForeground));
-      border-color: var(--vscode-button-border, transparent);
+    .header-view-btn.active .menu-item-check::before {
+      content: "✓";
     }
     .diagram-view { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; }
     .diagram-toolbar { display: flex; align-items: center; gap: 6px; padding: 0px 4px 2px 4px; flex: 0 0 auto; border-bottom: 1px solid var(--vscode-panel-border); flex-wrap: wrap; }
@@ -1643,6 +1693,7 @@ export class TableDataPanelManager {
     #modeBackdrop { z-index: 19; }
     #headerMenuBackdrop { z-index: 39; }
     #menuBackdrop { z-index: 49; }
+    #sortMenuBackdrop { z-index: 54; }
     #columnsBackdrop { z-index: 59; }
     #paginationMenuBackdrop {
       z-index: 61;
@@ -1650,8 +1701,8 @@ export class TableDataPanelManager {
       background: transparent;
     }
     .columns-popup-head { position: sticky; top: 0; background: var(--vscode-editorWidget-background); border-bottom: 1px solid var(--vscode-panel-border); padding: 8px 10px; }
-    .columns-search { width: 100%; box-sizing: border-box; border: 1px solid var(--vscode-input-border, transparent); background: var(--vscode-input-background); color: var(--vscode-input-foreground); border-radius: 6px; padding: 0 8px; height: 26px; }
-    .columns-search:focus { border-color: var(--vscode-focusBorder); outline: none; }
+    .columns-search { width: 100%; box-sizing: border-box; border: 1px solid var(--vscode-input-border, transparent); background: var(--vscode-input-background); color: var(--vscode-input-foreground); border-radius: 6px; padding: 0 8px; height: 26px; overflow: hidden; background-clip: padding-box; }
+    .columns-search:focus { border-color: var(--dbadmin-input-focus); outline: none; }
     .columns-list { list-style: none; margin: 0; padding: 6px; display: flex; flex-direction: column; gap: 4px; }
     .columns-item { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; border: 1px solid transparent; border-radius: 6px; padding: 3px 6px; cursor: grab; user-select: none; }
     .columns-item.all-toggle { grid-template-columns: auto 1fr; cursor: default; }
@@ -1712,21 +1763,63 @@ export class TableDataPanelManager {
       background: var(--vscode-panel-border);
       pointer-events: none;
     }
-    .th-title { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 0px 5px 0px 0px; cursor: grab; }
+    .th-title { display: flex; align-items: center; justify-content: space-between; gap: 0; padding: 0px 5px 0px 0px; cursor: grab; }
     .th-name { font-weight: 600; font-size: 12px; cursor: inherit; flex: 1 1 auto; min-width: 0; text-align: left; border-radius: 4px; padding-left: 5px; }
     th.col-drag-over { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
     .th-resizer { position: absolute; top: 0; right: 0; width: 8px; height: 100%; cursor: col-resize; user-select: none; border-radius: 2px; transition: background 120ms ease; }
     .th-resizer::before { content: ''; position: absolute; top: 2px; bottom: 2px; right: 0px; width: 1px; background: color-mix(in srgb, var(--vscode-descriptionForeground) 15%, transparent); }
     .th-name:hover:not(:active) { background: color-mix(in srgb, var(--vscode-list-hoverBackground) 80%, var(--vscode-foreground) 10%); }
     body.col-resizing, body.col-resizing * { cursor: col-resize !important; }
-    .th-icons { cursor: pointer; user-select: none; border-radius: 4px; }
-    .th-icons-char { padding: 0px 6px; }
-    .th-icons-svg { padding: 0px 2px; }
-    .th-icons:hover { background: color-mix(in srgb, var(--vscode-list-hoverBackground) 80%, var(--vscode-foreground) 10%); }
-    .th-filter { width: 100%; box-sizing: border-box; border: 1px solid transparent; background: transparent; color: var(--vscode-descriptionForeground); border-radius: 4px; padding: 4px; font-size: 11px; }
-    .th-filter:focus { border-color: var(--vscode-focusBorder); background: var(--vscode-input-background); color: var(--vscode-input-foreground); }
-    .cell-input { width: 100%; box-sizing: border-box; border: 1px solid transparent; background: transparent; color: var(--vscode-foreground); border-radius: 4px; padding: 4px; }
-    .cell-input:focus { border-color: var(--vscode-focusBorder); background: var(--vscode-input-background); }
+    .th-icons { cursor: pointer; user-select: none; border-radius: 4px; padding: 0 2px; display: inline-flex; align-items: center; justify-content: center; color: var(--vscode-descriptionForeground); }
+    .th-icons .codicon { font-size: 14px; line-height: 1; width: 14px; height: 14px; }
+    .th-icons .sort-icon-pair {
+      display: inline-flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      width: 14px;
+      height: 14px;
+      line-height: 1;
+      gap: 0;
+      transform: translateY(-2px);
+    }
+    .th-icons .sort-icon-pair .codicon {
+      font-size: 11px;
+      width: 12px;
+      height: 7px;
+      -webkit-text-stroke: 0.35px currentColor;
+      paint-order: stroke fill;
+    }
+    .th-icons:hover { background: color-mix(in srgb, var(--vscode-list-hoverBackground) 80%, var(--vscode-foreground) 10%); color: var(--vscode-foreground); }
+    .sort-menu { z-index: 55; min-width: 180px; }
+    .sort-menu button {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .sort-menu .menu-item-check {
+      display: inline-flex;
+      width: 16px;
+      min-width: 16px;
+      height: 16px;
+      justify-content: center;
+      align-items: center;
+      flex: 0 0 auto;
+      font-size: 12px;
+      line-height: 1;
+      opacity: 0;
+    }
+    .sort-menu .menu-item-check.is-checked {
+      opacity: 1;
+    }
+    .sort-menu .menu-item-check.is-checked::before {
+      content: "✓";
+    }
+    .th-filter-wrap { width: 100%; border-radius: 4px; overflow: hidden; }
+    .th-filter { width: 100%; box-sizing: border-box; border: 1px solid transparent; background: transparent; color: var(--vscode-descriptionForeground); border-radius: 4px; padding: 4px; font-size: 11px; outline: none; overflow: hidden; background-clip: padding-box; }
+    .th-filter:focus { border-color: var(--dbadmin-input-focus); background: var(--vscode-input-background); color: var(--vscode-input-foreground); outline: none; box-shadow: none; }
+    .cell-input { width: 100%; box-sizing: border-box; border: 1px solid transparent; background: transparent; color: var(--vscode-foreground); border-radius: 4px; padding: 4px; outline: none; overflow: hidden; background-clip: padding-box; }
+    .cell-input:focus { border-color: var(--dbadmin-input-focus); background: var(--vscode-input-background); }
     .cell-input.dirty { background: rgba(70, 130, 255, 0.18); border-color: rgba(70, 130, 255, 0.62); }
     .cell-input.cell-input-placeholder::placeholder {
       color: var(--vscode-descriptionForeground);
@@ -1734,9 +1827,8 @@ export class TableDataPanelManager {
       opacity: 0.95;
     }
     .json-cell { position: relative; }
-    .json-open-btn {
+    .cell-action-btn {
       position: absolute;
-      right: 6px;
       top: 50%;
       transform: translateY(-50%);
       width: 20px;
@@ -1755,25 +1847,62 @@ export class TableDataPanelManager {
       transition: opacity 120ms ease;
       z-index: 1;
     }
+    .json-open-btn { right: 6px; }
+    .json-cell.has-bool-toggle .json-open-btn { right: 6px; }
+    .cell-bool-toggle-btn { right: 28px; }
     .cell-action-btn:hover:not(:disabled),
     .cell-action-btn:focus-visible {
       border-color: transparent;
       box-shadow: none;
       outline: none;
     }
-    .json-cell:hover .json-open-btn,
-    .json-cell:focus-within .json-open-btn { opacity: 1; pointer-events: auto; }
-    .json-open-btn:hover:not(:disabled) {
+    .json-cell:hover .cell-action-btn,
+    .json-cell:focus-within .cell-action-btn { opacity: 1; pointer-events: auto; }
+    .cell-action-btn:hover:not(:disabled) {
       background: color-mix(in srgb, var(--vscode-editor-background) 68%, transparent);
       color: var(--vscode-editor-foreground, var(--vscode-foreground));
       border-color: color-mix(in srgb, var(--vscode-foreground) 45%, transparent);
     }
-    .cell-input.editing + .json-open-btn {
+    .cell-input.editing ~ .cell-action-btn {
       opacity: 0 !important;
       pointer-events: none !important;
     }
-    .json-open-btn svg { width: 12px; height: 12px; }
-    .json-open-btn svg path { stroke-width: 1.45; }
+    .json-open-btn .codicon { font-size: 14px; line-height: 1; width: 14px; height: 14px; transform: translateX(1px); }
+    .cell-bool-toggle-btn .bool-toggle-box {
+      width: 12px;
+      height: 12px;
+      border: 1px solid color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
+      border-radius: 2px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+      background: transparent;
+    }
+    .cell-bool-toggle-btn .bool-toggle-box .codicon {
+      font-size: 11px;
+      line-height: 1;
+      width: 11px;
+      height: 11px;
+      opacity: 0;
+    }
+    .cell-bool-toggle-btn.is-checked .bool-toggle-box {
+      background: color-mix(in srgb, var(--vscode-foreground) 72%, transparent);
+      border-color: color-mix(in srgb, var(--vscode-foreground) 72%, transparent);
+      color: var(--vscode-editor-background, var(--vscode-sideBar-background, #fff));
+    }
+    .cell-bool-toggle-btn.is-checked .bool-toggle-box .codicon {
+      opacity: 1;
+      font-size: 11px;
+      width: 11px;
+      height: 11px;
+      color: var(--vscode-editor-background, var(--vscode-sideBar-background, #fff));
+    }
+    .cell-bool-toggle-btn.is-checked:hover:not(:disabled) .bool-toggle-box {
+      background: color-mix(in srgb, var(--vscode-foreground) 82%, transparent);
+      border-color: color-mix(in srgb, var(--vscode-foreground) 82%, transparent);
+      color: var(--vscode-editor-background, var(--vscode-sideBar-background, #fff));
+    }
     tr.row-added td { background: rgba(46, 160, 67, 0.12); border-bottom-color: color-mix(in srgb, var(--vscode-foreground) 15%, rgba(46, 160, 67, 0.12)) !important; }
     tr.row-removed td { background: rgba(220, 53, 69, 0.16); border-bottom-color: color-mix(in srgb, var(--vscode-foreground) 15%, rgba(220, 53, 69, 0.16)) !important; }
     .json-modal-backdrop { z-index: 69; background: rgba(0, 0, 0, 0.35); }
@@ -1863,12 +1992,42 @@ export class TableDataPanelManager {
     }
     ${codeEditorStyles}
     .menu { z-index: 50; min-width: 180px; }
-    .menu-submenu-wrap > button { justify-content: space-between; gap: 12px; }
+    .menu > button,
+    .menu .menu-submenu-wrap > button,
+    .menu-submenu > button {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .menu .menu-item-icon {
+      display: inline-flex;
+      width: 16px;
+      min-width: 16px;
+      height: 16px;
+      justify-content: center;
+      align-items: center;
+      flex: 0 0 auto;
+      color: var(--vscode-icon-foreground, var(--vscode-foreground));
+    }
+    .menu .menu-item-icon .codicon {
+      font-size: 14px;
+      line-height: 1;
+      width: 14px;
+      height: 14px;
+    }
+    .menu .menu-item-label {
+      flex: 1 1 auto;
+      min-width: 0;
+      text-align: left;
+    }
+    .menu-submenu-wrap > button { justify-content: flex-start; gap: 6px; }
+    .menu-submenu-wrap > button .submenu-chevron { margin-left: auto; }
     .menu-submenu-wrap.submenu-open > button { background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground)); }
     .submenu-chevron { width: 14px; height: 14px; color: var(--vscode-descriptionForeground); flex: 0 0 auto; }
-    .btn-icon { width: 28px; height: 28px; padding: 0; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; }
-    .btn-icon svg { width: 14px; height: 14px; }
-    .btn-icon .codicon { font-size: 14px; }
+    .btn-icon { width: 28px; height: 28px; padding: 0; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; font-size: 16px; line-height: 1; }
+    .btn-icon svg { width: 16px; height: 16px; display: block; flex: 0 0 auto; }
+    .btn-icon .codicon { font-size: 16px; line-height: 1; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; }
+    .mode-dropdown .codicon { font-size: 16px; line-height: 1; width: 16px; height: 16px; flex: 0 0 auto; }
     button:disabled { opacity: 0.45; cursor: default; }
     .menu-submenu-wrap { position: relative; }
     .menu-submenu { position: absolute; top: -1px; left: calc(100% + 4px); display: none; min-width: 180px; max-height: 60vh; }
@@ -1966,65 +2125,58 @@ export class TableDataPanelManager {
       .query-container { display: none; }
     }
     @media (max-width: 500px) {
-      body.header-hidden #toolbarMenuBtn { display: none; }
     }
   </style>
 </head>
-<body class="${initialHideTabHeader ? "header-hidden" : ""}">
+<body>
   <div class="shell">
     <div class="loading-bar" id="loadingBar"></div>
-    <div class="header">
-      <div class="title" id="title">Tabela</div>
-      <div class="header-menu-wrap">
-        <button id="headerMenuBtn" class="secondary btn-icon btn-icon-fix" title="Menu">☰</button>
-      </div>
-    </div>
-
-    <div class="query-container">
-      <textarea id="query" class="query" rows="1"></textarea>
-      <div id="queryResizer" class="query-resizer" title="Redimensionar query" aria-hidden="true">
-        <svg viewBox="0 0 16 16" fill="none">
-          <path d="M6 12.5h4M8 9.5h4M10 6.5h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-      </div>
+    <div class="query-container" id="queryContainer" style="display:none;">
+      <textarea id="query" class="query" rows="1" readonly tabindex="-1"></textarea>
     </div>
 
     <div class="toolbar">
-      <div class="search-wrap grow">
+      <div class="search-wrap grow" id="searchWrap">
         <input id="search" class="input" placeholder="Pesquisar tudo" />
         <div id="searchContextPlaceholder" class="search-context-placeholder" aria-hidden="true"></div>
+        <span class="search-icon" aria-hidden="true">
+          <i class="codicon codicon-search"></i>
+        </span>
       </div>
       <button id="clearFiltersBtn" class="secondary btn-icon" title="Limpar filtros" aria-label="Limpar filtros" style="display:none;"></button>
       <div class="mode-select" id="modeSelectWrap">
         <button id="modeBtn" class="secondary btn-icon" title="Modo de busca"></button>
         <div class="mode-dropdown simple-menu overlay-surface overlay-scroll" id="modeDropdown">
-          <button data-mode="local"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 3h12l-4.5 5.5V13h-3V8.5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>Filtro local</button>
-          <button data-mode="query"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><ellipse cx="8" cy="4.5" rx="5.5" ry="2" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 4.5v7c0 1.1 2.46 2 5.5 2s5.5-.9 5.5-2v-7" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 8c0 1.1 2.46 2 5.5 2s5.5-.9 5.5-2" stroke="currentColor" stroke-width="1.3"/></svg>Filtro via query</button>
+          <button data-mode="local"><i class="codicon codicon-filter" aria-hidden="true"></i>Filtro local</button>
+          <button data-mode="query"><i class="codicon codicon-database" aria-hidden="true"></i>Filtro via query</button>
         </div>
       </div>
       <button id="columnsBtn" class="secondary btn-icon" title="Selecionar colunas" aria-label="Selecionar colunas">
-        <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path d="M1.8 8c1.3-2.2 3.6-3.6 6.2-3.6S12.9 5.8 14.2 8c-1.3 2.2-3.6 3.6-6.2 3.6S3.1 10.2 1.8 8z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
-          <circle cx="8" cy="8" r="1.9" stroke="currentColor" stroke-width="1"/>
-        </svg>
+        <i class="codicon codicon-eye" aria-hidden="true"></i>
       </button>
-      <button id="reload" class="secondary btn-icon" title="Recarregar">↻</button>
+      <button id="reload" class="secondary btn-icon" title="Recarregar" aria-label="Recarregar">
+        <i class="codicon codicon-refresh" aria-hidden="true"></i>
+      </button>
       <button id="save" class="btn-icon primary" title="Salvar" aria-label="Salvar">
-        <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path d="M3 2.5h8.5L13.5 4.5v9H3z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
-          <path d="M5 2.5h5v3H5z" stroke="currentColor" stroke-width="1.2"/>
-          <path d="M5 9.5h6v4H5z" stroke="currentColor" stroke-width="1.2"/>
-        </svg>
+        <i class="codicon codicon-save" aria-hidden="true"></i>
       </button>
-      <button id="newRow" class="secondary btn-icon btn-icon-fix" title="Nova linha">＋</button>
+      <button id="newRow" class="secondary btn-icon" title="Nova linha" aria-label="Nova linha">
+        <i class="codicon codicon-add" aria-hidden="true"></i>
+      </button>
       <div style="display: flex; align-items: center; gap: 4px;">
-        <button id="prevPage" class="secondary btn-icon btn-icon-fix" title="Página anterior">←</button>
+        <button id="prevPage" class="secondary btn-icon" title="Página anterior" aria-label="Página anterior">
+          <i class="codicon codicon-chevron-left" aria-hidden="true"></i>
+        </button>
         <button id="pageInfoBtn" class="secondary" title="Paginação">
           <span id="pageInfo">1/1 (0)</span>
         </button>
-        <button id="nextPage" class="secondary btn-icon btn-icon-fix" title="Próxima página">→</button>
+        <button id="nextPage" class="secondary btn-icon" title="Próxima página" aria-label="Próxima página">
+          <i class="codicon codicon-chevron-right" aria-hidden="true"></i>
+        </button>
       </div>
-      <button id="toolbarMenuBtn" class="secondary btn-icon btn-icon-fix" title="Menu">☰</button>
+      <button id="toolbarMenuBtn" class="secondary btn-icon" title="Menu" aria-label="Menu">
+        <i class="codicon codicon-ellipsis" aria-hidden="true"></i>
+      </button>
     </div>
 
     <div class="diagram-toolbar" style="display:none;">
@@ -2036,7 +2188,9 @@ export class TableDataPanelManager {
         <span class="diagram-toolbar-label" style="margin-right:0">%</span>
       </div>
       <span style="flex:1"></span>
-      <button id="diagramMenuBtn" class="secondary btn-icon btn-icon-fix" title="Menu">☰</button>
+      <button id="diagramMenuBtn" class="secondary btn-icon" title="Menu" aria-label="Menu">
+        <i class="codicon codicon-ellipsis" aria-hidden="true"></i>
+      </button>
     </div>
 
     <div id="errorMsg"></div>
@@ -2073,36 +2227,45 @@ export class TableDataPanelManager {
   <div class="overlay-backdrop" id="paginationMenuBackdrop"></div>
   <div id="headerMenu" class="header-menu simple-menu overlay-surface overlay-scroll">
     <button id="viewDataBtn" class="header-view-btn active" title="Ver dados da tabela">
+      <span class="menu-item-check" aria-hidden="true"></span>
       <span>Dados</span>
     </button>
     <button id="viewDiagramBtn" class="header-view-btn" title="Ver diagrama ER">
+      <span class="menu-item-check" aria-hidden="true"></span>
       <span>Diagrama</span>
     </button>
     <hr class="menu-separator" />
     <button id="openSettings" title="Configurações">
+      <span class="menu-item-check" aria-hidden="true"></span>
       <span>Configurações</span>
     </button>
     <button id="showInExplorer" class="header-menu-hide-in-result" title="Mostrar no explorador">
+      <span class="menu-item-check" aria-hidden="true"></span>
       <span>Mostrar no explorador</span>
     </button>
     <button id="openNewTab" title="Abrir em nova aba">
+      <span class="menu-item-check" aria-hidden="true"></span>
       <span>Abrir em nova aba</span>
     </button>
     <hr id="headerMenuDataSeparator" class="menu-separator" />
-    <button id="toggleHeaderVisibility" class="header-menu-data-only header-menu-hide-in-result" title="Mostrar/Ocultar cabeçalho">
-      <span id="toggleHeaderVisibilityLabel">Ocultar cabeçalho</span>
+    <button id="showQueryModalBtn" title="Mostrar query">
+      <span class="menu-item-check" aria-hidden="true"></span>
+      <span>Mostrar query</span>
     </button>
-    <button id="toggleQueryVisibility" class="header-menu-data-only header-menu-hide-in-result" title="Mostrar query">
-      <span id="toggleQueryVisibilityLabel">Ocultar query</span>
+    <button id="openConnectionManagerBtn" class="header-menu-hide-in-result" title="Gerenciar conexão">
+      <span class="menu-item-check" aria-hidden="true"></span>
+      <span>Gerenciar conexão</span>
     </button>
     <button id="toggleIntegratedTable" class="header-menu-query-result-only" title="Mostrar tabela integrada">
       <span id="toggleIntegratedTableCheck" class="menu-item-check" aria-hidden="true"></span>
       <span>Mostrar tabela integrada</span>
     </button>
     <button id="openExport" class="header-menu-data-only" title="Exportar dados">
+      <span class="menu-item-check" aria-hidden="true"></span>
       <span>Exportar</span>
     </button>
     <button id="resetLayout" class="header-menu-data-only" title="Restaurar layout da tabela">
+      <span class="menu-item-check" aria-hidden="true"></span>
       <span>Restaurar layout</span>
     </button>
   </div>
@@ -2119,53 +2282,111 @@ export class TableDataPanelManager {
   </div>
 
   <div class="overlay-backdrop" id="menuBackdrop"></div>
+  <div class="overlay-backdrop" id="sortMenuBackdrop"></div>
   <div class="menu simple-menu overlay-surface overlay-scroll" id="cellMenu">
-    <button data-action="copy"><span>Copiar</span></button>
-    <button data-action="paste"><span>Colar</span></button>
-    <button data-action="pasteRaw"><span>Colar como texto</span></button>
+    <button data-action="copy">
+      <span class="menu-item-icon" aria-hidden="true"></span>
+      <span class="menu-item-label">Copiar</span>
+    </button>
     <div class="menu-submenu-wrap">
-      <button type="button"><span>Copiar avancado</span><svg class="submenu-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 3.5L10.5 8L6 12.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <button type="button">
+        <span class="menu-item-icon" aria-hidden="true"></span>
+        <span class="menu-item-label">Copiar avançado</span>
+        <svg class="submenu-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 3.5L10.5 8L6 12.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
       <div class="menu-submenu simple-menu overlay-surface overlay-submenu">
-        <button data-action="copyAdvancedCsv">CSV</button>
-        <button data-action="copyAdvancedJson">JSON</button>
+        <button data-action="copyAdvancedCsv">
+          <span class="menu-item-icon" aria-hidden="true"></span>
+          <span class="menu-item-label">CSV</span>
+        </button>
+        <button data-action="copyAdvancedJson">
+          <span class="menu-item-icon" aria-hidden="true"></span>
+          <span class="menu-item-label">JSON</span>
+        </button>
       </div>
     </div>
+    <button data-action="paste">
+      <span class="menu-item-icon" aria-hidden="true"></span>
+      <span class="menu-item-label">Colar</span>
+    </button>
+    <button data-action="pasteRaw">
+      <span class="menu-item-icon" aria-hidden="true"></span>
+      <span class="menu-item-label">Colar como texto</span>
+    </button>
+    <hr class="menu-separator" />
     <div class="menu-submenu-wrap">
-      <button type="button"><span>✎ Editar</span><svg class="submenu-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 3.5L10.5 8L6 12.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <button type="button">
+        <span class="menu-item-icon" aria-hidden="true"><i class="codicon codicon-edit"></i></span>
+        <span class="menu-item-label">Editar</span>
+        <svg class="submenu-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 3.5L10.5 8L6 12.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
       <div class="menu-submenu simple-menu overlay-surface overlay-submenu">
-        <button data-action="null">Definir NULL</button>
-        <button data-action="empty">Definir texto vazio</button>
-        <button data-action="default">Definir DEFAULT</button>
+        <button data-action="null">
+          <span class="menu-item-icon" aria-hidden="true"></span>
+          <span class="menu-item-label">Definir NULL</span>
+        </button>
+        <button data-action="empty">
+          <span class="menu-item-icon" aria-hidden="true"></span>
+          <span class="menu-item-label">Definir texto vazio</span>
+        </button>
+        <button data-action="default">
+          <span class="menu-item-icon" aria-hidden="true"></span>
+          <span class="menu-item-label">Definir DEFAULT</span>
+        </button>
       </div>
     </div>
-    <button data-action="duplicate"><span>⧉ Duplicar linha</span></button>
     <button data-action="openNativePreview">
-      <span style="display:inline-flex;align-items:center;gap:8px;">
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path fill-rule="evenodd" clip-rule="evenodd" d="M3.00024 1H14.0002L15.0002 2V7.30005C14.6855 7.14615 14.3477 7.04476 14.0002 7V2H9.00024V12.88L7.88025 14H3.00024L2.00024 13V2L3.00024 1ZM3.00024 13H8.00024V2H3.00024V13ZM13.3789 8.00202C12.96 8.01773 12.5515 8.13726 12.1902 8.34992H12.1602C11.8707 8.52448 11.6195 8.75571 11.4216 9.02973C11.2237 9.30375 11.0833 9.61487 11.0085 9.94453C10.9338 10.2742 10.9264 10.6156 10.9868 10.9482C11.0473 11.2808 11.1743 11.5977 11.3602 11.88L9.00024 14.2299L9.71021 14.9399L12.0602 12.5799C12.3853 12.8004 12.7597 12.9378 13.1503 12.9799C13.5352 13.0271 13.9257 12.9825 14.2902 12.8499C14.6689 12.7225 15.0117 12.5065 15.2902 12.2199C15.5602 11.9374 15.7591 11.5946 15.8702 11.2199C15.9783 10.8465 16.0021 10.4537 15.9402 10.0699C15.8707 9.68581 15.7133 9.32307 15.4802 9.00996C15.2473 8.6929 14.9422 8.43582 14.5902 8.25996C14.214 8.07495 13.7978 7.98631 13.3789 8.00202ZM13.6199 11.9943C13.2749 12.0285 12.9288 11.9422 12.6403 11.7499C12.3918 11.5822 12.1972 11.3459 12.0802 11.0699C11.9692 10.7974 11.9414 10.4982 12.0002 10.2099C12.0567 9.91792 12.1993 9.64957 12.4095 9.43928C12.6198 9.22898 12.8882 9.08644 13.1802 9.02998C13.4685 8.97115 13.7677 8.99894 14.0402 9.10993C14.3162 9.2269 14.5525 9.42149 14.7202 9.66999C14.9124 9.95851 14.9988 10.3046 14.9646 10.6496C14.9304 10.9946 14.7777 11.3172 14.5326 11.5623C14.2874 11.8075 13.9649 11.9601 13.6199 11.9943Z" fill="currentColor"/>
-        </svg>
-        <span>Editar em tela dividida</span>
-      </span>
+      <span class="menu-item-icon" aria-hidden="true"><i class="codicon codicon-split-horizontal"></i></span>
+      <span class="menu-item-label">Editar em tela dividida</span>
     </button>
     <button data-action="searchMentions" id="searchMentionsActionBtn" style="display:none;">
-      <span style="display:inline-flex;align-items:center;gap:8px;">
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path d="M7 12.5A5.5 5.5 0 1 1 7 1.5a5.5 5.5 0 0 1 0 11z" stroke="currentColor" stroke-width="1.3"/>
-          <path d="M11.2 11.2 14.5 14.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
-        </svg>
-        <span>Consultar menções</span>
-      </span>
+      <span class="menu-item-icon" aria-hidden="true"><i class="codicon codicon-search"></i></span>
+      <span class="menu-item-label">Consultar menções</span>
     </button>
+    <hr class="menu-separator" />
+    <button data-action="duplicate">
+      <span class="menu-item-icon" aria-hidden="true"><i class="codicon codicon-files"></i></span>
+      <span class="menu-item-label">Duplicar linha</span>
+    </button>
+    <button data-action="new">
+      <span class="menu-item-icon" aria-hidden="true"><i class="codicon codicon-add"></i></span>
+      <span class="menu-item-label">Criar linha</span>
+    </button>
+    <hr class="menu-separator" />
     <button data-action="remove">
-      <span style="display:inline-flex;align-items:center;gap:8px;">
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path d="M3.5 4.5h9l-.7 9h-7.6z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
-          <path d="M2.5 4.5h11M6 4.5v-2h4v2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
-        </svg>
-        <span>Remover linha</span>
-      </span>
+      <span class="menu-item-icon" aria-hidden="true"><i class="codicon codicon-trash"></i></span>
+      <span class="menu-item-label">Remover linha</span>
     </button>
-    <button data-action="new"><span>＋ Criar linha</span></button>
+  </div>
+
+  <div id="sortMenu" class="sort-menu simple-menu overlay-surface overlay-scroll">
+    <button data-sort="asc" type="button">
+      <span class="menu-item-check" aria-hidden="true"></span>
+      <span>Ordenar crescente</span>
+    </button>
+    <button data-sort="desc" type="button">
+      <span class="menu-item-check" aria-hidden="true"></span>
+      <span>Ordenar decrescente</span>
+    </button>
+    <button data-sort="none" type="button">
+      <span class="menu-item-check" aria-hidden="true"></span>
+      <span>Sem ordenamento</span>
+    </button>
+  </div>
+
+
+  <div class="overlay-backdrop json-modal-backdrop" id="queryModalBackdrop"></div>
+  <div class="json-modal" id="queryModal" role="dialog" aria-label="Mostrar query">
+    <div class="json-modal-head">
+      <div class="json-modal-head-main">
+        <span class="json-modal-title">Query</span>
+      </div>
+      <div class="json-modal-actions">
+        <button id="queryModalCopy" class="secondary" title="Copiar query">Copiar</button>
+        <button id="queryModalClose" class="primary" title="Fechar">Fechar</button>
+      </div>
+    </div>
+    ${queryCodeEditorMarkup}
   </div>
 
   <div class="overlay-backdrop" id="exportModalBackdrop"></div>
@@ -2238,13 +2459,14 @@ export class TableDataPanelManager {
   <script nonce="${nonce}" src="${tableAdvancedFilterScriptUri}"></script>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
-    const queryContainer = document.querySelector('.query-container');
+    const queryContainer = document.getElementById('queryContainer');
     const queryEl = document.getElementById('query');
     const loadingBar = document.getElementById('loadingBar');
-    const titleEl = document.getElementById('title');
     const gridEl = document.getElementById('grid');
     const queryResizer = document.getElementById('queryResizer');
     const cellMenu = document.getElementById('cellMenu');
+    const sortMenu = document.getElementById('sortMenu');
+    const sortMenuBackdrop = document.getElementById('sortMenuBackdrop');
     const pageInfoEl = document.getElementById('pageInfo');
     const pageInfoBtn = document.getElementById('pageInfoBtn');
     const paginationMenuInfoEl = document.getElementById('paginationMenuInfo');
@@ -2268,6 +2490,7 @@ export class TableDataPanelManager {
     tableWrapEl.appendChild(rangeSelectionOverlay);
 
     const searchInputEl = document.getElementById('search');
+    const searchWrapEl = document.getElementById('searchWrap');
     const searchContextPlaceholderEl = document.getElementById('searchContextPlaceholder');
     const modeBtn = document.getElementById('modeBtn');
     const modeDropdown = document.getElementById('modeDropdown');
@@ -2316,15 +2539,34 @@ export class TableDataPanelManager {
     const jsonModalApply = document.getElementById('jsonModalApply');
     const jsonModalOpenNative = document.getElementById('jsonModalOpenNative');
     const jsonModalClose = document.getElementById('jsonModalClose');
-    const headerMenuBtn = document.getElementById('headerMenuBtn');
     const headerMenu = document.getElementById('headerMenu');
     const headerMenuBackdrop = document.getElementById('headerMenuBackdrop');
     const toolbarMenuBtn = document.getElementById('toolbarMenuBtn');
     const openExportBtn = document.getElementById('openExport');
-    const toggleQueryVisibilityBtn = document.getElementById('toggleQueryVisibility');
-    const toggleQueryVisibilityLabel = document.getElementById('toggleQueryVisibilityLabel');
-    const toggleHeaderVisibilityBtn = document.getElementById('toggleHeaderVisibility');
-    const toggleHeaderVisibilityLabel = document.getElementById('toggleHeaderVisibilityLabel');
+    const showQueryModalBtn = document.getElementById('showQueryModalBtn');
+    const openConnectionManagerBtn = document.getElementById('openConnectionManagerBtn');
+    const queryModal = document.getElementById('queryModal');
+    const queryModalBackdrop = document.getElementById('queryModalBackdrop');
+    const queryModalCopy = document.getElementById('queryModalCopy');
+    const queryModalClose = document.getElementById('queryModalClose');
+    const queryCodeEditor = window.DbAdminCodeEditor.create({
+      rootEl: document.getElementById('queryCodeEditorRoot'),
+      findWidgetEl: document.getElementById('queryCodeEditorFindWidget'),
+      lineNumbersEl: document.getElementById('queryCodeEditorLineNumbers'),
+      highlightEl: document.getElementById('queryCodeEditorHighlight'),
+      textareaEl: document.getElementById('queryCodeEditorTextarea'),
+      findInputEl: document.getElementById('queryCodeEditorFindInput'),
+      findResultEl: document.getElementById('queryCodeEditorFindResult'),
+      findPrevEl: document.getElementById('queryCodeEditorFindPrev'),
+      findNextEl: document.getElementById('queryCodeEditorFindNext'),
+      toggleReplaceEl: document.getElementById('queryCodeEditorToggleReplace'),
+      replaceRowEl: document.getElementById('queryCodeEditorReplaceRow'),
+      replaceInputEl: document.getElementById('queryCodeEditorReplaceInput'),
+      replaceOneEl: document.getElementById('queryCodeEditorReplaceOne'),
+      replaceAllEl: document.getElementById('queryCodeEditorReplaceAll'),
+      closeFindEl: document.getElementById('queryCodeEditorCloseFind'),
+      readOnly: true,
+    });
     const resetLayoutBtn = document.getElementById('resetLayout');
     const clearFiltersBtn = document.getElementById('clearFiltersBtn');
     const saveBtn = document.getElementById('save');
@@ -2332,25 +2574,24 @@ export class TableDataPanelManager {
     const openNativePreviewActionBtn = cellMenu.querySelector('button[data-action="openNativePreview"]');
     const searchMentionsActionBtn = cellMenu.querySelector('button[data-action="searchMentions"]');
 
-    const SVG_LOCAL = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 3h12l-4.5 5.5V13h-3V8.5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>';
-    const SVG_QUERY = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><ellipse cx="8" cy="4.5" rx="5.5" ry="2" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 4.5v7c0 1.1 2.46 2 5.5 2s5.5-.9 5.5-2v-7" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 8c0 1.1 2.46 2 5.5 2s5.5-.9 5.5-2" stroke="currentColor" stroke-width="1.3"/></svg>';
-    // const SVG_DB = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><ellipse cx="8" cy="4" rx="5.5" ry="2" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 4v7.5C2.5 12.88 4.96 14 8 14s5.5-1.12 5.5-2.5V4" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 7.5c0 1.38 2.46 2.5 5.5 2.5s5.5-1.12 5.5-2.5" stroke="currentColor" stroke-width="1.3"/></svg>';
-    const ICON_DB = '<i  class="codicon codicon-database" aria-hidden="true"></i>';
-    const ICON_SCHEMA = '<i svg width="12" class="codicon codicon-type-hierarchy-sub" aria-hidden="true"></i>';
-    const ICON_CONNECTION = '<i svg width="14" class="codicon codicon-plug" aria-hidden="true"></i>';
-    const SVG_CONNECTION = '<svg width="14" height="14" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="currentColor" aria-hidden="true"><path d="M10.723 4H10V1.5C10 1.224 9.776 1 9.5 1C9.224 1 9 1.224 9 1.5V4H7V1.5C7 1.224 6.776 1 6.5 1C6.224 1 6 1.224 6 1.5V4H5.277C4.573 4 4 4.573 4 5.278V8C4 10.036 5.529 11.722 7.5 11.969V14.5C7.5 14.776 7.724 15 8 15C8.276 15 8.5 14.776 8.5 14.5V11.969C10.471 11.722 12 10.037 12 8V5.278C12 4.573 11.427 4 10.723 4ZM11 8C11 9.654 9.654 11 8 11C6.346 11 5 9.654 5 8V5.278C5 5.125 5.124 5 5.277 5H10.722C10.875 5 10.999 5.125 10.999 5.278V8H11Z"/></svg>';
-    const SVG_SORT_NONE = '<svg width="16" height="16" viewBox="0 -3 24 24" fill="none" aria-hidden="true"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m8 15 4 4 4-4m0-6-4-4-4 4"/></svg>';
-    const SVG_EXTERNAL_LINK = '<svg viewBox="0 0 1 1" fill="none" aria-hidden="true"><path d="M9.5 2.5h4v4M8 8l5.5-5.5M7 3.5h-2A1.5 1.5 0 0 0 3.5 5v6A1.5 1.5 0 0 0 5 12.5h6a1.5 1.5 0 0 0 1.5-1.5v-2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-    const SVG_ZOOM_IN = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M12.0278 6.14861C12.1234 7.56649 11.6685 8.96661 10.7577 10.0575L15.0177 14.3176L14.3178 15.0275L10.0578 10.7575C8.96686 11.6682 7.56674 12.1231 6.14885 12.0275C4.73097 11.9319 3.40461 11.2931 2.44585 10.2442C1.48709 9.19523 0.969739 7.81691 1.00164 6.39617C1.03353 4.97542 1.61212 3.62162 2.61699 2.61675C3.62187 1.61188 4.97566 1.03329 6.39641 1.00139C7.81716 0.969494 9.19548 1.48684 10.2444 2.44561C11.2934 3.40437 11.9321 4.73072 12.0278 6.14861ZM6.57781 11.0375C7.77066 11.0354 8.91402 10.5608 9.75774 9.71758L9.71782 9.7376C10.145 9.32074 10.4851 8.82316 10.7186 8.27385C10.952 7.72455 11.0741 7.13437 11.0778 6.53752C11.0778 5.64751 10.8139 4.77755 10.3194 4.03752C9.82492 3.2975 9.12212 2.72065 8.29985 2.38005C7.47759 2.03946 6.57279 1.95032 5.69988 2.12395C4.82696 2.29758 4.02514 2.72618 3.3958 3.35552C2.76646 3.98485 2.33787 4.78668 2.16423 5.6596C1.9906 6.53251 2.07974 7.4373 2.42034 8.25957C2.76093 9.08184 3.33766 9.78464 4.07769 10.2791C4.81771 10.7736 5.68779 11.0375 6.57781 11.0375ZM9.01773 7.0376V6.0376H7.01773V4.0376H6.01773V6.0376H4.01773V7.0376H6.01773V9.0376H7.01773V7.0376H9.01773Z" fill="currentColor"/></svg>';
-    const SVG_CLEAR_ALL = '<svg width="14" height="14" viewBox="0 0 14 14" xmlns="http://www.w3.org/2000/svg" fill="currentColor" aria-hidden="true"><path d="M13.5004 12.0004C13.7762 12.0006 14.0004 12.2245 14.0004 12.5004C14.0002 12.7761 13.7761 13.0002 13.5004 13.0004H2.50037C2.22449 13.0004 2.00056 12.7762 2.00037 12.5004C2.00037 12.2244 2.22437 12.0004 2.50037 12.0004H13.5004Z"/><path d="M13.5004 9.00037C13.7762 9.00056 14.0004 9.22449 14.0004 9.50037C14.0002 9.77608 13.7761 10.0002 13.5004 10.0004H2.50037C2.22449 10.0004 2.00056 9.7762 2.00037 9.50037C2.00037 9.22437 2.22437 9.00037 2.50037 9.00037H13.5004Z"/><path d="M13.5004 6.00037C13.7762 6.00056 14.0004 6.22449 14.0004 6.50037C14.0002 6.77608 13.7761 7.00017 13.5004 7.00037H7.50037C7.22449 7.00037 7.00056 6.7762 7.00037 6.50037C7.00037 6.22437 7.22437 6.00037 7.50037 6.00037H13.5004Z"/><path d="M5.50037 0.999023C5.63295 0.999115 5.76009 1.05179 5.85388 1.14551C5.94777 1.23939 6.00037 1.36722 6.00037 1.5C6.00027 1.63265 5.94769 1.75971 5.85388 1.85352L3.7074 4L5.85388 6.14551C5.94777 6.23939 6.00037 6.36722 6.00037 6.5C6.00027 6.63265 5.94769 6.75971 5.85388 6.85352C5.76008 6.94732 5.63302 6.99991 5.50037 7C5.36759 7 5.23976 6.9474 5.14587 6.85352L3.00037 4.70703L0.853882 6.85352C0.760077 6.94732 0.633017 6.99991 0.500366 7C0.36759 7 0.239761 6.9474 0.145874 6.85352C0.0521583 6.75972 -0.000519052 6.63258 -0.000610352 6.5C-0.000610354 6.36722 0.0519875 6.23939 0.145874 6.14551L2.29333 4L0.145874 1.85352C0.0521583 1.75972 -0.000519119 1.63258 -0.000610352 1.5C-0.000610351 1.36722 0.0519874 1.23939 0.145874 1.14551C0.239761 1.05162 0.36759 0.999023 0.500366 0.999023C0.63295 0.999115 0.76009 1.05179 0.853882 1.14551L3.00037 3.29297L5.14587 1.14551C5.23976 1.05162 5.36759 0.999023 5.50037 0.999023Z"/><path d="M13.5004 3.00037C13.7762 3.00056 14.0004 3.22449 14.0004 3.50037C14.0002 3.77608 13.7761 4.00017 13.5004 4.00037H7.50037C7.22449 4.00037 7.00056 3.7762 7.00037 3.50037C7.00037 3.22437 7.22437 3.00037 7.50037 3.00037H13.5004Z"/></svg>';
-    const SVG_GO_TO_FILE = '<svg width="14" height="14" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M8.58594 1.00098C8.98394 1.00098 9.36646 1.15943 9.64746 1.44043L12.5605 4.35352C12.8415 4.63552 13.001 5.01704 13.001 5.41504V13.001C13.001 14.106 12.106 15.001 11.001 15.001H5.00098C3.89599 15.001 3.00098 14.106 3.00098 13.001V6.00098H4.00098V13.001C4.00098 13.553 4.44899 14.001 5.00098 14.001H11.001C11.553 14.001 12.001 13.553 12.001 13.001V6.00098H9.50098C8.67299 6.00096 8.00098 5.32897 8.00098 4.50098V2.00098C7.99198 1.97699 7.98265 1.9527 7.97266 1.92871C7.89674 1.74704 7.78717 1.5812 7.64746 1.44238L7.20605 1.00098H8.58594ZM9 4.5C9 4.776 9.224 5 9.5 5H11.793L9 2.20703V4.5Z"/><path d="M4.5 0C4.63299 0 4.75952 0.0534683 4.85352 0.147461L6.85352 2.14746C6.90042 2.19336 6.93789 2.24775 6.96289 2.30859C6.98789 2.36959 7.00097 2.43498 7.00098 2.50098C7.00098 2.56698 6.98789 2.63236 6.96289 2.69336C6.93789 2.75323 6.90043 2.80956 6.85352 2.85547L4.85352 4.85547C4.75956 4.94917 4.63278 5.00195 4.5 5.00195C4.36722 5.00195 4.24044 4.94917 4.14648 4.85547C4.05248 4.76147 3.99902 4.63398 3.99902 4.50098C3.99903 4.36799 4.05249 4.24146 4.14648 4.14746L5.29297 3.00098H2.5C2.10201 3.00098 1.72045 3.15944 1.43945 3.44043C1.15846 3.72242 1.00001 4.10298 1 4.50098V5.50098C1 5.63398 0.947516 5.76147 0.853516 5.85547C0.759563 5.94817 0.632774 6.00098 0.5 6.00098C0.367225 6.00098 0.240437 5.94917 0.146484 5.85547C0.0534844 5.76147 0 5.63398 0 5.50098V4.50098C6.17892e-06 3.83799 0.263427 3.20239 0.732422 2.7334C1.20142 2.26441 1.83701 2.00098 2.5 2.00098H5.29297L4.14648 0.855469C4.05248 0.761469 3.99902 0.633977 3.99902 0.500977C3.99903 0.367985 4.05249 0.241455 4.14648 0.147461C4.24048 0.0534683 4.36701 0 4.5 0Z"/></svg>';
+    const ICON_FILTER = '<i class="codicon codicon-filter" aria-hidden="true"></i>';
+    const ICON_QUERY_MODE = '<i class="codicon codicon-database" aria-hidden="true"></i>';
+    const ICON_DB = '<i class="codicon codicon-database" aria-hidden="true"></i>';
+    const ICON_SCHEMA = '<i class="codicon codicon-type-hierarchy-sub" aria-hidden="true"></i>';
+    const ICON_CONNECTION = '<i class="codicon codicon-plug" aria-hidden="true"></i>';
+    const ICON_SORT_NONE = '<span class="sort-icon-pair" aria-hidden="true"><i class="codicon codicon-chevron-up"></i><i class="codicon codicon-chevron-down"></i></span>';
+    const ICON_SORT_ASC = '<i class="codicon codicon-chevron-up" aria-hidden="true"></i>';
+    const ICON_SORT_DESC = '<i class="codicon codicon-chevron-down" aria-hidden="true"></i>';
+    const ICON_ZOOM_IN = '<i class="codicon codicon-zoom-in" aria-hidden="true"></i>';
+    const ICON_CLEAR_ALL = '<i class="codicon codicon-clear-all" aria-hidden="true"></i>';
+    const ICON_GO_TO_FILE = '<i class="codicon codicon-go-to-file" aria-hidden="true"></i>';
 
     if (clearFiltersBtn) {
-      clearFiltersBtn.innerHTML = SVG_CLEAR_ALL;
+      clearFiltersBtn.innerHTML = ICON_CLEAR_ALL;
     }
     
     function updateModeIcon() {
-      modeBtn.innerHTML = state.searchMode === 'query' ? SVG_QUERY : SVG_LOCAL;
+      modeBtn.innerHTML = state.searchMode === 'query' ? ICON_QUERY_MODE : ICON_FILTER;
     }
 
     function showError(msg) {
@@ -2528,8 +2769,6 @@ export class TableDataPanelManager {
     let pendingFocus = null;
     let layoutColumnOrderSnapshot = null;
     let isLoading = false;
-    let showQueryEditor = ${initialShowQueryEditor ? "true" : "false"};
-    let hideTabHeader = ${initialHideTabHeader ? "true" : "false"};
     let dynamicDefaultColumnWidth = ${initialDynamicDefaultColumnWidth ? "true" : "false"};
     let readOnlyResultMode = false;
     let hideDiagramMode = false;
@@ -2561,6 +2800,8 @@ export class TableDataPanelManager {
     let currentRangeSelection = null; // { anchor: { rowIndex, colIndex }, focus: { rowIndex, colIndex } }
     let cellDragMode = 'replace'; // replace | add | remove
     let cellDragBaseCounts = new Map(); // rowKey -> Map(colName -> count)
+    let suppressCellSelectionUntil = 0;
+    let selectionSnapshotBeforeContextMenu = null;
     
     // Clipboard state for smart paste
     let clipboardData = []; // 2D array of values
@@ -2808,18 +3049,38 @@ export class TableDataPanelManager {
     }
 
     function applyQueryVisibility() {
-      if (!queryContainer) {
-        return;
+      // Sticky query only in query-result mode (read-only preview).
+      if (queryContainer) {
+        queryContainer.style.display = readOnlyResultMode ? '' : 'none';
       }
-
-      queryContainer.style.display = showQueryEditor ? '' : 'none';
-      toggleQueryVisibilityLabel.textContent = showQueryEditor ? 'Ocultar query' : 'Mostrar query';
+      if (queryEl) {
+        queryEl.readOnly = true;
+      }
     }
 
-    function applyHeaderVisibility() {
-      document.body.classList.toggle('header-hidden', hideTabHeader);
-      toggleHeaderVisibilityLabel.textContent = hideTabHeader ? 'Mostrar cabeçalho' : 'Ocultar cabeçalho';
-      updateSearchContextPlaceholder();
+    function openQueryModal() {
+      if (!queryModal || !queryCodeEditor) {
+        return;
+      }
+      queryCodeEditor.setValue(String(queryEl && queryEl.value ? queryEl.value : ''));
+      queryModal.classList.add('open');
+      if (queryModalBackdrop) {
+        queryModalBackdrop.style.display = 'block';
+      }
+      queryCodeEditor.closeFind();
+      queryCodeEditor.focus();
+      queryCodeEditor.setSelectionRange(0, 0);
+      closeHeaderMenu();
+    }
+
+    function closeQueryModal() {
+      if (queryModal) {
+        queryModal.classList.remove('open');
+      }
+      if (queryModalBackdrop) {
+        queryModalBackdrop.style.display = 'none';
+      }
+      queryCodeEditor?.closeFind();
     }
 
     function applyIntegratedTableCheck() {
@@ -2863,6 +3124,7 @@ export class TableDataPanelManager {
       });
 
       applyIntegratedTableCheck();
+      applyQueryVisibility();
 
       if (hideDiagramMode) {
         const viewDiagramBtn = document.getElementById('viewDiagramBtn');
@@ -2872,16 +3134,26 @@ export class TableDataPanelManager {
       }
     }
 
+    function syncSearchWrapState() {
+      if (!searchWrapEl || !searchInputEl) {
+        return;
+      }
+      const hasValue = String(searchInputEl.value || '').trim().length > 0;
+      const isActive = document.activeElement === searchInputEl;
+      searchWrapEl.classList.toggle('has-value', hasValue);
+      searchWrapEl.classList.toggle('is-active', isActive);
+    }
+
     function updateSearchContextPlaceholder() {
       if (!searchInputEl || !searchContextPlaceholderEl) {
         return;
       }
 
       const hasSearchText = String(searchInputEl.value || '').length > 0;
-      // const isCompactHeight = window.innerHeight <= 500;
-      const canShowContext = hideTabHeader && !hasSearchText;
+      const canShowContext = !hasSearchText;
 
       searchInputEl.placeholder = canShowContext ? '' : 'Pesquisar tudo';
+      syncSearchWrapState();
 
       if (!canShowContext) {
         searchContextPlaceholderEl.style.display = 'none';
@@ -2893,9 +3165,9 @@ export class TableDataPanelManager {
       const schemaLabel = currentSchemaName || 'Schema';
       const connectionLabel = currentConnectionName || 'Conexão';
       searchContextPlaceholderEl.innerHTML =
-      '<span class="info-item info-fixed">' + ICON_SCHEMA + '<span>' + schemaLabel + '</span></span>' +
+        '<span class="info-item info-fixed">' + ICON_SCHEMA + '<span>' + schemaLabel + '</span></span>' +
         '<span class="info-item info-fixed"><span style="margin: 4px 2px 0 0;">' + ICON_DB + '</span><span>' + dbLabel + '</span></span>' +
-        '<span class="info-item info-conn"><span style="margin: 4px 0 0 0;"">' + ICON_CONNECTION + '</span><span>' + connectionLabel + '</span></span>';
+        '<span class="info-item info-conn"><span style="margin: 4px 0 0 0;">' + ICON_CONNECTION + '</span><span>' + connectionLabel + '</span></span>';
       searchContextPlaceholderEl.style.display = 'inline-flex';
     }
 
@@ -3022,6 +3294,30 @@ export class TableDataPanelManager {
     function isBooleanType(column) {
       const dataType = String(column?.dataType || '').toLowerCase();
       return dataType === 'boolean' || dataType === 'bool';
+    }
+
+    function parseBooleanCellValue(value) {
+      if (value === true) {
+        return true;
+      }
+      if (value === false) {
+        return false;
+      }
+      const text = String(value ?? '').trim().toLowerCase();
+      if (text === 'true' || text === 't' || text === '1') {
+        return true;
+      }
+      if (text === 'false' || text === 'f' || text === '0') {
+        return false;
+      }
+      return false;
+    }
+
+    function syncBooleanToggleButton(button, value) {
+      const isTrue = parseBooleanCellValue(value);
+      button.classList.toggle('is-checked', isTrue);
+      button.title = isTrue ? 'Alternar para false' : 'Alternar para true';
+      button.setAttribute('aria-pressed', isTrue ? 'true' : 'false');
     }
 
     function isNumericColumn(column) {
@@ -3433,7 +3729,7 @@ export class TableDataPanelManager {
     const headerMenuOverlay = new OverlaySurfaceController({
       surfaceEl: headerMenu,
       backdropEl: headerMenuBackdrop,
-      anchorEl: headerMenuBtn,
+      anchorEl: null,
       placement: 'bottom-end',
     });
 
@@ -3460,6 +3756,14 @@ export class TableDataPanelManager {
       backdropEl: menuBackdrop,
       placement: 'point',
     });
+
+    const sortMenuOverlay = new OverlaySurfaceController({
+      surfaceEl: sortMenu,
+      backdropEl: sortMenuBackdrop,
+      placement: 'point',
+    });
+
+    let sortMenuColumnName = null;
 
     const paginationMenuOverlay = new OverlaySurfaceController({
       surfaceEl: paginationMenu,
@@ -3490,6 +3794,40 @@ export class TableDataPanelManager {
     function closeContextMenu() {
       closeSubmenusImmediately();
       cellMenuOverlay.close();
+    }
+
+    function closeSortMenu() {
+      sortMenuColumnName = null;
+      sortMenuOverlay.close();
+    }
+
+    function applyColumnSort(colName, direction) {
+      if (!colName) {
+        return;
+      }
+      if (direction === 'asc' || direction === 'desc') {
+        state.sortColumn = colName;
+        state.sortDirection = direction;
+      } else {
+        state.sortColumn = undefined;
+        state.sortDirection = undefined;
+      }
+      persistCurrentState();
+      reloadTableViewClearingSelection();
+    }
+
+    function showSortMenu(clientX, clientY, colName) {
+      sortMenuColumnName = colName;
+      const activeDirection =
+        state.sortColumn === colName ? (state.sortDirection === 'desc' ? 'desc' : 'asc') : 'none';
+      sortMenu.querySelectorAll('button[data-sort]').forEach((button) => {
+        const check = button.querySelector('.menu-item-check');
+        if (check) {
+          check.classList.toggle('is-checked', button.getAttribute('data-sort') === activeDirection);
+        }
+      });
+      closeContextMenu();
+      sortMenuOverlay.open({ x: clientX, y: clientY });
     }
 
     function closeHeaderMenu() {
@@ -3831,6 +4169,7 @@ export class TableDataPanelManager {
       if (searchMentionsActionBtn) {
         searchMentionsActionBtn.style.display = canSearchMentionsForActiveCell() ? '' : 'none';
       }
+      closeSortMenu();
       cellMenuOverlay.open({ x: clientX, y: clientY });
     }
 
@@ -4188,6 +4527,77 @@ export class TableDataPanelManager {
       return clone;
     }
 
+    function snapshotCellSelection() {
+      return {
+        selectedCells: cloneSelectionMap(selectedCells),
+        selectedCellCounts: cloneSelectionCounts(selectedCellCounts),
+        lastSelectedCell: lastSelectedCell
+          ? { rowKey: lastSelectedCell.rowKey, colName: lastSelectedCell.colName }
+          : null,
+        currentRangeSelection: currentRangeSelection
+          ? {
+              anchor: { ...currentRangeSelection.anchor },
+              focus: { ...currentRangeSelection.focus },
+            }
+          : null,
+      };
+    }
+
+    function restoreCellSelectionSnapshot(snapshot) {
+      if (!snapshot) {
+        return;
+      }
+      selectedCells = cloneSelectionMap(snapshot.selectedCells);
+      selectedCellCounts = cloneSelectionCounts(snapshot.selectedCellCounts);
+      lastSelectedCell = snapshot.lastSelectedCell
+        ? { rowKey: snapshot.lastSelectedCell.rowKey, colName: snapshot.lastSelectedCell.colName }
+        : null;
+      currentRangeSelection = snapshot.currentRangeSelection
+        ? {
+            anchor: { ...snapshot.currentRangeSelection.anchor },
+            focus: { ...snapshot.currentRangeSelection.focus },
+          }
+        : null;
+      renderSelectionState();
+    }
+
+    function beginContextMenuGesture() {
+      selectionSnapshotBeforeContextMenu = snapshotCellSelection();
+      suppressCellSelectionUntil = Date.now() + 400;
+      isDragging = false;
+      dragAnchor = null;
+      cellDragMode = 'replace';
+      cellDragBaseCounts = new Map();
+    }
+
+    function finishContextMenuGesture() {
+      selectionSnapshotBeforeContextMenu = null;
+    }
+
+    function selectCellForContextMenuIfNeeded(rowKey, colName, rowIndex, colIndex) {
+      const currentCellSet = selectedCells.get(rowKey);
+      if (currentCellSet && currentCellSet.has(colName)) {
+        return;
+      }
+
+      selectedCells.clear();
+      selectedCells.set(rowKey, new Set([colName]));
+      syncSelectionCountsFromSelectedCells();
+      lastSelectedCell = { rowKey, colName };
+      currentRangeSelection = {
+        anchor: { rowIndex, colIndex },
+        focus: { rowIndex, colIndex },
+      };
+      keyboardSelectionAnchor = { rowIndex, colIndex };
+      keyboardSelectionAdditive = false;
+      keyboardSelectionBase = new Map();
+      cellDragMode = 'replace';
+      cellDragBaseCounts = new Map();
+      dragAnchor = null;
+      isDragging = false;
+      renderSelectionState();
+    }
+
     function cloneSelectionCounts(source) {
       const clone = new Map();
       source.forEach((colMap, rowKey) => {
@@ -4396,13 +4806,39 @@ export class TableDataPanelManager {
       renderSelectionState();
     }
 
+    function discardInsertedRow(row) {
+      if (!row || !row.__dbadmin_inserted) {
+        return false;
+      }
+      const beforeInserted = insertedRows.length;
+      const beforeRows = rows.length;
+      insertedRows = insertedRows.filter((candidate) => candidate !== row);
+      rows = rows.filter((candidate) => candidate !== row);
+      return insertedRows.length !== beforeInserted || rows.length !== beforeRows;
+    }
+
     function markSelectedRowsForDelete() {
+      let discardedInserted = false;
       selectedCells.forEach((_cols, rowKey) => {
         const ctid = rowKeyToCtid.get(rowKey);
         if (ctid) {
           removedCtids.add(ctid);
+          return;
+        }
+        const row = rowKeyToRow.get(rowKey);
+        if (discardInsertedRow(row)) {
+          discardedInserted = true;
         }
       });
+      if (discardedInserted) {
+        clearSelectionState({ render: false });
+        if (activeCell && (!activeCell.ctid) && activeCell.row && activeCell.row.__dbadmin_inserted) {
+          const stillPresent = rows.includes(activeCell.row);
+          if (!stillPresent) {
+            activeCell = null;
+          }
+        }
+      }
       updateSaveButtonState();
     }
 
@@ -5295,11 +5731,13 @@ export class TableDataPanelManager {
 
         const right = document.createElement('span');
         right.className = 'th-icons';
-        right.classList.add(state.sortColumn === col.name ? 'th-icons-char' : 'th-icons-svg');
+        right.title = 'Ordenar';
         right.innerHTML = state.sortColumn === col.name
-          ? (state.sortDirection === 'desc' ? '↓' : '↑')
-          : SVG_SORT_NONE;
-        right.addEventListener('click', () => {
+          ? (state.sortDirection === 'desc' ? ICON_SORT_DESC : ICON_SORT_ASC)
+          : ICON_SORT_NONE;
+        right.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
           if (state.sortColumn !== col.name) {
             state.sortColumn = col.name;
             state.sortDirection = 'asc';
@@ -5311,6 +5749,11 @@ export class TableDataPanelManager {
           }
           persistCurrentState();
           reloadTableViewClearingSelection();
+        });
+        right.addEventListener('contextmenu', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          showSortMenu(event.clientX, event.clientY, col.name);
         });
 
         title.appendChild(left);
@@ -5360,8 +5803,12 @@ export class TableDataPanelManager {
           }
         });
 
+        const filterWrap = document.createElement('div');
+        filterWrap.className = 'th-filter-wrap';
+        filterWrap.appendChild(filterInput);
+
         th.appendChild(title);
-        th.appendChild(filterInput);
+        th.appendChild(filterWrap);
 
         const resizer = document.createElement('div');
         resizer.className = 'th-resizer';
@@ -5546,9 +5993,17 @@ export class TableDataPanelManager {
           });
 
           // Mousedown selects immediately (no delay)
+          td.addEventListener('pointerdown', (event) => {
+            if (event.button !== 0) {
+              beginContextMenuGesture();
+              event.preventDefault();
+              event.stopPropagation();
+            }
+          });
+
           td.addEventListener('mousedown', (event) => {
             // Right/middle click must not change cell selection (context menu uses button 2).
-            if (event.button !== 0) {
+            if (event.button !== 0 || Date.now() < suppressCellSelectionUntil) {
               event.preventDefault();
               event.stopPropagation();
               return;
@@ -5603,7 +6058,7 @@ export class TableDataPanelManager {
           });
 
           td.addEventListener('mouseenter', () => {
-            if (!isDragging || !dragAnchor) {
+            if (!isDragging || !dragAnchor || Date.now() < suppressCellSelectionUntil) {
               return;
             }
             applyCellDragRange(rowIndex, colIndex);
@@ -5611,6 +6066,11 @@ export class TableDataPanelManager {
 
           // Double click: clear selection and enter edit mode
           td.addEventListener('dblclick', (event) => {
+            if (event.target.closest('.cell-action-btn')) {
+              event.preventDefault();
+              event.stopPropagation();
+              return;
+            }
             event.stopPropagation();
             if (editingCellInput === input && input.classList.contains('editing')) {
               return;
@@ -5657,7 +6117,8 @@ export class TableDataPanelManager {
           });
 
           input.addEventListener('mousedown', (event) => {
-            if (event.button !== 0) {
+            if (event.button !== 0 || Date.now() < suppressCellSelectionUntil) {
+              beginContextMenuGesture();
               event.preventDefault();
               event.stopPropagation();
               return;
@@ -5679,6 +6140,8 @@ export class TableDataPanelManager {
             event.preventDefault();
             event.stopPropagation();
             activeCell = { input, colName: col.name, ctid, row };
+            finishContextMenuGesture();
+            selectCellForContextMenuIfNeeded(rowKey, col.name, rowIndex, colIndex);
             showContextMenu(event.clientX, event.clientY);
           });
 
@@ -5686,6 +6149,8 @@ export class TableDataPanelManager {
             event.preventDefault();
             event.stopPropagation();
             activeCell = { input, colName: col.name, ctid, row };
+            finishContextMenuGesture();
+            selectCellForContextMenuIfNeeded(rowKey, col.name, rowIndex, colIndex);
             showContextMenu(event.clientX, event.clientY);
           });
 
@@ -5705,13 +6170,40 @@ export class TableDataPanelManager {
 
           td.appendChild(input);
 
+          if (isBooleanType(col) && !readOnlyResultMode) {
+            td.classList.add('has-bool-toggle');
+            const boolToggleBtn = document.createElement('button');
+            boolToggleBtn.type = 'button';
+            boolToggleBtn.className = 'cell-bool-toggle-btn cell-action-btn';
+            boolToggleBtn.setAttribute('aria-label', 'Alternar valor booleano');
+            boolToggleBtn.innerHTML = '<span class="bool-toggle-box"><i class="codicon codicon-check" aria-hidden="true"></i></span>';
+            syncBooleanToggleButton(boolToggleBtn, effectiveCurrent);
+            boolToggleBtn.addEventListener('mousedown', (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            });
+            boolToggleBtn.addEventListener('dblclick', (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            });
+            boolToggleBtn.addEventListener('click', (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              const currentValue = getEffectiveCellValue(row, col.name, ctid);
+              const nextValue = !parseBooleanCellValue(currentValue);
+              applyCellValue(row, col, ctid, nextValue, input);
+              syncBooleanToggleButton(boolToggleBtn, nextValue);
+            });
+            td.appendChild(boolToggleBtn);
+          }
+
           if (isFkColumn(col)) {
             const openFkBtn = document.createElement('button');
             openFkBtn.type = 'button';
             openFkBtn.className = 'json-open-btn cell-action-btn';
             openFkBtn.title = 'Abrir tabela relacionada';
             openFkBtn.setAttribute('aria-label', 'Abrir tabela relacionada');
-            openFkBtn.innerHTML = SVG_GO_TO_FILE;
+            openFkBtn.innerHTML = ICON_GO_TO_FILE;
             openFkBtn.addEventListener('mousedown', (event) => {
               event.preventDefault();
               event.stopPropagation();
@@ -5728,7 +6220,7 @@ export class TableDataPanelManager {
             openJsonBtn.className = 'json-open-btn cell-action-btn';
             openJsonBtn.title = 'Abrir conteúdo';
             openJsonBtn.setAttribute('aria-label', 'Abrir conteúdo');
-            openJsonBtn.innerHTML = SVG_ZOOM_IN;
+            openJsonBtn.innerHTML = ICON_ZOOM_IN;
             openJsonBtn.addEventListener('mousedown', (event) => {
               event.preventDefault();
               event.stopPropagation();
@@ -5893,6 +6385,14 @@ export class TableDataPanelManager {
       if (state.searchMode === 'local') {
         rerenderTableViewClearingSelection();
       }
+    });
+
+    searchInputEl.addEventListener('focus', () => {
+      syncSearchWrapState();
+    });
+
+    searchInputEl.addEventListener('blur', () => {
+      syncSearchWrapState();
     });
 
     searchInputEl.addEventListener('keydown', (event) => {
@@ -6085,6 +6585,13 @@ export class TableDataPanelManager {
         return;
       }
 
+      if (queryModal && queryModal.classList.contains('open')) {
+        closeQueryModal();
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
       if (exportModal.classList.contains('open')) {
         closeExportModal();
         event.preventDefault();
@@ -6123,10 +6630,6 @@ export class TableDataPanelManager {
       closeAllOverlays();
     });
 
-    headerMenuBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      headerMenuOverlay.toggle({ anchorEl: headerMenuBtn });
-    });
 
     toolbarMenuBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -6235,14 +6738,34 @@ export class TableDataPanelManager {
       vscode.postMessage({ type: 'showInExplorer' });
     });
 
-    toggleQueryVisibilityBtn.addEventListener('click', () => {
-      closeHeaderMenu();
-      vscode.postMessage({ type: 'toggleQueryVisibility' });
+    showQueryModalBtn?.addEventListener('click', () => {
+      openQueryModal();
     });
 
-    toggleHeaderVisibilityBtn.addEventListener('click', () => {
+    openConnectionManagerBtn?.addEventListener('click', () => {
       closeHeaderMenu();
-      vscode.postMessage({ type: 'toggleHeaderVisibility' });
+      vscode.postMessage({ type: 'openConnectionManager' });
+    });
+
+    queryModalClose?.addEventListener('click', () => {
+      closeQueryModal();
+    });
+
+    queryModalBackdrop?.addEventListener('click', () => {
+      closeQueryModal();
+    });
+
+    queryModalCopy?.addEventListener('click', async () => {
+      const value = String(queryCodeEditor?.getValue() || '');
+      try {
+        await navigator.clipboard.writeText(value);
+      } catch {
+        const textarea = document.getElementById('queryCodeEditorTextarea');
+        if (textarea instanceof HTMLTextAreaElement) {
+          textarea.select();
+          document.execCommand('copy');
+        }
+      }
     });
 
     const toggleIntegratedTableBtn = document.getElementById('toggleIntegratedTable');
@@ -6259,7 +6782,7 @@ export class TableDataPanelManager {
       resetColumnLayoutToDefault();
     });
 
-    queryEl.addEventListener('keydown', (event) => {
+    queryEl?.addEventListener('keydown', (event) => {
       if (event.key !== 'Enter' || event.shiftKey) {
         return;
       }
@@ -6275,7 +6798,7 @@ export class TableDataPanelManager {
       reloadTableViewClearingSelection();
     });
 
-    queryResizer.addEventListener('mousedown', (event) => {
+    queryResizer?.addEventListener('mousedown', (event) => {
       event.preventDefault();
       queryResizeState = {
         startY: event.clientY,
@@ -6306,7 +6829,9 @@ export class TableDataPanelManager {
       }
 
       const nextHeight = Math.max(28, queryResizeState.startHeight + (event.clientY - queryResizeState.startY));
-      queryEl.style.height = nextHeight + 'px';
+      if (queryEl) {
+        queryEl.style.height = nextHeight + 'px';
+      }
     });
 
     const endColumnResize = () => {
@@ -6713,6 +7238,18 @@ export class TableDataPanelManager {
       });
     });
 
+    sortMenu.querySelectorAll('button[data-sort]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const direction = button.getAttribute('data-sort');
+        const colName = sortMenuColumnName;
+        closeSortMenu();
+        if (!colName) {
+          return;
+        }
+        applyColumnSort(colName, direction === 'none' ? null : direction);
+      });
+    });
+
     cellMenu.querySelectorAll('button[data-action]').forEach((button) => {
       button.addEventListener('click', () => {
         if (!activeCell) {
@@ -6828,7 +7365,11 @@ export class TableDataPanelManager {
               } else {
                 removedCtids.add(activeCell.ctid);
               }
-            } else {
+            } else if (activeCell.row && activeCell.row.__dbadmin_inserted) {
+              discardInsertedRow(activeCell.row);
+              clearSelectionState({ render: false });
+              activeCell = null;
+            } else if (activeCell.row) {
               activeCell.row.__dbadmin_removed = !activeCell.row.__dbadmin_removed;
             }
             render();
@@ -6866,13 +7407,9 @@ export class TableDataPanelManager {
         currentDatabaseName = String(message.databaseName || '');
         currentSchemaName = String(message.schemaName || '');
         currentTableName = String(message.tableName || '');
-        titleEl.innerHTML =
-        '<span class="info-item info-fixed">' + ICON_SCHEMA + '<span>' + currentSchemaName + '</span></span>' +
-          '<span class="info-item info-fixed">' + ICON_DB + '<span>' + currentDatabaseName + '</span></span>' +
-          '<span class="info-item info-conn">' + ICON_CONNECTION + '<span>' + (currentConnectionName || 'Conexão') + '</span></span>';
-        queryEl.value = message.result.query;
-        showQueryEditor = message.showQueryEditor !== false;
-        applyQueryVisibility();
+        if (queryEl) {
+          queryEl.value = message.result.query;
+        }
         columns = message.result.columns || [];
         applyLayoutState(message.layout);
         syncColumnState();
@@ -6908,16 +7445,6 @@ export class TableDataPanelManager {
           endLoading();
           showError(message.message);
         }
-      }
-
-      if (message.type === 'queryVisibility') {
-        showQueryEditor = message.showQueryEditor !== false;
-        applyQueryVisibility();
-      }
-
-      if (message.type === 'headerVisibility') {
-        hideTabHeader = message.hideTabHeader === true;
-        applyHeaderVisibility();
       }
 
       if (message.type === 'integratedTableMode') {
@@ -7754,7 +8281,6 @@ export class TableDataPanelManager {
 
     updateModeIcon();
     applyQueryVisibility();
-    applyHeaderVisibility();
     updateSaveButtonState();
     beginLoading();
     vscode.postMessage({ type: 'ready' });

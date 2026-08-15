@@ -75,11 +75,16 @@ export function buildCodeEditorStyles(): string {
       border-radius: 4px;
       padding: 0 6px;
       font-size: 12px;
+      overflow: hidden;
+      background-clip: padding-box;
+      accent-color: var(--dbadmin-input-focus);
+      caret-color: var(--vscode-editorCursor-foreground, var(--dbadmin-input-focus));
     }
     .code-editor-find-input:focus,
     .code-editor-replace-input:focus {
       outline: none;
-      border-color: var(--vscode-focusBorder);
+      border-color: var(--dbadmin-input-focus, #007acc);
+      box-shadow: none;
     }
     .code-editor-find-result {
       min-width: 52px;
@@ -157,31 +162,31 @@ export function buildCodeEditorStyles(): string {
   `;
 }
 
-export function buildCodeEditorMarkup(): string {
-  return String.raw`
-    <div class="code-editor-shell" id="codeEditorRoot">
-      <div class="code-editor-find-widget" id="codeEditorFindWidget">
+export function buildCodeEditorMarkup(idPrefix = "codeEditor"): string {
+  return `
+    <div class="code-editor-shell" id="${idPrefix}Root">
+      <div class="code-editor-find-widget" id="${idPrefix}FindWidget">
         <div class="code-editor-find-row">
           <div class="code-editor-find-input-wrap">
-            <input class="code-editor-find-input" id="codeEditorFindInput" placeholder="Buscar" />
-            <button class="code-editor-toggle-replace-chevron" id="codeEditorToggleReplace" title="Mostrar substituir">▶</button>
+            <input class="code-editor-find-input" id="${idPrefix}FindInput" placeholder="Buscar" />
+            <button class="code-editor-toggle-replace-chevron" id="${idPrefix}ToggleReplace" title="Mostrar substituir">▶</button>
           </div>
-          <span class="code-editor-find-result" id="codeEditorFindResult"></span>
-          <button id="codeEditorFindPrev" class="secondary" title="Anterior">↑</button>
-          <button id="codeEditorFindNext" class="secondary" title="Próximo">↓</button>
-          <button id="codeEditorRegex" class="secondary" title="Regex">.*</button>
-          <button id="codeEditorCloseFind" class="secondary" title="Fechar busca">✕</button>
+          <span class="code-editor-find-result" id="${idPrefix}FindResult"></span>
+          <button id="${idPrefix}FindPrev" class="secondary" title="Anterior">↑</button>
+          <button id="${idPrefix}FindNext" class="secondary" title="Próximo">↓</button>
+          <button id="${idPrefix}Regex" class="secondary" title="Regex">.*</button>
+          <button id="${idPrefix}CloseFind" class="secondary" title="Fechar busca">✕</button>
         </div>
-        <div class="code-editor-replace-row" id="codeEditorReplaceRow">
-          <input class="code-editor-replace-input" id="codeEditorReplaceInput" placeholder="Substituir" />
-          <button id="codeEditorReplaceOne" class="secondary" title="Substituir">Substituir</button>
-          <button id="codeEditorReplaceAll" class="secondary" title="Substituir tudo">Tudo</button>
+        <div class="code-editor-replace-row" id="${idPrefix}ReplaceRow">
+          <input class="code-editor-replace-input" id="${idPrefix}ReplaceInput" placeholder="Substituir" />
+          <button id="${idPrefix}ReplaceOne" class="secondary" title="Substituir">Substituir</button>
+          <button id="${idPrefix}ReplaceAll" class="secondary" title="Substituir tudo">Tudo</button>
         </div>
       </div>
-      <div class="code-editor-line-numbers" id="codeEditorLineNumbers"></div>
+      <div class="code-editor-line-numbers" id="${idPrefix}LineNumbers"></div>
       <div class="code-editor-stack">
-        <pre class="code-editor-highlight" id="codeEditorHighlight"></pre>
-        <textarea class="code-editor-textarea" id="codeEditorTextarea" spellcheck="false"></textarea>
+        <pre class="code-editor-highlight" id="${idPrefix}Highlight"></pre>
+        <textarea class="code-editor-textarea" id="${idPrefix}Textarea" spellcheck="false"></textarea>
       </div>
     </div>
   `;
@@ -696,6 +701,10 @@ export function buildCodeEditorScript(): string {
         replaceOneEl.addEventListener('click', replaceOne);
         replaceAllEl.addEventListener('click', replaceAll);
         closeFindEl.addEventListener('click', closeFind);
+
+        if (options.readOnly) {
+          textareaEl.readOnly = true;
+        }
 
         refreshEditorUi();
 

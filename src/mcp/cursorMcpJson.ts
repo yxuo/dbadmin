@@ -1,0 +1,89 @@
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+
+/** Same shape as quickdb: lowercase key in ~/.cursor/mcp.json */
+export const CURSOR_MCP_SERVER_KEY = "dbadmin";
+
+/** Older keys we used while iterating; remove on sync to avoid duplicates. */
+const LEGACY_CURSOR_MCP_SERVER_KEYS = ["DBAdmin"];
+
+export function getCursorMcpJsonPath(): string {
+  return path.join(os.homedir(), ".cursor", "mcp.json");
+}
+
+export function buildDbAdminMcpServerEntry(options: {
+  serverJsPath: string;
+  storageRoot: string;
+  allowWrites: boolean;
+  maxRows: number;
+}): Record<string, unknown> {
+  return {
+    command: "node",
+    args: [options.serverJsPath],
+    env: {
+      DBADMIN_STORAGE_ROOT: options.storageRoot,
+      DBADMIN_MCP_ALLOW_WRITES: options.allowWrites ? "true" : "false",
+      DBADMIN_MCP_MAX_ROWS: String(options.maxRows),
+    },
+  };
+}
+
+/**
+ * Upsert only the dbadmin entry in ~/.cursor/mcp.json, preserving other servers
+ * (quickdb, GitKraken, etc.). Never wipe the file on parse errors.
+ */
+export async function upsertDbAdminInCursorMcpJson(options: {
+  serverJsPath: string;
+  storageRoot: string;
+  allowWrites: boolean;
+  maxRows: number;
+}): Promise<string> {
+  const filePath = getCursorMcpJsonPath();
+  let root: Record<string, unknown> = {};
+  let existingRaw: string | undefined;
+
+  try {
+    existingRaw = await fs.readFile(filePath, "utf8");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  if (existingRaw !== undefined) {
+    const trimmed = existingRaw.replace(/^\uFEFF/, "").trim();
+    if (trimmed) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(trimmed);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(
+          `mcp.json inválido em ${filePath}; corrija o JSON antes de sincronizar o DBAdmin (${message}).`,
+        );
+      }
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error(`mcp.json inválido em ${filePath}: esperado um objeto na raiz.`);
+      }
+      root = parsed as Record<string, unknown>;
+    }
+  }
+
+  const mcpServers =
+    root.mcpServers && typeof root.mcpServers === "object" && !Array.isArray(root.mcpServers)
+      ? ({ ...(root.mcpServers as Record<string, unknown>) } as Record<string, unknown>)
+      : {};
+
+  for (const legacyKey of LEGACY_CURSOR_MCP_SERVER_KEYS) {
+    delete mcpServers[legacyKey];
+  }
+
+  mcpServers[CURSOR_MCP_SERVER_KEY] = buildDbAdminMcpServerEntry(options);
+  root.mcpServers = mcpServers;
+
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, `${JSON.stringify(root, null, 2)}\n`, "utf8");
+  return filePath;
+}

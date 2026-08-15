@@ -5,42 +5,49 @@ import * as vscode from 'vscode';
 import { getSqlBookIntegratedTableEnabled, setSqlBookIntegratedTableEnabled } from './sqlBookIntegratedTable';
 import { getSqlBookRunPerQueryEnabled, setSqlBookRunPerQueryEnabled } from './sqlBookRunPerQuery';
 
-const SHOW_QUERY_SETTING = 'dbadmin.showQueryEditor';
-const HIDE_TAB_HEADER_SETTING = 'dbadmin.hideTabHeader';
 const PERSIST_LAYOUT_SETTING = 'dbadmin.persistColumnLayout';
 const PGADMIN_BIN_PATH_SETTING = 'dbadmin.pgAdminBinPath';
 const SHOW_FILTER_LABEL_SETTING = 'dbadmin.showFilterLabel';
 const DEFAULT_PAGE_SIZE_SETTING = 'dbadmin.defaultPageSize';
 const SQLBOOK_INTEGRATED_TABLE_SETTING = 'dbadmin.sqlbookIntegratedTable';
+const MCP_ALLOW_WRITES_SETTING = 'dbadmin.mcpAllowWrites';
+const MCP_MAX_ROWS_SETTING = 'dbadmin.mcpMaxRows';
+
+type SettingsSection = 'mcp';
 
 type SettingsWebviewMessage =
   | { type: 'ready' }
   | {
       type: 'saveSettings';
       settings: {
-        showQueryEditor: boolean;
-        hideTabHeader: boolean;
         showFilterLabel: boolean;
         persistColumnLayout: boolean;
         defaultPageSize: number;
         pgAdminBinPath: string;
         sqlbookIntegratedTable: boolean;
         sqlbookRunPerQuery: boolean;
+        mcpAllowWrites: boolean;
+        mcpMaxRows: number;
       };
     }
   | { type: 'detectPgAdminBinPath' }
   | { type: 'openConnectionsFile' }
-  | { type: 'openExtensionSettings' };
+  | { type: 'openExtensionSettings' }
+  | { type: 'openMcpJson' }
+  | { type: 'copyMcpConfig' };
 
 export class SettingsPanelManager {
   private panel: vscode.WebviewPanel | undefined;
+  private pendingSection: SettingsSection | undefined;
 
   public constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly getConnectionsFilePath: () => Promise<string>
   ) {}
 
-  public show(): void {
+  public show(options?: { section?: SettingsSection }): void {
+    this.pendingSection = options?.section;
+
     if (this.panel) {
       this.panel.reveal(vscode.ViewColumn.Active, false);
       void this.pushCurrentState(this.panel);
@@ -75,22 +82,12 @@ export class SettingsPanelManager {
         const safePageSize = Number.isFinite(numeric)
           ? Math.max(1, Math.min(500, Math.trunc(numeric)))
           : 50;
+        const mcpMaxRowsRaw = Number(message.settings.mcpMaxRows);
+        const safeMcpMaxRows = Number.isFinite(mcpMaxRowsRaw)
+          ? Math.max(1, Math.min(5000, Math.trunc(mcpMaxRowsRaw)))
+          : 200;
 
         await Promise.all([
-          vscode.workspace
-            .getConfiguration()
-            .update(
-              SHOW_QUERY_SETTING,
-              Boolean(message.settings.showQueryEditor),
-              vscode.ConfigurationTarget.Global
-            ),
-          vscode.workspace
-            .getConfiguration()
-            .update(
-              HIDE_TAB_HEADER_SETTING,
-              Boolean(message.settings.hideTabHeader),
-              vscode.ConfigurationTarget.Global
-            ),
           vscode.workspace
             .getConfiguration()
             .update(
@@ -117,6 +114,20 @@ export class SettingsPanelManager {
             .update(
               PGADMIN_BIN_PATH_SETTING,
               String(message.settings.pgAdminBinPath || ''),
+              vscode.ConfigurationTarget.Global
+            ),
+          vscode.workspace
+            .getConfiguration()
+            .update(
+              MCP_ALLOW_WRITES_SETTING,
+              Boolean(message.settings.mcpAllowWrites),
+              vscode.ConfigurationTarget.Global
+            ),
+          vscode.workspace
+            .getConfiguration()
+            .update(
+              MCP_MAX_ROWS_SETTING,
+              safeMcpMaxRows,
               vscode.ConfigurationTarget.Global
             ),
           setSqlBookIntegratedTableEnabled(
@@ -166,6 +177,16 @@ export class SettingsPanelManager {
 
       if (message.type === 'openExtensionSettings') {
         await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:local.dbadmin dbadmin');
+        return;
+      }
+
+      if (message.type === 'openMcpJson') {
+        await vscode.commands.executeCommand('dbadmin.openMcpJson');
+        return;
+      }
+
+      if (message.type === 'copyMcpConfig') {
+        await vscode.commands.executeCommand('dbadmin.copyMcpConfig');
       }
     });
 
@@ -178,6 +199,7 @@ export class SettingsPanelManager {
 
     panel.onDidDispose(() => {
       this.panel = undefined;
+      this.pendingSection = undefined;
       onMessage.dispose();
       onConfigChange.dispose();
     });
@@ -185,12 +207,6 @@ export class SettingsPanelManager {
 
   private async pushCurrentState(panel: vscode.WebviewPanel): Promise<void> {
     const storagePath = await this.getConnectionsFilePath();
-    const showQueryEditor = vscode.workspace
-      .getConfiguration()
-      .get<boolean>(SHOW_QUERY_SETTING, true);
-    const hideTabHeader = vscode.workspace
-      .getConfiguration()
-      .get<boolean>(HIDE_TAB_HEADER_SETTING, false);
     const showFilterLabel = vscode.workspace
       .getConfiguration()
       .get<boolean>(SHOW_FILTER_LABEL_SETTING, true);
@@ -203,20 +219,29 @@ export class SettingsPanelManager {
     const defaultPageSize = vscode.workspace
       .getConfiguration()
       .get<number>(DEFAULT_PAGE_SIZE_SETTING, 50);
+    const mcpAllowWrites = vscode.workspace
+      .getConfiguration()
+      .get<boolean>(MCP_ALLOW_WRITES_SETTING, false);
+    const mcpMaxRows = vscode.workspace
+      .getConfiguration()
+      .get<number>(MCP_MAX_ROWS_SETTING, 200);
     const sqlbookIntegratedTable = getSqlBookIntegratedTableEnabled();
     const sqlbookRunPerQuery = getSqlBookRunPerQueryEnabled();
+    const focusSection = this.pendingSection;
+    this.pendingSection = undefined;
 
     panel.webview.postMessage({
       type: 'settingsState',
-      showQueryEditor,
-      hideTabHeader,
       showFilterLabel,
       persistColumnLayout,
       defaultPageSize,
       pgAdminBinPath,
       sqlbookIntegratedTable,
       sqlbookRunPerQuery,
+      mcpAllowWrites,
+      mcpMaxRows,
       storagePath,
+      focusSection,
     });
   }
 
@@ -232,6 +257,24 @@ export class SettingsPanelManager {
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <style>
     html, body { height: 100%; }
+    :root { --dbadmin-input-focus: #007acc; accent-color: var(--dbadmin-input-focus); }
+    input, textarea, select {
+      accent-color: var(--dbadmin-input-focus);
+      caret-color: var(--vscode-editorCursor-foreground, var(--dbadmin-input-focus));
+    }
+    input:focus, textarea:focus, select:focus,
+    input:focus-visible, textarea:focus-visible, select:focus-visible {
+      outline: none;
+      border-color: var(--dbadmin-input-focus);
+    }
+    input:-webkit-autofill,
+    input:-webkit-autofill:hover,
+    input:-webkit-autofill:focus {
+      -webkit-text-fill-color: var(--vscode-input-foreground);
+      caret-color: var(--dbadmin-input-focus);
+      box-shadow: 0 0 0 1000px var(--vscode-input-background) inset;
+      border-color: var(--dbadmin-input-focus);
+    }
     body {
       margin: 0;
       padding: 16px;
@@ -342,26 +385,6 @@ export class SettingsPanelManager {
 
       <div class="item">
         <div class="meta">
-          <span class="title">Mostrar query</span>
-          <span class="desc">Exibe o editor de query na visualização de tabela.</span>
-        </div>
-        <label>
-          <input id="showQueryEditor" type="checkbox" />
-        </label>
-      </div>
-
-      <div class="item">
-        <div class="meta">
-          <span class="title">Ocultar cabeçalho da aba de tabela</span>
-          <span class="desc">Oculta o cabeçalho da aba e move o botão de menu para a toolbar.</span>
-        </div>
-        <label>
-          <input id="hideTabHeader" type="checkbox" />
-        </label>
-      </div>
-
-      <div class="item">
-        <div class="meta">
           <span class="title">Persistir layout de colunas</span>
           <span class="desc">Ao abrir uma nova aba, as configurações de layout de colunas serão mantidas.</span>
         </div>
@@ -400,6 +423,44 @@ export class SettingsPanelManager {
         <label>
           <input id="sqlbookRunPerQuery" type="checkbox" />
         </label>
+      </div>
+    </div>
+
+    <div class="card" id="mcpCard">
+      <h2 class="card-title">MCP (IA)</h2>
+
+      <div class="item">
+        <div class="meta">
+          <span class="title">Permitir SQL de escrita</span>
+          <span class="desc">Por padrão a IA só executa SELECT/WITH/EXPLAIN/SHOW. Ative para INSERT/UPDATE/DELETE/DDL.</span>
+        </div>
+        <label>
+          <input id="mcpAllowWrites" type="checkbox" />
+        </label>
+      </div>
+
+      <div class="item">
+        <div class="meta">
+          <span class="title">Máximo de linhas no query</span>
+          <span class="desc">Limite de linhas retornadas pela tool MCP query.</span>
+        </div>
+        <input id="mcpMaxRows" type="number" min="1" max="5000" style="width:80px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border,transparent);border-radius:4px;padding:0 6px;height:26px;font-family:inherit;font-size:inherit;" />
+      </div>
+
+      <div class="item">
+        <div class="meta">
+          <span class="title">Arquivo mcp.json do Cursor</span>
+          <span class="desc">Sincronizado automaticamente. O gear das entradas vindas do mcp.json abre este arquivo. A lista "Configurar Ferramentas" usa o provider da extensão.</span>
+        </div>
+        <button id="openMcpJson" class="secondary">Abrir</button>
+      </div>
+
+      <div class="item">
+        <div class="meta">
+          <span class="title">Config para Claude / outros clientes</span>
+          <span class="desc">Copia o JSON pronto para colar em claude_desktop_config.json ou claude mcp add.</span>
+        </div>
+        <button id="copyMcpConfig" class="secondary">Copiar</button>
       </div>
     </div>
 
@@ -445,14 +506,14 @@ export class SettingsPanelManager {
 
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
-    const showQueryEditor = document.getElementById('showQueryEditor');
-    const hideTabHeader = document.getElementById('hideTabHeader');
     const showFilterLabel = document.getElementById('showFilterLabel');
     const persistColumnLayout = document.getElementById('persistColumnLayout');
     const defaultPageSize = document.getElementById('defaultPageSize');
     const pgAdminBinPath = document.getElementById('pgAdminBinPath');
     const sqlbookIntegratedTable = document.getElementById('sqlbookIntegratedTable');
     const sqlbookRunPerQuery = document.getElementById('sqlbookRunPerQuery');
+    const mcpAllowWrites = document.getElementById('mcpAllowWrites');
+    const mcpMaxRows = document.getElementById('mcpMaxRows');
     const storagePath = document.getElementById('storagePath');
     const saveSettingsBtn = document.getElementById('saveSettings');
     const saveStatus = document.getElementById('saveStatus');
@@ -593,6 +654,11 @@ export class SettingsPanelManager {
       return Number.isFinite(numeric) ? Math.max(1, Math.min(500, Math.trunc(numeric))) : 50;
     }
 
+    function clampMcpMaxRows(value) {
+      const numeric = Number(value);
+      return Number.isFinite(numeric) ? Math.max(1, Math.min(5000, Math.trunc(numeric))) : 200;
+    }
+
     function setDirty(value) {
       hasUnsavedChanges = value;
       saveStatus.textContent = hasUnsavedChanges ? 'Alterações não salvas' : '';
@@ -600,24 +666,16 @@ export class SettingsPanelManager {
 
     function buildSettingsPayload() {
       return {
-        showQueryEditor: Boolean(showQueryEditor.checked),
-        hideTabHeader: Boolean(hideTabHeader.checked),
         showFilterLabel: Boolean(showFilterLabel.checked),
         persistColumnLayout: Boolean(persistColumnLayout.checked),
         defaultPageSize: clampPageSize(defaultPageSize.value),
         pgAdminBinPath: String(pgAdminBinPath.value || ''),
         sqlbookIntegratedTable: Boolean(sqlbookIntegratedTable.checked),
         sqlbookRunPerQuery: Boolean(sqlbookRunPerQuery.checked),
+        mcpAllowWrites: Boolean(mcpAllowWrites.checked),
+        mcpMaxRows: clampMcpMaxRows(mcpMaxRows.value),
       };
     }
-
-    showQueryEditor.addEventListener('change', () => {
-      setDirty(true);
-    });
-
-    hideTabHeader.addEventListener('change', () => {
-      setDirty(true);
-    });
 
     showFilterLabel.addEventListener('change', () => {
       setDirty(true);
@@ -644,6 +702,15 @@ export class SettingsPanelManager {
       setDirty(true);
     });
 
+    mcpAllowWrites.addEventListener('change', () => {
+      setDirty(true);
+    });
+
+    mcpMaxRows.addEventListener('change', () => {
+      mcpMaxRows.value = String(clampMcpMaxRows(mcpMaxRows.value));
+      setDirty(true);
+    });
+
     document.getElementById('detectPgAdmin').addEventListener('click', () => {
       vscode.postMessage({ type: 'detectPgAdminBinPath' });
     });
@@ -656,9 +723,18 @@ export class SettingsPanelManager {
       vscode.postMessage({ type: 'openExtensionSettings' });
     });
 
+    document.getElementById('openMcpJson').addEventListener('click', () => {
+      vscode.postMessage({ type: 'openMcpJson' });
+    });
+
+    document.getElementById('copyMcpConfig').addEventListener('click', () => {
+      vscode.postMessage({ type: 'copyMcpConfig' });
+    });
+
     saveSettingsBtn.addEventListener('click', () => {
       const payload = buildSettingsPayload();
       defaultPageSize.value = String(payload.defaultPageSize);
+      mcpMaxRows.value = String(payload.mcpMaxRows);
       vscode.postMessage({ type: 'saveSettings', settings: payload });
     });
 
@@ -685,17 +761,24 @@ export class SettingsPanelManager {
         return;
       }
 
-      showQueryEditor.checked = Boolean(message.showQueryEditor);
-      hideTabHeader.checked = Boolean(message.hideTabHeader);
       showFilterLabel.checked = Boolean(message.showFilterLabel);
       persistColumnLayout.checked = Boolean(message.persistColumnLayout);
       defaultPageSize.value = String(message.defaultPageSize ?? 50);
       pgAdminBinPath.value = String(message.pgAdminBinPath || '');
       sqlbookIntegratedTable.checked = Boolean(message.sqlbookIntegratedTable);
       sqlbookRunPerQuery.checked = Boolean(message.sqlbookRunPerQuery);
+      mcpAllowWrites.checked = Boolean(message.mcpAllowWrites);
+      mcpMaxRows.value = String(message.mcpMaxRows ?? 200);
       storagePath.textContent = String(message.storagePath || '');
       storagePath.title = String(message.storagePath || '');
       setDirty(false);
+
+      if (message.focusSection === 'mcp') {
+        const mcpCard = document.getElementById('mcpCard');
+        if (mcpCard) {
+          mcpCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }
     });
 
     vscode.postMessage({ type: 'ready' });
