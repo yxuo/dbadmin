@@ -18,6 +18,7 @@ import {
   TableSectionNodeRef,
   TreeNodeRef,
 } from './models';
+import { t } from './i18n';
 import { PostgresService } from './postgresService';
 
 type SnapshotLoadStatus = 'created' | 'loading' | 'ready' | 'error';
@@ -229,7 +230,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
         rootNodes.push(
           {
             type: 'placeholder',
-            message: 'Sem conexões.',
+            message: t('No connections.'),
           } satisfies PlaceholderNodeRef
         );
 
@@ -253,7 +254,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
           return [
             {
               type: 'placeholder',
-              message: 'Preparando snapshot...',
+              message: t('Preparing snapshot...'),
             } satisfies PlaceholderNodeRef,
           ];
         }
@@ -269,7 +270,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
           return [
             {
               type: 'placeholder',
-              message: snapshot.errorMessage ?? 'Erro ao conectar',
+              message: snapshot.errorMessage ?? t('Connection error'),
             } satisfies PlaceholderNodeRef,
           ];
         }
@@ -279,7 +280,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
             return [
               {
                 type: 'placeholder',
-                message: 'Carregando bancos...',
+                message: t('Loading databases...'),
               } satisfies PlaceholderNodeRef,
             ];
           }
@@ -288,8 +289,8 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
             {
               type: 'placeholder',
               message: configuredVisibleDatabases
-                ? 'Sem databases configuradas para exibicao.'
-                : 'Sem databases.',
+                ? t('No databases configured for display.')
+                : t('No databases.'),
             } satisfies PlaceholderNodeRef,
           ];
         }
@@ -308,7 +309,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
           return [
             {
               type: 'placeholder',
-              message: 'Carregando metadados...',
+              message: t('Loading metadata...'),
             } satisfies PlaceholderNodeRef,
           ];
         }
@@ -336,7 +337,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
           return [
             {
               type: 'placeholder',
-              message: 'Carregando metadados...',
+              message: t('Loading metadata...'),
             } satisfies PlaceholderNodeRef,
           ];
         }
@@ -348,7 +349,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
               return [
                 {
                   type: 'placeholder',
-                  message: database.errorMessage ?? 'Erro ao carregar schemas.',
+                  message: database.errorMessage ?? t('Failed to load schemas.'),
                 } satisfies PlaceholderNodeRef,
               ];
             }
@@ -357,7 +358,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
               return [
                 {
                   type: 'placeholder',
-                  message: 'Carregando schemas...',
+                  message: t('Loading schemas...'),
                 } satisfies PlaceholderNodeRef,
               ];
             }
@@ -365,7 +366,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
             return [
               {
                 type: 'placeholder',
-                message: 'Sem schemas.',
+                message: t('No schemas.'),
               } satisfies PlaceholderNodeRef,
             ];
           }
@@ -384,7 +385,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
             return [
               {
                 type: 'placeholder',
-                message: database.errorMessage ?? 'Erro ao carregar extensions.',
+                message: database.errorMessage ?? t('Failed to load extensions.'),
               } satisfies PlaceholderNodeRef,
             ];
           }
@@ -393,7 +394,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
             return [
               {
                 type: 'placeholder',
-                message: 'Carregando extensions...',
+                message: t('Loading extensions...'),
               } satisfies PlaceholderNodeRef,
             ];
           }
@@ -401,7 +402,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
           return [
             {
               type: 'placeholder',
-              message: 'Sem extensions.',
+              message: t('No extensions.'),
             } satisfies PlaceholderNodeRef,
           ];
         }
@@ -420,7 +421,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
           return [
             {
               type: 'placeholder',
-              message: 'Carregando metadados...',
+              message: t('Loading metadata...'),
             } satisfies PlaceholderNodeRef,
           ];
         }
@@ -436,7 +437,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
           return [
             {
               type: 'placeholder',
-              message: schema.errorMessage ?? 'Erro ao carregar objetos do schema.',
+              message: schema.errorMessage ?? t('Failed to load schema objects.'),
             } satisfies PlaceholderNodeRef,
           ];
         }
@@ -448,7 +449,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
           return [
             {
               type: 'placeholder',
-              message: 'Carregando objetos do schema...',
+              message: t('Loading schema objects...'),
             } satisfies PlaceholderNodeRef,
           ];
         }
@@ -507,7 +508,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
           return [
             {
               type: 'placeholder',
-              message: 'Carregando objetos...',
+              message: t('Loading objects...'),
             } satisfies PlaceholderNodeRef,
           ];
         }
@@ -524,7 +525,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
             return [
               {
                 type: 'placeholder',
-                message: schemaSnapshot.errorMessage ?? 'Erro ao carregar objetos.',
+                message: schemaSnapshot.errorMessage ?? t('Failed to load objects.'),
               } satisfies PlaceholderNodeRef,
             ];
           }
@@ -533,7 +534,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
             return [
               {
                 type: 'placeholder',
-                message: 'Carregando lista...',
+                message: t('Loading list...'),
               } satisfies PlaceholderNodeRef,
             ];
           }
@@ -541,7 +542,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
           return [
             {
               type: 'placeholder',
-              message: 'Sem resultados.',
+              message: t('No results.'),
             } satisfies PlaceholderNodeRef,
           ];
         }
@@ -573,7 +574,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
           return [
             {
               type: 'placeholder',
-              message: 'Sem colunas.',
+              message: t('No columns.'),
             } satisfies PlaceholderNodeRef,
           ];
         }
@@ -602,7 +603,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
           return [
             {
               type: 'placeholder',
-              message: 'Sem restrições.',
+              message: t('No constraints.'),
             } satisfies PlaceholderNodeRef,
           ];
         }
@@ -621,7 +622,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
 
       return [];
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Erro desconhecido';
+      const message = error instanceof Error ? error.message : t('Unexpected error.');
       return [
         {
           type: 'placeholder',
@@ -692,7 +693,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
     }
 
     if (element.type === 'databaseGroup') {
-      const label = element.kind === 'schemas' ? 'Schemas' : 'Extensions';
+      const label = element.kind === 'schemas' ? t('Schemas') : t('Extensions');
       const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.Collapsed);
       item.contextValue = `databaseGroup:${element.kind}`;
       item.iconPath =
@@ -892,19 +893,19 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
 
   private groupLabel(kind: DbObjectKind): string {
     if (kind === 'table') {
-      return 'Tabelas';
+      return t('Tables');
     }
     if (kind === 'view') {
-      return 'Views';
+      return t('Views');
     }
     if (kind === 'function') {
-      return 'Functions';
+      return t('Functions');
     }
     if (kind === 'procedure') {
-      return 'Procedures';
+      return t('Procedures');
     }
 
-    return 'Triggers';
+    return t('Triggers');
   }
 
   private objectIcon(kind: DbObjectKind): vscode.ThemeIcon {
@@ -926,21 +927,21 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
 
   private tableSectionLabel(section: TableSectionKind): string {
     if (section === 'columns') {
-      return 'Colunas';
+      return t('Columns');
     }
     if (section === 'constraints') {
-      return 'Restrições';
+      return t('Constraints');
     }
     if (section === 'indexes') {
-      return 'Índices';
+      return t('Indexes');
     }
     if (section === 'rls') {
-      return 'RLS';
+      return t('RLS');
     }
     if (section === 'rules') {
-      return 'Regras';
+      return t('Rules');
     }
-    return 'Triggers';
+    return t('Triggers');
   }
 
   private tableSectionIcon(section: TableSectionKind): vscode.ThemeIcon {
@@ -1066,12 +1067,12 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
         return;
       } catch (error) {
         lastError = error;
-        const message = error instanceof Error ? error.message : 'Erro desconhecido';
+        const message = error instanceof Error ? error.message : t('Unexpected error.');
         this.logConnectionEvent(connection, `tentativa ${attempt + 1}: falhou - ${message}`);
         const snapshot = this.ensureConnectionSnapshot(connection);
         snapshot.status = 'error';
-        snapshot.errorMessage = `Erro ao conectar: ${message}`;
-        this.versions.set(connection.id, 'Não conectado');
+        snapshot.errorMessage = t('Connection error: {0}', message);
+        this.versions.set(connection.id, t('Not connected'));
         this.logConnectionEvent(connection, `status=error motivo="${snapshot.errorMessage}"`);
         this.refresh();
         if (attempt < retryDelaysMs.length) {
@@ -1090,10 +1091,10 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
     }
 
     const snapshot = this.ensureConnectionSnapshot(connection);
-    const message = lastError instanceof Error ? lastError.message : 'Erro ao conectar';
+    const message = lastError instanceof Error ? lastError.message : t('Connection error');
     snapshot.status = 'error';
-    snapshot.errorMessage = `Erro ao conectar: ${message}`;
-    this.versions.set(connection.id, 'Não conectado');
+    snapshot.errorMessage = t('Connection error: {0}', message);
+    this.versions.set(connection.id, t('Not connected'));
     this.logConnectionEvent(connection, `status=error motivo="${snapshot.errorMessage}"`);
     this.refresh();
   }
@@ -1118,7 +1119,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
     const version = await this.withTimeout(
       this.postgresService.testConnection(connection),
       this.connectionProbeTimeoutMs,
-      'testar conexão'
+      'test connection'
     );
     if (!this.isLoadCurrent(connection.id, expectedSeq, generation)) {
       this.logConnectionEvent(connection, 'teste concluído, mas carga ficou obsoleta');
@@ -1133,7 +1134,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
     const listedDatabaseNames = await this.withTimeout(
       this.postgresService.listDatabases(connection),
       this.databaseLoadTimeoutMs,
-      'listar bancos'
+      'list databases'
     );
     if (!this.isLoadCurrent(connection.id, expectedSeq, generation)) {
       this.logConnectionEvent(connection, 'listagem concluída, mas carga ficou obsoleta');
@@ -1256,7 +1257,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
       }
 
       database.status = 'error';
-      database.errorMessage = error instanceof Error ? error.message : 'Erro ao carregar banco';
+      database.errorMessage = error instanceof Error ? error.message : t('Failed to load database');
       this.refresh();
     }
   }
@@ -1304,7 +1305,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
           target.tableNames = [...items].sort((a, b) => a.localeCompare(b));
         }))
         .catch((error) => {
-          registerFailure('Tabelas', error);
+          registerFailure(t('Tables'), error);
         }),
       this.postgresService.listViews(connection, databaseName, schemaName)
         .then((items) => safeUpdate((target) => {
@@ -1356,7 +1357,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
 
     target.status = failed ? 'error' : 'ready';
     target.errorMessage = failed
-      ? `Falha ao carregar o schema ${schemaName}: ${failureMessages.join(' | ')}`
+      ? `Failed to load schema ${schemaName}: ${failureMessages.join(' | ')}`
       : undefined;
     this.refresh();
   }
@@ -1430,7 +1431,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
   ): Promise<T> {
     return await new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
-        reject(new Error(`Timeout ao ${operationName} após ${timeoutMs}ms`));
+        reject(new Error(t('Timeout while {0} after {1}ms', operationName, timeoutMs)));
       }, timeoutMs);
 
       operation
@@ -1446,7 +1447,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
   }
 
   private describeError(error: unknown): string {
-    return error instanceof Error ? error.message : 'Erro desconhecido';
+    return error instanceof Error ? error.message : t('Unexpected error.');
   }
 
   private logConnectionEvent(connection: PostgresConnection, message: string): void {

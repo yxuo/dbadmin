@@ -9,3 +9,4 @@ scripts/**
 .github/**
 .git/**
 *.vsix
+# locales/ and l10n/ must ship in the VSIX (not listed here).

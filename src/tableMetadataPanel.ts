@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import { formatErrorForUi, getBcp47Locale, t } from './i18n';
+import { loadLocaleDict, webviewI18nBootstrap } from './i18n/webviewLocale';
 import { TableSectionItemNodeRef } from './models';
 import { PostgresService } from './postgresService';
 
@@ -31,14 +33,14 @@ export class TableMetadataPanelManager {
     );
 
     if (!details) {
-      vscode.window.showWarningMessage('Não foi possível carregar os detalhes da coluna.');
+      vscode.window.showWarningMessage(t('Could not load column details.'));
       return;
     }
 
     if (options?.newTab) {
       const panel = vscode.window.createWebviewPanel(
         'dbadmin.columnDetails',
-        `Coluna: ${node.itemName}`,
+        t('Column: {0}', node.itemName),
         { viewColumn: vscode.ViewColumn.Active, preserveFocus: false },
         { enableScripts: true, retainContextWhenHidden: false }
       );
@@ -61,10 +63,10 @@ export class TableMetadataPanelManager {
               }
             );
 
-            vscode.window.showInformationMessage(`Coluna "${node.itemName}" atualizada com sucesso.`);
+            vscode.window.showInformationMessage(t('Column "{0}" updated successfully.', node.itemName));
             panel.dispose();
           } catch (error) {
-            const msg = error instanceof Error ? error.message : String(error);
+            const msg = formatErrorForUi(error);
             vscode.window.showErrorMessage(msg);
           }
         }
@@ -79,7 +81,7 @@ export class TableMetadataPanelManager {
     if (!this.globalColumnPanel) {
       this.globalColumnPanel = vscode.window.createWebviewPanel(
         'dbadmin.columnDetailsGlobal',
-        `Coluna: ${node.itemName}`,
+        t('Column: {0}', node.itemName),
         { viewColumn: vscode.ViewColumn.Active, preserveFocus: false },
         { enableScripts: true, retainContextWhenHidden: false }
       );
@@ -106,11 +108,11 @@ export class TableMetadataPanelManager {
             );
 
             vscode.window.showInformationMessage(
-              `Coluna "${currentNode.itemName}" atualizada com sucesso.`
+              t('Column "{0}" updated successfully.', currentNode.itemName)
             );
             this.globalColumnPanel?.dispose();
           } catch (error) {
-            const msg = error instanceof Error ? error.message : String(error);
+            const msg = formatErrorForUi(error);
             vscode.window.showErrorMessage(msg);
           }
         }
@@ -125,7 +127,7 @@ export class TableMetadataPanelManager {
     }
 
     this.globalColumnNode = node;
-    this.globalColumnPanel.title = `Coluna: ${node.itemName}`;
+    this.globalColumnPanel.title = t('Column: {0}', node.itemName);
     this.globalColumnPanel.webview.html = this.buildColumnHtml(this.globalColumnPanel.webview, node, details);
     this.globalColumnPanel.reveal(vscode.ViewColumn.Active, false);
   }
@@ -140,14 +142,14 @@ export class TableMetadataPanelManager {
     );
 
     if (!details) {
-      vscode.window.showWarningMessage('Não foi possível carregar os detalhes da restrição.');
+      vscode.window.showWarningMessage(t('Could not load constraint details.'));
       return;
     }
 
     if (options?.newTab) {
       const panel = vscode.window.createWebviewPanel(
         'dbadmin.constraintDetails',
-        `Restrição: ${node.itemName}`,
+        t('Constraint: {0}', node.itemName),
         { viewColumn: vscode.ViewColumn.Active, preserveFocus: false },
         { enableScripts: false, retainContextWhenHidden: false }
       );
@@ -160,7 +162,7 @@ export class TableMetadataPanelManager {
     if (!this.globalConstraintPanel) {
       this.globalConstraintPanel = vscode.window.createWebviewPanel(
         'dbadmin.constraintDetailsGlobal',
-        `Restrição: ${node.itemName}`,
+        t('Constraint: {0}', node.itemName),
         { viewColumn: vscode.ViewColumn.Active, preserveFocus: false },
         { enableScripts: false, retainContextWhenHidden: false }
       );
@@ -171,7 +173,7 @@ export class TableMetadataPanelManager {
       });
     }
 
-    this.globalConstraintPanel.title = `Restrição: ${node.itemName}`;
+    this.globalConstraintPanel.title = t('Constraint: {0}', node.itemName);
     this.globalConstraintPanel.webview.html = this.buildConstraintHtml(
       this.globalConstraintPanel.webview,
       node,
@@ -187,13 +189,20 @@ export class TableMetadataPanelManager {
   ): string {
     const nonce = String(Date.now());
     const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';`;
+    const extensionPath = this.context.extensionPath;
+    const i18n = loadLocaleDict(extensionPath);
+    const i18nScript = webviewI18nBootstrap(extensionPath);
+    const i18nLang = getBcp47Locale();
+    const L = (key: string, fallback: string) =>
+      escapeHtml(i18n[key] || fallback);
 
     return `<!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="${i18nLang}">
 <head>
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="${csp}" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script nonce="${nonce}">${i18nScript}</script>
   <style>
     body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); background: var(--vscode-editor-background); padding: 16px; }
     :root { --dbadmin-input-focus: #007acc; accent-color: var(--dbadmin-input-focus); }
@@ -211,24 +220,24 @@ export class TableMetadataPanelManager {
   </style>
 </head>
 <body>
-  <h2>Coluna: ${escapeHtml(details.name)}</h2>
-  <div class="meta">Tabela: ${escapeHtml(node.schemaName)}.${escapeHtml(node.tableName)}</div>
+  <h2>${L('webview.metadata.column', 'Coluna')}: ${escapeHtml(details.name)}</h2>
+  <div class="meta">${L('webview.metadata.table', 'Tabela')}: ${escapeHtml(node.schemaName)}.${escapeHtml(node.tableName)}</div>
 
   <div class="field">
-    <label>Tipo</label>
+    <label>${L('webview.metadata.type', 'Tipo')}</label>
     <input type="text" value="${escapeHtml(details.dataType)}" readonly />
   </div>
 
   <div class="field">
-    <label><input id="nullable" type="checkbox" ${details.isNullable ? 'checked' : ''} /> Permitir nulo</label>
+    <label><input id="nullable" type="checkbox" ${details.isNullable ? 'checked' : ''} /> ${L('webview.metadata.allowNull', 'Permitir nulo')}</label>
   </div>
 
   <div class="field">
-    <label for="defaultValue">Default (expressão SQL)</label>
+    <label for="defaultValue">${L('webview.metadata.default', 'Default (expressão SQL)')}</label>
     <input id="defaultValue" type="text" value="${escapeHtml(details.defaultValue ?? '')}" />
   </div>
 
-  <button id="saveBtn">Salvar</button>
+  <button id="saveBtn">${L('webview.common.save', 'Salvar')}</button>
 
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
@@ -251,9 +260,14 @@ export class TableMetadataPanelManager {
     details: { name: string; type: string; definition: string }
   ): string {
     const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline';`;
+    const extensionPath = this.context.extensionPath;
+    const i18n = loadLocaleDict(extensionPath);
+    const i18nLang = getBcp47Locale();
+    const L = (key: string, fallback: string) =>
+      escapeHtml(i18n[key] || fallback);
 
     return `<!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="${i18nLang}">
 <head>
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="${csp}" />
@@ -266,13 +280,13 @@ export class TableMetadataPanelManager {
   </style>
 </head>
 <body>
-  <h2>Restrição: ${escapeHtml(details.name)}</h2>
+  <h2>${L('webview.metadata.constraint', 'Restrição')}: ${escapeHtml(details.name)}</h2>
   <div class="card">
-    <div class="label">Tabela</div>
+    <div class="label">${L('webview.metadata.table', 'Tabela')}</div>
     <div>${escapeHtml(node.schemaName)}.${escapeHtml(node.tableName)}</div>
-    <div class="label">Tipo</div>
+    <div class="label">${L('webview.metadata.type', 'Tipo')}</div>
     <div>${escapeHtml(details.type)}</div>
-    <div class="label">Definição</div>
+    <div class="label">${L('webview.metadata.definition', 'Definição')}</div>
     <pre>${escapeHtml(details.definition)}</pre>
   </div>
 </body>

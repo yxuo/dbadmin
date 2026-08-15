@@ -3,6 +3,19 @@
  * Runs in the notebook output iframe (ESM).
  * @param {import('vscode-notebook-renderer').RendererContext} context
  */
+
+const FALLBACK_I18N = {
+  "webview.renderer.rows": "linha(s)",
+  "webview.renderer.open": "Abrir",
+  "webview.renderer.filter": "Filtrar",
+  "webview.renderer.export": "Exportar",
+  "webview.renderer.noResults": "(sem resultados)",
+  "webview.renderer.showColFilters": "Mostrar filtros de coluna",
+  "webview.renderer.hideColFilters": "Ocultar filtros de coluna",
+  "webview.renderer.widthMin": "Colunas com largura mínima (conteúdo)",
+  "webview.renderer.widthEqual": "Colunas com largura igual",
+};
+
 export function activate(context) {
   return {
     /**
@@ -40,7 +53,7 @@ function safeJson(outputItem) {
 }
 
 /**
- * @param {{ columns?: string[], rows?: Record<string, unknown>[], rowCount?: number, command?: string }} data
+ * @param {{ columns?: string[], rows?: Record<string, unknown>[], rowCount?: number, command?: string, i18n?: Record<string, string> }} data
  * @param {import('vscode-notebook-renderer').RendererContext} context
  */
 function buildTable(data, context) {
@@ -50,10 +63,15 @@ function buildTable(data, context) {
     ? Number(data.rowCount)
     : sourceRows.length;
   const command = String(data.command || "").trim();
+  const dict =
+    data.i18n && typeof data.i18n === "object" ? data.i18n : FALLBACK_I18N;
+  const t = (key, fallback) =>
+    dict[key] != null && dict[key] !== "" ? String(dict[key]) : fallback;
+  const rowsLabel = t("webview.renderer.rows", "linha(s)");
   const summary =
     command.length > 0
-      ? `${rowCount} linha(s) — ${command}`
-      : `${rowCount} linha(s)`;
+      ? `${rowCount} ${rowsLabel} — ${command}`
+      : `${rowCount} ${rowsLabel}`;
 
   const root = el("div", { className: "dbadmin-it" });
   injectStyles(root);
@@ -63,8 +81,8 @@ function buildTable(data, context) {
       el("p", {
         className: "dbadmin-it__empty",
         textContent: command
-          ? `${command} — ${rowCount} linha(s)`
-          : "(sem resultados)",
+          ? `${command} — ${rowCount} ${rowsLabel}`
+          : t("webview.renderer.noResults", "(sem resultados)"),
       }),
     );
     return { root, cleanup: () => {} };
@@ -99,40 +117,46 @@ function buildTable(data, context) {
   searchLupa.setAttribute("aria-hidden", "true");
   searchWrap.append(search, searchLupa);
 
+  const showFiltersLabel = t(
+    "webview.renderer.showColFilters",
+    "Mostrar filtros de coluna",
+  );
   const filterToggleBtn = el("button", {
     className: "dbadmin-it__icon-btn",
     type: "button",
-    title: "Mostrar filtros de coluna",
+    title: showFiltersLabel,
   });
   filterToggleBtn.innerHTML = FILTER_ICON;
-  filterToggleBtn.setAttribute("aria-label", "Mostrar filtros de coluna");
+  filterToggleBtn.setAttribute("aria-label", showFiltersLabel);
   filterToggleBtn.setAttribute("aria-pressed", "false");
 
+  const widthMinLabel = t(
+    "webview.renderer.widthMin",
+    "Colunas com largura mínima (conteúdo)",
+  );
   const widthToggleBtn = el("button", {
     className: "dbadmin-it__icon-btn",
     type: "button",
-    title: "Colunas com largura mínima (conteúdo)",
+    title: widthMinLabel,
   });
   widthToggleBtn.innerHTML = WIDTH_MIN_ICON;
-  widthToggleBtn.setAttribute(
-    "aria-label",
-    "Colunas com largura mínima (conteúdo)",
-  );
+  widthToggleBtn.setAttribute("aria-label", widthMinLabel);
 
+  const exportLabel = t("webview.renderer.export", "Exportar");
   const exportBtn = el("button", {
     className: "dbadmin-it__icon-btn",
     type: "button",
-    title: "Exportar",
+    title: exportLabel,
   });
   exportBtn.innerHTML = EXPORT_ICON;
-  exportBtn.setAttribute("aria-label", "Exportar");
+  exportBtn.setAttribute("aria-label", exportLabel);
   exportBtn.setAttribute("aria-haspopup", "menu");
   exportBtn.setAttribute("aria-expanded", "false");
 
   const openBtn = el("button", {
     className: "dbadmin-it__btn",
     type: "button",
-    textContent: "Abrir",
+    textContent: t("webview.renderer.open", "Abrir"),
   });
   openBtn.addEventListener("click", () => {
     context.postMessage?.({ type: "openLastResult" });
@@ -364,8 +388,8 @@ function buildTable(data, context) {
       state.showColFilters ? "true" : "false",
     );
     filterToggleBtn.title = state.showColFilters
-      ? "Ocultar filtros de coluna"
-      : "Mostrar filtros de coluna";
+      ? t("webview.renderer.hideColFilters", "Ocultar filtros de coluna")
+      : t("webview.renderer.showColFilters", "Mostrar filtros de coluna");
     filterToggleBtn.setAttribute("aria-label", filterToggleBtn.title);
     if (state.showColFilters) {
       closePopover();
@@ -703,10 +727,16 @@ function buildTable(data, context) {
     widthToggleBtn.classList.remove("is-active");
     if (state.equalWidth) {
       widthToggleBtn.innerHTML = WIDTH_EQUAL_ICON;
-      widthToggleBtn.title = "Colunas com largura igual";
+      widthToggleBtn.title = t(
+        "webview.renderer.widthEqual",
+        "Colunas com largura igual",
+      );
     } else {
       widthToggleBtn.innerHTML = WIDTH_MIN_ICON;
-      widthToggleBtn.title = "Colunas com largura mínima (conteúdo)";
+      widthToggleBtn.title = t(
+        "webview.renderer.widthMin",
+        "Colunas com largura mínima (conteúdo)",
+      );
     }
     widthToggleBtn.setAttribute("aria-label", widthToggleBtn.title);
   }

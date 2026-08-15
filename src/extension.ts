@@ -1,4 +1,6 @@
 import * as vscode from "vscode";
+import { formatErrorForUi, getBcp47Locale, t } from "./i18n";
+import { loadLocaleDict, webviewI18nBootstrap } from "./i18n/webviewLocale";
 import { ConnectionStore } from "./connectionStore";
 import { showConnectionForm } from "./connectionFormPanel";
 import { DatabaseTreeProvider } from "./databaseTreeProvider";
@@ -381,6 +383,7 @@ export function activate(context: vscode.ExtensionContext): void {
       webviewView.webview.options = { enableScripts: true };
       webviewView.webview.html = buildFilterViewHtml(
         webviewView.webview,
+        context.extensionPath,
         treeProvider.getTableNameFilter(),
         getExpandFilterResultsSetting(),
         searchOnTypeEnabled,
@@ -436,12 +439,14 @@ export function activate(context: vscode.ExtensionContext): void {
   };
 
   context.subscriptions.push(treeView);
-  context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(
-      "databaseExplorerFilter",
-      filterViewProvider,
-    ),
-  );
+  // Separate "Table filter" webview is disabled for now (`when: false` in package.json).
+  // Search still works via dbadmin.editTableFilter (toolbar button / QuickPick).
+  // context.subscriptions.push(
+  //   vscode.window.registerWebviewViewProvider(
+  //     "databaseExplorerFilter",
+  //     filterViewProvider,
+  //   ),
+  // );
   context.subscriptions.push(
     vscode.languages.registerCodeLensProvider(
       { language: "sql" },
@@ -538,10 +543,10 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("dbadmin.editTableFilter", async () => {
       const current = treeProvider.getTableNameFilter();
-      const expandLabel = "Expandir itens";
+      const expandLabel = t("Expand items");
       const quickPick = vscode.window.createQuickPick<vscode.QuickPickItem>();
-      quickPick.title = "Filtro de tabelas";
-      quickPick.placeholder = "Digite para filtrar tabelas...";
+      quickPick.title = t("Table filter");
+      quickPick.placeholder = t("Type to filter tables...");
       quickPick.value = current;
       quickPick.canSelectMany = true;
 
@@ -604,7 +609,7 @@ export function activate(context: vscode.ExtensionContext): void {
           const activeEditor = vscode.window.activeTextEditor;
           if (!activeEditor) {
             vscode.window.showInformationMessage(
-              "Nenhum editor SQL ativo para execução.",
+              t("No active SQL editor to run."),
             );
             return;
           }
@@ -637,7 +642,7 @@ export function activate(context: vscode.ExtensionContext): void {
           const allConnections = await store.listConnections();
           if (allConnections.length === 0) {
             vscode.window.showInformationMessage(
-              "Não há conexões cadastradas.",
+              t("No connections registered."),
             );
             return;
           }
@@ -648,7 +653,7 @@ export function activate(context: vscode.ExtensionContext): void {
               description: `${connection.user}@${connection.host}:${connection.port}/${connection.database}`,
               connection,
             })),
-            { placeHolder: "Selecione a conexão" },
+            { placeHolder: t("Select connection") },
           );
 
           if (!picked) {
@@ -660,13 +665,13 @@ export function activate(context: vscode.ExtensionContext): void {
           );
           if (databases.length === 0) {
             vscode.window.showInformationMessage(
-              "Nenhum banco disponível para essa conexão.",
+              t("No databases available for this connection."),
             );
             return;
           }
 
           const pickedDatabase = await vscode.window.showQuickPick(databases, {
-            placeHolder: "Selecione o banco",
+            placeHolder: t("Select database"),
           });
 
           if (!pickedDatabase) {
@@ -683,15 +688,15 @@ export function activate(context: vscode.ExtensionContext): void {
             description?: string;
           }> = [
             {
-              label: "Sem schema",
-              description: "Usar search_path padrão da conexão",
+              label: t("No schema"),
+              description: t("Use connection default search_path"),
               schemaName: undefined,
             },
             ...schemas.map((schemaName) => ({ label: schemaName, schemaName })),
           ];
 
           const pickedSchema = await vscode.window.showQuickPick(schemaItems, {
-            placeHolder: "Selecione o schema (opcional)",
+            placeHolder: t("Select schema (optional)"),
           });
 
           if (!pickedSchema) {
@@ -758,7 +763,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
         await store.createConnection(payload);
         treeProvider.refresh();
-        vscode.window.showInformationMessage("Conexão criada com sucesso.");
+        vscode.window.showInformationMessage(t("Connection created successfully."));
       } catch (error) {
         showError(error);
       }
@@ -795,7 +800,7 @@ export function activate(context: vscode.ExtensionContext): void {
           treeProvider.clearConnectionCache(target.id);
           treeProvider.refresh();
           vscode.window.showInformationMessage(
-            "Conexão atualizada com sucesso.",
+            t("Connection updated successfully."),
           );
         } catch (error) {
           showError(error);
@@ -839,20 +844,21 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
           }
 
+          const removeLabel = t("Remove");
           const confirmation = await vscode.window.showWarningMessage(
-            `Deseja remover a conexão "${target.nickname}"?`,
+            t('Remove connection "{0}"?', target.nickname),
             { modal: true },
-            "Remover",
+            removeLabel,
           );
 
-          if (confirmation !== "Remover") {
+          if (confirmation !== removeLabel) {
             return;
           }
 
           await store.deleteConnection(target.id);
           treeProvider.clearConnectionCache(target.id);
           treeProvider.refresh();
-          vscode.window.showInformationMessage("Conexão removida com sucesso.");
+          vscode.window.showInformationMessage(t("Connection removed successfully."));
         } catch (error) {
           showError(error);
         }
@@ -975,13 +981,14 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
           }
 
+          const truncateLabel = t("Truncate");
           const confirmation = await vscode.window.showWarningMessage(
-            `Deseja esvaziar a tabela "${node.schemaName}.${node.objectName}"? Esta ação remove todos os registros e também pode esvaziar tabelas relacionadas por chave estrangeira (CASCADE).`,
+            t('Truncate table "{0}.{1}"? This removes all rows and may also truncate related tables via foreign keys (CASCADE).', node.schemaName, node.objectName),
             { modal: true },
-            "Esvaziar",
+            truncateLabel,
           );
 
-          if (confirmation !== "Esvaziar") {
+          if (confirmation !== truncateLabel) {
             return;
           }
 
@@ -994,7 +1001,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
           await treeProvider.reloadAllMetadata();
           vscode.window.showInformationMessage(
-            `Tabela "${node.schemaName}.${node.objectName}" esvaziada com sucesso.`,
+            t('Table "{0}.{1}" truncated successfully.', node.schemaName, node.objectName),
           );
         } catch (error) {
           showError(error);
@@ -1045,10 +1052,10 @@ export function activate(context: vscode.ExtensionContext): void {
           }
 
           const name = await vscode.window.showInputBox({
-            title: "Criar banco de dados",
-            prompt: "Nome do novo banco de dados",
+            title: t("Create database"),
+            prompt: t("New database name"),
             validateInput: (value) =>
-              value.trim() ? undefined : "Informe um nome.",
+              value.trim() ? undefined : t("Enter a name."),
           });
 
           if (!name) {
@@ -1058,7 +1065,7 @@ export function activate(context: vscode.ExtensionContext): void {
           await postgresService.createDatabase(connection, name.trim());
           await treeProvider.reloadAllMetadata();
           vscode.window.showInformationMessage(
-            `Banco de dados "${name.trim()}" criado com sucesso.`,
+            t('Database "{0}" created successfully.', name.trim()),
           );
         } catch (error) {
           showError(error);
@@ -1081,10 +1088,10 @@ export function activate(context: vscode.ExtensionContext): void {
           }
 
           const schemaName = await vscode.window.showInputBox({
-            title: `Criar schema em "${node.databaseName}"`,
-            prompt: "Nome do novo schema",
+            title: t('Create schema in "{0}"', node.databaseName),
+            prompt: t("New schema name"),
             validateInput: (value) =>
-              value.trim() ? undefined : "Informe um nome.",
+              value.trim() ? undefined : t("Enter a name."),
           });
 
           if (!schemaName) {
@@ -1098,7 +1105,7 @@ export function activate(context: vscode.ExtensionContext): void {
           );
           await treeProvider.reloadAllMetadata();
           vscode.window.showInformationMessage(
-            `Schema "${schemaName.trim()}" criado com sucesso.`,
+            t('Schema "{0}" created successfully.', schemaName.trim()),
           );
         } catch (error) {
           showError(error);
@@ -1117,11 +1124,11 @@ export function activate(context: vscode.ExtensionContext): void {
           }
 
           const newName = await vscode.window.showInputBox({
-            title: `Renomear banco de dados "${node.databaseName}"`,
-            prompt: "Novo nome",
+            title: t('Rename database "{0}"', node.databaseName),
+            prompt: t("New name"),
             value: node.databaseName,
             validateInput: (value) =>
-              value.trim() ? undefined : "Informe um nome.",
+              value.trim() ? undefined : t("Enter a name."),
           });
 
           if (!newName || newName.trim() === node.databaseName) {
@@ -1135,7 +1142,7 @@ export function activate(context: vscode.ExtensionContext): void {
           );
           await treeProvider.reloadAllMetadata();
           vscode.window.showInformationMessage(
-            `Banco de dados renomeado para "${newName.trim()}".`,
+            t('Database renamed to "{0}".', newName.trim()),
           );
         } catch (error) {
           showError(error);
@@ -1159,19 +1166,19 @@ export function activate(context: vscode.ExtensionContext): void {
           const suggestedName = `${node.databaseName}_copy`;
 
           const newName = await vscode.window.showInputBox({
-            title: `Duplicar banco de dados "${node.databaseName}"`,
-            prompt: "Nome do banco de dados duplicado",
+            title: t('Duplicate database "{0}"', node.databaseName),
+            prompt: t("Duplicated database name"),
             value: suggestedName,
             validateInput: (value) => {
               const trimmed = value.trim();
               if (!trimmed) {
-                return "Informe um nome.";
+                return t("Enter a name.");
               }
               if (trimmed === node.databaseName) {
-                return "Informe um nome diferente do banco de origem.";
+                return t("Enter a name different from the source database.");
               }
               if (existingNames.has(trimmed)) {
-                return "Já existe um banco com esse nome.";
+                return t("A database with that name already exists.");
               }
               return undefined;
             },
@@ -1188,7 +1195,7 @@ export function activate(context: vscode.ExtensionContext): void {
           );
           await treeProvider.reloadAllMetadata();
           vscode.window.showInformationMessage(
-            `Banco de dados "${node.databaseName}" duplicado para "${newName.trim()}" com sucesso.`,
+            t('Database "{0}" duplicated to "{1}" successfully.', node.databaseName, newName.trim()),
           );
         } catch (error) {
           showError(error);
@@ -1206,13 +1213,14 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
           }
 
+          const deleteLabel = t("Delete");
           const confirmation = await vscode.window.showWarningMessage(
-            `Deseja excluir permanentemente o banco de dados "${node.databaseName}"? Esta ação não pode ser desfeita.`,
+            t('Permanently delete database "{0}"? This cannot be undone.', node.databaseName),
             { modal: true },
-            "Excluir",
+            deleteLabel,
           );
 
-          if (confirmation !== "Excluir") {
+          if (confirmation !== deleteLabel) {
             return;
           }
 
@@ -1222,7 +1230,7 @@ export function activate(context: vscode.ExtensionContext): void {
           );
           await treeProvider.reloadAllMetadata();
           vscode.window.showInformationMessage(
-            `Banco de dados "${node.databaseName}" excluído com sucesso.`,
+            t('Database "{0}" deleted successfully.', node.databaseName),
           );
         } catch (error) {
           showError(error);
@@ -1272,13 +1280,14 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
           }
 
+          const deleteLabel = t("Delete");
           const confirmation = await vscode.window.showWarningMessage(
-            `Deseja excluir permanentemente o schema "${node.schemaName}" e todos os seus objetos? Esta ação não pode ser desfeita.`,
+            t('Permanently delete schema "{0}" and all of its objects? This cannot be undone.', node.schemaName),
             { modal: true },
-            "Excluir",
+            deleteLabel,
           );
 
-          if (confirmation !== "Excluir") {
+          if (confirmation !== deleteLabel) {
             return;
           }
 
@@ -1289,7 +1298,7 @@ export function activate(context: vscode.ExtensionContext): void {
           );
           await treeProvider.reloadAllMetadata();
           vscode.window.showInformationMessage(
-            `Schema "${node.schemaName}" excluído com sucesso.`,
+            t('Schema "{0}" deleted successfully.', node.schemaName),
           );
         } catch (error) {
           showError(error);
@@ -1307,13 +1316,14 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
           }
 
+          const clearLabel = t("Clear");
           const confirmation = await vscode.window.showWarningMessage(
-            `Deseja limpar o schema "${node.schemaName}" (DROP CASCADE + CREATE)? Todos os objetos serão removidos permanentemente.`,
+            t('Clear schema "{0}" (DROP CASCADE + CREATE)? All objects will be permanently removed.', node.schemaName),
             { modal: true },
-            "Limpar",
+            clearLabel,
           );
 
-          if (confirmation !== "Limpar") {
+          if (confirmation !== clearLabel) {
             return;
           }
 
@@ -1325,7 +1335,7 @@ export function activate(context: vscode.ExtensionContext): void {
           );
           await treeProvider.reloadAllMetadata();
           vscode.window.showInformationMessage(
-            `Schema "${node.schemaName}" limpo com sucesso.`,
+            t('Schema "{0}" cleared successfully.', node.schemaName),
           );
         } catch (error) {
           showError(error);
@@ -1349,9 +1359,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
           const initialSql = buildCreateFunctionTemplate(node.schemaName);
           await openSqlRunnerEditor(
-            `Criar function em ${node.schemaName}`,
+            t("Create function in {0}", node.schemaName),
             initialSql,
-            "Edite o SQL da function e execute com Ctrl+Enter ou CodeLens.",
+            t("Edit the function SQL and run with Ctrl+Enter or CodeLens."),
             {
               connectionId: node.connection.id,
               connectionName: node.connection.nickname,
@@ -1385,9 +1395,9 @@ export function activate(context: vscode.ExtensionContext): void {
           );
 
           await openSqlRunnerEditor(
-            `Editar function ${node.schemaName}.${node.objectName}`,
+            t("Edit function {0}.{1}", node.schemaName, node.objectName),
             ensureSqlEndsWithSemicolon(definition),
-            "Edite a definição e execute com Ctrl+Enter ou CodeLens.",
+            t("Edit the definition and run with Ctrl+Enter or CodeLens."),
             {
               connectionId: node.connection.id,
               connectionName: node.connection.nickname,
@@ -1413,13 +1423,14 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
           }
 
+          const deleteLabel = t("Delete");
           const confirmation = await vscode.window.showWarningMessage(
-            `Excluir function "${node.schemaName}.${node.objectName}"?`,
+            t('Delete function "{0}.{1}"?', node.schemaName, node.objectName),
             { modal: true },
-            "Excluir",
+            deleteLabel,
           );
 
-          if (confirmation !== "Excluir") {
+          if (confirmation !== deleteLabel) {
             return;
           }
 
@@ -1431,7 +1442,7 @@ export function activate(context: vscode.ExtensionContext): void {
           );
           await treeProvider.reloadAllMetadata();
           vscode.window.showInformationMessage(
-            "Function excluída com sucesso.",
+            t("Function deleted successfully."),
           );
         } catch (error) {
           showError(error);
@@ -1455,9 +1466,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
           const initialSql = buildCreateProcedureTemplate(node.schemaName);
           await openSqlRunnerEditor(
-            `Criar procedure em ${node.schemaName}`,
+            t("Create procedure in {0}", node.schemaName),
             initialSql,
-            "Edite o SQL da procedure e execute com Ctrl+Enter ou CodeLens.",
+            t("Edit the procedure SQL and run with Ctrl+Enter or CodeLens."),
             {
               connectionId: node.connection.id,
               connectionName: node.connection.nickname,
@@ -1491,9 +1502,9 @@ export function activate(context: vscode.ExtensionContext): void {
           );
 
           await openSqlRunnerEditor(
-            `Editar procedure ${node.schemaName}.${node.objectName}`,
+            t("Edit procedure {0}.{1}", node.schemaName, node.objectName),
             ensureSqlEndsWithSemicolon(definition),
-            "Edite a definição e execute com Ctrl+Enter ou CodeLens.",
+            t("Edit the definition and run with Ctrl+Enter or CodeLens."),
             {
               connectionId: node.connection.id,
               connectionName: node.connection.nickname,
@@ -1519,13 +1530,14 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
           }
 
+          const deleteLabel = t("Delete");
           const confirmation = await vscode.window.showWarningMessage(
-            `Excluir procedure "${node.schemaName}.${node.objectName}"?`,
+            t('Delete procedure "{0}.{1}"?', node.schemaName, node.objectName),
             { modal: true },
-            "Excluir",
+            deleteLabel,
           );
 
-          if (confirmation !== "Excluir") {
+          if (confirmation !== deleteLabel) {
             return;
           }
 
@@ -1537,7 +1549,7 @@ export function activate(context: vscode.ExtensionContext): void {
           );
           await treeProvider.reloadAllMetadata();
           vscode.window.showInformationMessage(
-            "Procedure excluída com sucesso.",
+            t("Procedure deleted successfully."),
           );
         } catch (error) {
           showError(error);
@@ -1557,9 +1569,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
           const initialSql = buildCreateTriggerTemplate(node.schemaName);
           await openSqlRunnerEditor(
-            `Criar trigger em ${node.schemaName}`,
+            t("Create trigger in {0}", node.schemaName),
             initialSql,
-            "Edite o SQL da trigger e execute com Ctrl+Enter ou CodeLens.",
+            t("Edit the trigger SQL and run with Ctrl+Enter or CodeLens."),
             {
               connectionId: node.connection.id,
               connectionName: node.connection.nickname,
@@ -1598,9 +1610,9 @@ export function activate(context: vscode.ExtensionContext): void {
           ].join("\n\n");
 
           await openSqlRunnerEditor(
-            `Editar trigger ${node.schemaName}.${node.objectName}`,
+            t("Edit trigger {0}.{1}", node.schemaName, node.objectName),
             initialSql,
-            "Edite o SQL da trigger e execute com Ctrl+Enter ou CodeLens.",
+            t("Edit the trigger SQL and run with Ctrl+Enter or CodeLens."),
             {
               connectionId: node.connection.id,
               connectionName: node.connection.nickname,
@@ -1626,13 +1638,14 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
           }
 
+          const deleteLabel = t("Delete");
           const confirmation = await vscode.window.showWarningMessage(
-            `Excluir trigger "${node.schemaName}.${node.objectName}"?`,
+            t('Delete trigger "{0}.{1}"?', node.schemaName, node.objectName),
             { modal: true },
-            "Excluir",
+            deleteLabel,
           );
 
-          if (confirmation !== "Excluir") {
+          if (confirmation !== deleteLabel) {
             return;
           }
 
@@ -1643,7 +1656,7 @@ export function activate(context: vscode.ExtensionContext): void {
             node.objectName,
           );
           await treeProvider.reloadAllMetadata();
-          vscode.window.showInformationMessage("Trigger excluída com sucesso.");
+          vscode.window.showInformationMessage(t("Trigger deleted successfully."));
         } catch (error) {
           showError(error);
         }
@@ -1766,6 +1779,7 @@ export function activate(context: vscode.ExtensionContext): void {
         },
       });
     },
+    context.extensionPath,
   );
 
   context.subscriptions.push(sqlBookController);
@@ -1857,7 +1871,7 @@ async function exportSqlBookIntegratedTable(message: {
       preserveFocus: false,
     });
   } catch (error) {
-    const text = error instanceof Error ? error.message : "Falha ao exportar.";
+    const text = error instanceof Error ? error.message : t("Export failed.");
     void vscode.window.showErrorMessage(`DBAdmin: ${text}`);
   }
 }
@@ -1872,7 +1886,7 @@ async function resolveConnectionFromNodeOrPicker(
 
   const all = await store.listConnections();
   if (all.length === 0) {
-    vscode.window.showInformationMessage("Não existem conexões cadastradas.");
+    vscode.window.showInformationMessage(t("No registered connections."));
     return undefined;
   }
 
@@ -1883,7 +1897,7 @@ async function resolveConnectionFromNodeOrPicker(
       connection,
     })),
     {
-      placeHolder: "Selecione a conexão",
+      placeHolder: t("Select connection"),
     },
   );
 
@@ -1891,8 +1905,7 @@ async function resolveConnectionFromNodeOrPicker(
 }
 
 function showError(error: unknown): void {
-  const message = error instanceof Error ? error.message : "Erro inesperado";
-  vscode.window.showErrorMessage(message);
+  vscode.window.showErrorMessage(formatErrorForUi(error));
 }
 
 async function openSqlRunnerEditor(
@@ -2023,8 +2036,8 @@ function createSqlRunnerCodeLensProvider(
         context.connectionName?.trim() ||
         formatHostPort(context.connectionHost, context.connectionPort) ||
         context.connectionId?.trim() ||
-        "Conexão";
-      const databaseLabel = context.databaseName?.trim() || "Banco";
+        t("Connection");
+      const databaseLabel = context.databaseName?.trim() || t("Database");
       const isConfigSelected =
         Boolean(context.connectionId) && Boolean(context.databaseName);
       const isSchemaSelected = isConfigSelected && Boolean(context.schemaName);
@@ -2034,7 +2047,7 @@ function createSqlRunnerCodeLensProvider(
       const contextButtonLabel = isConfigSelected
         ? `$(plug) ${connectionLabel} $(database) ${databaseLabel}` +
           schemaLabel
-        : "$(plug) Selecionar conexão";
+        : t("$(plug) Select connection");
 
       return [
         new vscode.CodeLens(range, {
@@ -2042,7 +2055,7 @@ function createSqlRunnerCodeLensProvider(
           command: "dbadmin.sqlRunner.selectConnection",
         }),
         new vscode.CodeLens(range, {
-          title: "$(play) Executar",
+          title: t("$(play) Run"),
           command: "dbadmin.executeSqlFromActiveEditor",
         }),
       ];
@@ -2522,12 +2535,12 @@ async function executeSqlFromEditorDocument(
   const sql = parsed.sql;
 
   if (!sql) {
-    throw new Error("SQL vazio para execução.");
+    throw new Error(t("Empty SQL to run."));
   }
 
   const allConnections = await store.listConnections();
   if (allConnections.length === 0) {
-    throw new Error("Não há conexões cadastradas.");
+    throw new Error(t("No connections registered."));
   }
 
   let connection = resolveConnectionFromHeaderContext(
@@ -2563,7 +2576,7 @@ async function executeSqlFromEditorDocument(
     sql,
     result,
     source: "sqlRunner",
-    title: `Resultado SQL: ${connection.nickname}`,
+    title: t("SQL result: {0}", connection.nickname),
     onRefresh: async () => {
       return postgresService.querySql(
         connection,
@@ -2573,7 +2586,7 @@ async function executeSqlFromEditorDocument(
     },
   });
 
-  vscode.window.showInformationMessage("SQL executado com sucesso.");
+  vscode.window.showInformationMessage(t("SQL executed successfully."));
 }
 
 function resolveConnectionFromHeaderContext(
@@ -2663,19 +2676,26 @@ function buildCreateTriggerTemplate(schemaName: string): string {
 
 function buildFilterViewHtml(
   webview: vscode.Webview,
+  extensionPath: string,
   initialValue: string,
   initialExpandItems: boolean,
   initialSearchOnType: boolean,
 ): string {
   const nonce = String(Date.now());
   const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';`;
+  const i18n = loadLocaleDict(extensionPath);
+  const i18nScript = webviewI18nBootstrap(extensionPath);
+  const i18nLang = getBcp47Locale();
+  const L = (key: string, fallback: string) =>
+    escapeHtml(i18n[key] || fallback);
 
   return `<!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="${i18nLang}">
 <head>
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="${csp}" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script nonce="${nonce}">${i18nScript}</script>
   <style>
     html, body {
       margin: 0;
@@ -2758,14 +2778,14 @@ function buildFilterViewHtml(
 </head>
 <body>
   <div class="wrap">
-    <input id="tableFilter" type="text" placeholder="Filtrar tabelas..." value="${escapeHtml(initialValue)}" />
-    <label class="check-row" title="Expandir apenas conexões e bancos com tabelas encontradas">
+    <input id="tableFilter" type="text" placeholder="${L('webview.filter.placeholder', 'Filtrar tabelas...')}" value="${escapeHtml(initialValue)}" />
+    <label class="check-row" title="${L('webview.filter.expandItemsTitle', 'Expandir apenas conexões e bancos com tabelas encontradas')}">
       <input id="expandItems" type="checkbox" ${initialExpandItems ? "checked" : ""} />
-      <span>Expandir itens</span>
+      <span>${L('webview.filter.expandItems', 'Expandir itens')}</span>
     </label>
-    <label class="check-row" title="Quando desativado, aplica o filtro somente ao pressionar Enter">
+    <label class="check-row" title="${L('webview.filter.searchOnTypeTitle', 'Quando desativado, aplica o filtro somente ao pressionar Enter')}">
       <input id="searchOnType" type="checkbox" ${initialSearchOnType ? "checked" : ""} />
-      <span>Pesquisar ao digitar</span>
+      <span>${L('webview.filter.searchOnType', 'Pesquisar ao digitar')}</span>
     </label>
   </div>
 

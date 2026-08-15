@@ -1,3 +1,5 @@
+import { mcpT } from "../i18n/mcpLocale";
+
 const READ_ONLY_START = /^(WITH|SELECT|EXPLAIN|SHOW|VALUES|TABLE)\b/i;
 
 export function stripSqlComments(sql: string): string {
@@ -171,18 +173,16 @@ export function splitSqlStatements(sql: string): string[] {
 export function assertSqlAllowed(sql: string, allowWrites: boolean): void {
   const trimmed = String(sql || "").trim();
   if (!trimmed) {
-    throw new Error("SQL vazio.");
+    throw new Error(mcpT("mcp.error.emptySql"));
   }
 
   const statements = splitSqlStatements(stripSqlComments(trimmed));
   if (statements.length === 0) {
-    throw new Error("SQL vazio.");
+    throw new Error(mcpT("mcp.error.emptySql"));
   }
 
   if (!allowWrites && statements.length > 1) {
-    throw new Error(
-      "Multiplas instrucoes nao sao permitidas no modo somente leitura.",
-    );
+    throw new Error(mcpT("mcp.error.multiStatementReadonly"));
   }
 
   if (allowWrites) {
@@ -192,9 +192,7 @@ export function assertSqlAllowed(sql: string, allowWrites: boolean): void {
   for (const statement of statements) {
     const start = statement.replace(/^\(+/, "").trim();
     if (!READ_ONLY_START.test(start)) {
-      throw new Error(
-        "Apenas consultas de leitura sao permitidas (SELECT, WITH, EXPLAIN, SHOW, VALUES, TABLE). Ative dbadmin.mcpAllowWrites para SQL de escrita.",
-      );
+      throw new Error(mcpT("mcp.error.readonlyOnly"));
     }
   }
 }

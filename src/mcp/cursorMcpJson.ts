@@ -17,15 +17,24 @@ export function buildDbAdminMcpServerEntry(options: {
   storageRoot: string;
   allowWrites: boolean;
   maxRows: number;
+  locale?: string;
+  extensionRoot?: string;
 }): Record<string, unknown> {
+  const env: Record<string, string> = {
+    DBADMIN_STORAGE_ROOT: options.storageRoot,
+    DBADMIN_MCP_ALLOW_WRITES: options.allowWrites ? "true" : "false",
+    DBADMIN_MCP_MAX_ROWS: String(options.maxRows),
+  };
+  if (options.locale) {
+    env.DBADMIN_MCP_LOCALE = options.locale;
+  }
+  if (options.extensionRoot) {
+    env.DBADMIN_EXTENSION_ROOT = options.extensionRoot;
+  }
   return {
     command: "node",
     args: [options.serverJsPath],
-    env: {
-      DBADMIN_STORAGE_ROOT: options.storageRoot,
-      DBADMIN_MCP_ALLOW_WRITES: options.allowWrites ? "true" : "false",
-      DBADMIN_MCP_MAX_ROWS: String(options.maxRows),
-    },
+    env,
   };
 }
 
@@ -38,6 +47,8 @@ export async function upsertDbAdminInCursorMcpJson(options: {
   storageRoot: string;
   allowWrites: boolean;
   maxRows: number;
+  locale?: string;
+  extensionRoot?: string;
 }): Promise<string> {
   const filePath = getCursorMcpJsonPath();
   let root: Record<string, unknown> = {};
@@ -61,11 +72,13 @@ export async function upsertDbAdminInCursorMcpJson(options: {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         throw new Error(
-          `mcp.json inválido em ${filePath}; corrija o JSON antes de sincronizar o DBAdmin (${message}).`,
+          `Invalid mcp.json at ${filePath}; fix the JSON before syncing DBAdmin (${message}).`,
         );
       }
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new Error(`mcp.json inválido em ${filePath}: esperado um objeto na raiz.`);
+        throw new Error(
+          `Invalid mcp.json at ${filePath}: expected a root object.`,
+        );
       }
       root = parsed as Record<string, unknown>;
     }

@@ -1,5 +1,7 @@
 import * as fs from "fs";
 import * as vscode from "vscode";
+import { getBcp47Locale, t } from "./i18n";
+import { loadLocaleDict, webviewI18nBootstrap } from "./i18n/webviewLocale";
 import { DbObjectNodeRef, PostgresConnection } from "./models";
 import {
   DiagramDataResult,
@@ -159,9 +161,9 @@ export class TableDataPanelManager {
       this.panelRegistry.deleteLayout(panel);
     }
 
-    if (!input.newTab) {
+    if (input.newTab) {
       panel.iconPath = vscode.Uri.file(
-        this.context.asAbsolutePath("resources/icons/table-global.svg"),
+        this.context.asAbsolutePath("resources/icons/table-colored.svg"),
       );
       this.panelRegistry.setReusedPanel(key, panel);
     } else {
@@ -228,7 +230,7 @@ export class TableDataPanelManager {
             panel.webview.postMessage({
               type: "status",
               kind: "ok",
-              message: "Alteracoes salvas com sucesso.",
+              message: t("Changes saved successfully."),
             });
 
             await this.refreshPanel(panel, currentNode, message.state);
@@ -266,7 +268,7 @@ export class TableDataPanelManager {
             panel.webview.postMessage({
               type: "status",
               kind: "ok",
-              message: "Conteudo copiado para a area de transferencia.",
+              message: t("Content copied to the clipboard."),
             });
           } catch (error) {
             panel.webview.postMessage({
@@ -320,7 +322,7 @@ export class TableDataPanelManager {
               type: "status",
               kind: "error",
               message:
-                "Metadados da chave estrangeira incompletos para abrir a tabela relacionada.",
+                "Incomplete foreign key metadata to open the related table.",
             });
             return;
           }
@@ -362,7 +364,7 @@ export class TableDataPanelManager {
               type: "status",
               kind: "error",
               message:
-                "Metadados incompletos para pesquisar menções da chave.",
+                t("Incomplete metadata to search key mentions."),
             });
             return;
           }
@@ -371,7 +373,7 @@ export class TableDataPanelManager {
             panel.webview.postMessage({
               type: "status",
               kind: "error",
-              message: "Valor vazio para pesquisar menções.",
+              message: t("Empty value to search mentions."),
             });
             return;
           }
@@ -399,7 +401,7 @@ export class TableDataPanelManager {
                 command: mentions.command,
               },
               source: "sqlRunner",
-              title: `Menções: ${targetSchemaName}.${targetTableName}.${targetColumnName} = ${sourceValue}`,
+              title: t("Mentions: {0}.{1}.{2} = {3}", targetSchemaName, targetTableName, targetColumnName, sourceValue),
               onRefresh: async () => {
                 const refreshed =
                   await this.postgresService.findForeignKeyMentions(
@@ -519,7 +521,7 @@ export class TableDataPanelManager {
                 const buffer = Buffer.from(base64, "base64");
                 await vscode.workspace.fs.writeFile(uri, buffer);
                 vscode.window.showInformationMessage(
-                  `Diagrama exportado: ${uri.fsPath}`,
+                  t("Diagram exported: {0}", uri.fsPath),
                 );
               }
             } else if (
@@ -536,7 +538,7 @@ export class TableDataPanelManager {
                   Buffer.from(message.data, "utf-8"),
                 );
                 vscode.window.showInformationMessage(
-                  `Diagrama exportado: ${uri.fsPath}`,
+                  t("Diagram exported: {0}", uri.fsPath),
                 );
               }
             } else if (
@@ -548,7 +550,7 @@ export class TableDataPanelManager {
                 type: "status",
                 kind: "ok",
                 message:
-                  "XML do diagrama copiado para a área de transferência.",
+                  t("Diagram XML copied to the clipboard."),
               });
             }
           } catch (error) {
@@ -589,7 +591,7 @@ export class TableDataPanelManager {
     if (!panel) {
       panel = vscode.window.createWebviewPanel(
         "dbadmin.queryResult",
-        input.title || `Resultado SQL: ${input.connection.nickname}`,
+        input.title || t("SQL result: {0}", input.connection.nickname),
         {
           preserveFocus: false,
           viewColumn: vscode.ViewColumn.Active,
@@ -603,7 +605,7 @@ export class TableDataPanelManager {
       panel.webview.html = this.buildHtml(panel.webview);
 
       panel.iconPath = vscode.Uri.file(
-        this.context.asAbsolutePath("resources/icons/table-global.svg"),
+        this.context.asAbsolutePath("resources/icons/table-colored.svg"),
       );
 
       const disposable = panel.webview.onDidReceiveMessage(
@@ -654,7 +656,7 @@ export class TableDataPanelManager {
               type: "status",
               kind: "error",
               message:
-                "Visualização de resultados é somente leitura. Alterações não são persistidas.",
+                t("Result view is read-only. Changes are not persisted."),
             });
             return;
           }
@@ -694,7 +696,7 @@ export class TableDataPanelManager {
               panel!.webview.postMessage({
                 type: "status",
                 kind: "ok",
-                message: "Exportacao aberta em nova aba.",
+                message: t("Export opened in a new tab."),
               });
             } catch (error) {
               panel!.webview.postMessage({
@@ -722,7 +724,7 @@ export class TableDataPanelManager {
       state: this.cloneTableState(initialState),
     });
 
-    panel.title = input.title || `Resultado SQL: ${input.connection.nickname}`;
+    panel.title = input.title || t("SQL result: {0}", input.connection.nickname);
     panel.reveal(vscode.ViewColumn.Active, false);
     await this.postQueryResultData(panel, input, initialState);
   }
@@ -905,7 +907,7 @@ export class TableDataPanelManager {
     panel.webview.postMessage({
       type: "status",
       kind: "ok",
-      message: "Exportacao aberta em nova aba.",
+      message: t("Export opened in a new tab."),
     });
   }
 
@@ -1286,6 +1288,16 @@ export class TableDataPanelManager {
     const codeEditorMarkup = buildCodeEditorMarkup();
     const queryCodeEditorMarkup = buildCodeEditorMarkup("queryCodeEditor");
     const codeEditorScript = buildCodeEditorScript();
+    const extensionPath = this.context.extensionPath;
+    const i18n = loadLocaleDict(extensionPath);
+    const i18nScript = webviewI18nBootstrap(extensionPath);
+    const i18nLang = getBcp47Locale();
+    const L = (key: string, fallback: string) =>
+      String(i18n[key] || fallback)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
     const codiconsCssUri = webview.asWebviewUri(
       vscode.Uri.joinPath(
         this.context.extensionUri,
@@ -1308,12 +1320,13 @@ export class TableDataPanelManager {
       this.getDynamicDefaultColumnWidth();
 
     return `<!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="${i18nLang}">
 <head>
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="${csp}" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link href="${codiconsCssUri}" rel="stylesheet" />
+  <script nonce="${nonce}">${i18nScript}</script>
   <style>
     html, body { height: 100%; }
     :root { --dbadmin-input-focus: #007acc; accent-color: var(--dbadmin-input-focus); }
@@ -2137,58 +2150,58 @@ export class TableDataPanelManager {
 
     <div class="toolbar">
       <div class="search-wrap grow" id="searchWrap">
-        <input id="search" class="input" placeholder="Pesquisar tudo" />
+        <input id="search" class="input" placeholder="${L('webview.table.searchAll', 'Pesquisar tudo')}" />
         <div id="searchContextPlaceholder" class="search-context-placeholder" aria-hidden="true"></div>
         <span class="search-icon" aria-hidden="true">
           <i class="codicon codicon-search"></i>
         </span>
       </div>
-      <button id="clearFiltersBtn" class="secondary btn-icon" title="Limpar filtros" aria-label="Limpar filtros" style="display:none;"></button>
+      <button id="clearFiltersBtn" class="secondary btn-icon" title="${L('webview.table.clearFilters', 'Limpar filtros')}" aria-label="${L('webview.table.clearFilters', 'Limpar filtros')}" style="display:none;"></button>
       <div class="mode-select" id="modeSelectWrap">
-        <button id="modeBtn" class="secondary btn-icon" title="Modo de busca"></button>
+        <button id="modeBtn" class="secondary btn-icon" title="${L('webview.table.searchMode', 'Modo de busca')}"></button>
         <div class="mode-dropdown simple-menu overlay-surface overlay-scroll" id="modeDropdown">
-          <button data-mode="local"><i class="codicon codicon-filter" aria-hidden="true"></i>Filtro local</button>
-          <button data-mode="query"><i class="codicon codicon-database" aria-hidden="true"></i>Filtro via query</button>
+          <button data-mode="local"><i class="codicon codicon-filter" aria-hidden="true"></i>${L('webview.table.localFilter', 'Filtro local')}</button>
+          <button data-mode="query"><i class="codicon codicon-database" aria-hidden="true"></i>${L('webview.table.queryFilter', 'Filtro via query')}</button>
         </div>
       </div>
-      <button id="columnsBtn" class="secondary btn-icon" title="Selecionar colunas" aria-label="Selecionar colunas">
+      <button id="columnsBtn" class="secondary btn-icon" title="${L('webview.table.selectColumns', 'Selecionar colunas')}" aria-label="${L('webview.table.selectColumns', 'Selecionar colunas')}">
         <i class="codicon codicon-eye" aria-hidden="true"></i>
       </button>
-      <button id="reload" class="secondary btn-icon" title="Recarregar" aria-label="Recarregar">
+      <button id="reload" class="secondary btn-icon" title="${L('webview.table.reload', 'Recarregar')}" aria-label="${L('webview.table.reload', 'Recarregar')}">
         <i class="codicon codicon-refresh" aria-hidden="true"></i>
       </button>
-      <button id="save" class="btn-icon primary" title="Salvar" aria-label="Salvar">
+      <button id="save" class="btn-icon primary" title="${L('webview.common.save', 'Salvar')}" aria-label="${L('webview.common.save', 'Salvar')}">
         <i class="codicon codicon-save" aria-hidden="true"></i>
       </button>
-      <button id="newRow" class="secondary btn-icon" title="Nova linha" aria-label="Nova linha">
+      <button id="newRow" class="secondary btn-icon" title="${L('webview.table.newRow', 'Nova linha')}" aria-label="${L('webview.table.newRow', 'Nova linha')}">
         <i class="codicon codicon-add" aria-hidden="true"></i>
       </button>
       <div style="display: flex; align-items: center; gap: 4px;">
-        <button id="prevPage" class="secondary btn-icon" title="Página anterior" aria-label="Página anterior">
+        <button id="prevPage" class="secondary btn-icon" title="${L('webview.table.prevPage', 'Página anterior')}" aria-label="${L('webview.table.prevPage', 'Página anterior')}">
           <i class="codicon codicon-chevron-left" aria-hidden="true"></i>
         </button>
-        <button id="pageInfoBtn" class="secondary" title="Paginação">
+        <button id="pageInfoBtn" class="secondary" title="${L('webview.table.pagination', 'Paginação')}">
           <span id="pageInfo">1/1 (0)</span>
         </button>
-        <button id="nextPage" class="secondary btn-icon" title="Próxima página" aria-label="Próxima página">
+        <button id="nextPage" class="secondary btn-icon" title="${L('webview.table.nextPage', 'Próxima página')}" aria-label="${L('webview.table.nextPage', 'Próxima página')}">
           <i class="codicon codicon-chevron-right" aria-hidden="true"></i>
         </button>
       </div>
-      <button id="toolbarMenuBtn" class="secondary btn-icon" title="Menu" aria-label="Menu">
+      <button id="toolbarMenuBtn" class="secondary btn-icon" title="${L('webview.common.menu', 'Menu')}" aria-label="${L('webview.common.menu', 'Menu')}">
         <i class="codicon codicon-ellipsis" aria-hidden="true"></i>
       </button>
     </div>
 
     <div class="diagram-toolbar" style="display:none;">
-      <button id="diagramExportBtn" class="secondary" title="Exportar diagrama">Exportar</button>
-      <button id="diagramResetLayoutBtn" class="secondary" title="Redefinir posição das tabelas">Redefinir</button>
+      <button id="diagramExportBtn" class="secondary" title="${L('webview.table.exportDiagram', 'Exportar diagrama')}">${L('webview.common.export', 'Exportar')}</button>
+      <button id="diagramResetLayoutBtn" class="secondary" title="${L('webview.table.resetPositions', 'Redefinir posição das tabelas')}">${L('webview.table.reset', 'Redefinir')}</button>
       <div class="diagram-zoom-group" title="Ctrl+rodar: zoom. Rodar: deslocar vertical. Shift+rodar: deslocar horizontal.">
         <label for="diagramZoomPct" class="diagram-toolbar-label">Zoom</label>
         <input type="number" id="diagramZoomPct" class="input" min="20" max="400" step="5" value="100" />
         <span class="diagram-toolbar-label" style="margin-right:0">%</span>
       </div>
       <span style="flex:1"></span>
-      <button id="diagramMenuBtn" class="secondary btn-icon" title="Menu" aria-label="Menu">
+      <button id="diagramMenuBtn" class="secondary btn-icon" title="${L('webview.common.menu', 'Menu')}" aria-label="${L('webview.common.menu', 'Menu')}">
         <i class="codicon codicon-ellipsis" aria-hidden="true"></i>
       </button>
     </div>
@@ -2209,15 +2222,15 @@ export class TableDataPanelManager {
             </marker>
           </defs>
         </svg>
-        <div id="diagramLoading" class="diagram-loading" style="display:none;">Carregando diagrama…</div>
+        <div id="diagramLoading" class="diagram-loading" style="display:none;">${L('webview.table.loadingDiagram', 'Carregando diagrama…')}</div>
       </div>
     </div>
   </div>
 
   <div class="overlay-backdrop" id="columnsBackdrop"></div>
-  <div class="columns-popup overlay-surface overlay-scroll" id="columnsPopup" role="dialog" aria-label="Selecionar colunas">
+  <div class="columns-popup overlay-surface overlay-scroll" id="columnsPopup" role="dialog" aria-label="${L('webview.table.selectColumns', 'Selecionar colunas')}">
     <div class="columns-popup-head">
-      <input id="columnsSearch" class="columns-search" placeholder="Buscar coluna" />
+      <input id="columnsSearch" class="columns-search" placeholder="${L('webview.table.searchColumn', 'Buscar coluna')}" />
     </div>
     <ul class="columns-list" id="columnsList"></ul>
   </div>
@@ -2226,57 +2239,57 @@ export class TableDataPanelManager {
   <div class="overlay-backdrop" id="headerMenuBackdrop"></div>
   <div class="overlay-backdrop" id="paginationMenuBackdrop"></div>
   <div id="headerMenu" class="header-menu simple-menu overlay-surface overlay-scroll">
-    <button id="viewDataBtn" class="header-view-btn active" title="Ver dados da tabela">
+    <button id="viewDataBtn" class="header-view-btn active" title="${L('webview.table.viewData', 'Ver dados da tabela')}">
       <span class="menu-item-check" aria-hidden="true"></span>
-      <span>Dados</span>
+      <span>${L('webview.common.data', 'Dados')}</span>
     </button>
-    <button id="viewDiagramBtn" class="header-view-btn" title="Ver diagrama ER">
+    <button id="viewDiagramBtn" class="header-view-btn" title="${L('webview.table.viewDiagram', 'Ver diagrama ER')}">
       <span class="menu-item-check" aria-hidden="true"></span>
-      <span>Diagrama</span>
+      <span>${L('webview.table.diagram', 'Diagrama')}</span>
     </button>
     <hr class="menu-separator" />
-    <button id="openSettings" title="Configurações">
+    <button id="openSettings" title="${L('webview.table.settings', 'Configurações')}">
       <span class="menu-item-check" aria-hidden="true"></span>
-      <span>Configurações</span>
+      <span>${L('webview.table.settings', 'Configurações')}</span>
     </button>
-    <button id="showInExplorer" class="header-menu-hide-in-result" title="Mostrar no explorador">
+    <button id="showInExplorer" class="header-menu-hide-in-result" title="${L('webview.table.showInExplorer', 'Mostrar no explorador')}">
       <span class="menu-item-check" aria-hidden="true"></span>
-      <span>Mostrar no explorador</span>
+      <span>${L('webview.table.showInExplorer', 'Mostrar no explorador')}</span>
     </button>
-    <button id="openNewTab" title="Abrir em nova aba">
+    <button id="openNewTab" title="${L('webview.table.openNewTab', 'Abrir em nova aba')}">
       <span class="menu-item-check" aria-hidden="true"></span>
-      <span>Abrir em nova aba</span>
+      <span>${L('webview.table.openNewTab', 'Abrir em nova aba')}</span>
     </button>
     <hr id="headerMenuDataSeparator" class="menu-separator" />
-    <button id="showQueryModalBtn" title="Mostrar query">
+    <button id="showQueryModalBtn" title="${L('webview.table.showQuery', 'Mostrar query')}">
       <span class="menu-item-check" aria-hidden="true"></span>
-      <span>Mostrar query</span>
+      <span>${L('webview.table.showQuery', 'Mostrar query')}</span>
     </button>
-    <button id="openConnectionManagerBtn" class="header-menu-hide-in-result" title="Gerenciar conexão">
+    <button id="openConnectionManagerBtn" class="header-menu-hide-in-result" title="${L('webview.table.manageConnection', 'Gerenciar conexão')}">
       <span class="menu-item-check" aria-hidden="true"></span>
-      <span>Gerenciar conexão</span>
+      <span>${L('webview.table.manageConnection', 'Gerenciar conexão')}</span>
     </button>
-    <button id="toggleIntegratedTable" class="header-menu-query-result-only" title="Mostrar tabela integrada">
+    <button id="toggleIntegratedTable" class="header-menu-query-result-only" title="${L('webview.table.integratedTable', 'Mostrar tabela integrada')}">
       <span id="toggleIntegratedTableCheck" class="menu-item-check" aria-hidden="true"></span>
-      <span>Mostrar tabela integrada</span>
+      <span>${L('webview.table.integratedTable', 'Mostrar tabela integrada')}</span>
     </button>
-    <button id="openExport" class="header-menu-data-only" title="Exportar dados">
+    <button id="openExport" class="header-menu-data-only" title="${L('webview.table.exportData', 'Exportar dados')}">
       <span class="menu-item-check" aria-hidden="true"></span>
-      <span>Exportar</span>
+      <span>${L('webview.common.export', 'Exportar')}</span>
     </button>
-    <button id="resetLayout" class="header-menu-data-only" title="Restaurar layout da tabela">
+    <button id="resetLayout" class="header-menu-data-only" title="${L('webview.table.resetLayout', 'Restaurar layout da tabela')}">
       <span class="menu-item-check" aria-hidden="true"></span>
-      <span>Restaurar layout</span>
+      <span>${L('webview.table.resetLayout', 'Restaurar layout da tabela')}</span>
     </button>
   </div>
-  <div id="paginationMenu" class="pagination-menu overlay-surface overlay-scroll" role="dialog" aria-label="Configurar paginação">
+  <div id="paginationMenu" class="pagination-menu overlay-surface overlay-scroll" role="dialog" aria-label="${L('webview.table.configurePagination', 'Configurar paginação')}">
     <div class="pagination-menu-info" id="paginationMenuInfo"></div>
     <div class="row">
-    <label class="label" for="paginationPageInput">Página</label>
+    <label class="label" for="paginationPageInput">${L('webview.table.page', 'Página')}</label>
     <input id="paginationPageInput" class="input" type="number" step="1" />
     </div>
     <div class="row">
-      <label class="label" for="paginationLimitInput">Itens por página</label>
+      <label class="label" for="paginationLimitInput">${L('webview.table.itemsPerPage', 'Itens por página')}</label>
       <input id="paginationLimitInput" class="input" type="number" min="1" max="500" step="1" />
     </div>
   </div>
@@ -2286,12 +2299,12 @@ export class TableDataPanelManager {
   <div class="menu simple-menu overlay-surface overlay-scroll" id="cellMenu">
     <button data-action="copy">
       <span class="menu-item-icon" aria-hidden="true"></span>
-      <span class="menu-item-label">Copiar</span>
+      <span class="menu-item-label">${L('webview.common.copy', 'Copiar')}</span>
     </button>
     <div class="menu-submenu-wrap">
       <button type="button">
         <span class="menu-item-icon" aria-hidden="true"></span>
-        <span class="menu-item-label">Copiar avançado</span>
+        <span class="menu-item-label">${L('webview.table.copyAdvanced', 'Copiar avançado')}</span>
         <svg class="submenu-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 3.5L10.5 8L6 12.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
       <div class="menu-submenu simple-menu overlay-surface overlay-submenu">
@@ -2307,7 +2320,7 @@ export class TableDataPanelManager {
     </div>
     <button data-action="paste">
       <span class="menu-item-icon" aria-hidden="true"></span>
-      <span class="menu-item-label">Colar</span>
+      <span class="menu-item-label">${L('webview.common.paste', 'Colar')}</span>
     </button>
     <button data-action="pasteRaw">
       <span class="menu-item-icon" aria-hidden="true"></span>
@@ -2382,7 +2395,7 @@ export class TableDataPanelManager {
         <span class="json-modal-title">Query</span>
       </div>
       <div class="json-modal-actions">
-        <button id="queryModalCopy" class="secondary" title="Copiar query">Copiar</button>
+        <button id="queryModalCopy" class="secondary" title="${L('webview.common.copy', 'Copy')}">${L('webview.common.copy', 'Copy')}</button>
         <button id="queryModalClose" class="primary" title="Fechar">Fechar</button>
       </div>
     </div>
@@ -2390,8 +2403,8 @@ export class TableDataPanelManager {
   </div>
 
   <div class="overlay-backdrop" id="exportModalBackdrop"></div>
-  <div class="export-modal" id="exportModal" role="dialog" aria-label="Exportar dados">
-    <div class="export-modal-head">Exportar dados</div>
+  <div class="export-modal" id="exportModal" role="dialog" aria-label="${L('webview.table.exportData', 'Exportar dados')}">
+    <div class="export-modal-head">${L('webview.table.exportData', 'Exportar dados')}</div>
     <div class="export-modal-body">
       <div>
         <div class="export-group-title">Formato</div>
@@ -2405,22 +2418,22 @@ export class TableDataPanelManager {
         <div class="export-group">
           <label class="export-option"><input type="radio" name="exportDataScope" id="exportDataResult" value="result" checked /><span>Resultado</span></label>
           <label class="export-option"><input type="radio" name="exportDataScope" id="exportDataAll" value="all" /><span>Tudo (sem paginação)</span></label>
-          <label class="export-option" id="exportSelectedOption"><input type="radio" name="exportDataScope" id="exportDataSelected" value="selected" /><span>Células selecionadas</span></label>
+          <label class="export-option" id="exportSelectedOption"><input type="radio" name="exportDataScope" id="exportDataSelected" value="selected" /><span>${L('webview.table.selectedCells', 'Selected cells')}</span></label>
         </div>
       </div>
     </div>
     <div class="export-modal-actions">
-      <button id="exportModalCancel" class="secondary">Cancelar</button>
-      <button id="exportModalConfirm" class="primary">Exportar</button>
+      <button id="exportModalCancel" class="secondary">${L('webview.common.cancel', 'Cancelar')}</button>
+      <button id="exportModalConfirm" class="primary">${L('webview.common.export', 'Exportar')}</button>
     </div>
   </div>
 
   <div class="overlay-backdrop" id="diagramExportModalBackdrop"></div>
-  <div class="diagram-export-modal" id="diagramExportModal" role="dialog" aria-label="Exportar diagrama">
-    <div class="export-modal-head">Exportar diagrama</div>
+  <div class="diagram-export-modal" id="diagramExportModal" role="dialog" aria-label="${L('webview.table.exportDiagram', 'Exportar diagrama')}">
+    <div class="export-modal-head">${L('webview.table.exportDiagram', 'Exportar diagrama')}</div>
     <div class="export-modal-body">
       <div>
-        <div class="export-group-title">Formato</div>
+        <div class="export-group-title">${L('webview.backup.format', 'Formato')}</div>
         <div class="export-group">
           <label class="export-option"><input type="radio" name="diagramExportFormat" id="diagramExportFormatPng" value="png" checked /><span>PNG (imagem)</span></label>
           <label class="export-option"><input type="radio" name="diagramExportFormat" id="diagramExportFormatDrawio" value="drawio" /><span>Draw.io (.drawio / XML)</span></label>
@@ -2429,14 +2442,14 @@ export class TableDataPanelManager {
       <div>
         <div class="export-group-title">Destino</div>
         <div class="export-group">
-          <label class="export-option"><input type="radio" name="diagramExportTarget" id="diagramExportTargetFile" value="file" checked /><span>Salvar como arquivo</span></label>
-          <label class="export-option"><input type="radio" name="diagramExportTarget" id="diagramExportTargetClipboard" value="clipboard" /><span>Copiar para clipboard</span></label>
+          <label class="export-option"><input type="radio" name="diagramExportTarget" id="diagramExportTargetFile" value="file" checked /><span>${L('webview.table.saveAsFile', 'Salvar como arquivo')}</span></label>
+          <label class="export-option"><input type="radio" name="diagramExportTarget" id="diagramExportTargetClipboard" value="clipboard" /><span>${L('webview.table.copyToClipboard', 'Copy to clipboard')}</span></label>
         </div>
       </div>
     </div>
     <div class="export-modal-actions">
-      <button id="diagramExportModalCancel" class="secondary">Cancelar</button>
-      <button id="diagramExportModalConfirm" class="primary">Exportar</button>
+      <button id="diagramExportModalCancel" class="secondary">${L('webview.common.cancel', 'Cancelar')}</button>
+      <button id="diagramExportModalConfirm" class="primary">${L('webview.common.export', 'Exportar')}</button>
     </div>
   </div>
 
@@ -2447,7 +2460,7 @@ export class TableDataPanelManager {
         <span class="json-modal-title" id="jsonModalTitle">Conteúdo JSON</span>
       </div>
       <div class="json-modal-actions">
-        <button id="jsonModalApply" class="primary" title="Aplicar alteracoes">Aplicar</button>
+        <button id="jsonModalApply" class="primary" title="${L('webview.table.applyChanges', 'Aplicar alterações')}">${L('webview.common.apply', 'Aplicar')}</button>
         <button id="jsonModalOpenNative" class="secondary" title="Editar em tela dividida">Tela dividida</button>
         <button id="jsonModalClose" class="secondary">Fechar</button>
       </div>
@@ -4058,7 +4071,7 @@ export class TableDataPanelManager {
 
       const allLabel = document.createElement('span');
       allLabel.className = 'columns-item-name';
-      allLabel.textContent = 'Todos';
+      allLabel.textContent = t('webview.table.all', 'Todos');
       allLabel.style.cursor = 'pointer';
       allLabel.addEventListener('click', (event) => {
         event.preventDefault();
@@ -4342,7 +4355,7 @@ export class TableDataPanelManager {
       }
       pageInfoEl.textContent = state.page + '/' + totalPages + ' (' + totalRows + ')';
       if (paginationMenuInfoEl) {
-        paginationMenuInfoEl.textContent = 'Página ' + state.page + ' de ' + totalPages + '   •   Total: ' + totalRows;
+        paginationMenuInfoEl.textContent = tf('webview.table.pageInfo', { page: state.page, total: totalPages, rows: totalRows }, 'Página ' + state.page + ' de ' + totalPages + '   •   Total: ' + totalRows);
       }
       if (pageInfoBtn) {
         pageInfoBtn.setAttribute(

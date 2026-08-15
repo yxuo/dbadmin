@@ -2,6 +2,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { getBcp47Locale, t } from './i18n';
+import { loadLocaleDict, webviewI18nBootstrap } from './i18n/webviewLocale';
 import { getSqlBookIntegratedTableEnabled, setSqlBookIntegratedTableEnabled } from './sqlBookIntegratedTable';
 import { getSqlBookRunPerQueryEnabled, setSqlBookRunPerQueryEnabled } from './sqlBookRunPerQuery';
 
@@ -56,7 +58,7 @@ export class SettingsPanelManager {
 
     const panel = vscode.window.createWebviewPanel(
       'dbadmin.settings',
-      'DBAdmin: Configurações',
+      t('DBAdmin: Settings'),
       {
         preserveFocus: false,
         viewColumn: vscode.ViewColumn.Active,
@@ -162,7 +164,7 @@ export class SettingsPanelManager {
           });
         } else {
           vscode.window.showWarningMessage(
-            'Não foi possível detectar o diretório do pgAdmin automaticamente. Informe o caminho manualmente.'
+            t('Could not detect the pgAdmin directory automatically. Enter the path manually.')
           );
         }
         return;
@@ -248,13 +250,20 @@ export class SettingsPanelManager {
   private buildHtml(webview: vscode.Webview): string {
     const nonce = String(Date.now());
     const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';`;
+    const extensionPath = this.context.extensionPath;
+    const i18n = loadLocaleDict(extensionPath);
+    const i18nScript = webviewI18nBootstrap(extensionPath);
+    const i18nLang = getBcp47Locale();
+    const L = (key: string, fallback: string) =>
+      escapeHtmlAttr(i18n[key] || fallback);
 
     return `<!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="${i18nLang}">
 <head>
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="${csp}" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script nonce="${nonce}">${i18nScript}</script>
   <style>
     html, body { height: 100%; }
     :root { --dbadmin-input-focus: #007acc; accent-color: var(--dbadmin-input-focus); }
@@ -363,16 +372,16 @@ export class SettingsPanelManager {
   </style>
 </head>
 <body>
-  <h1 class="page-title">Configurações da extensão</h1>
+  <h1 class="page-title">${L('webview.settings.pageTitle', 'Configurações da extensão')}</h1>
 
   <div class="cards">
     <div class="card">
-      <h2 class="card-title">Barra lateral</h2>
+      <h2 class="card-title">${L('webview.settings.sidebar.title', 'Barra lateral')}</h2>
 
       <div class="item">
         <div class="meta">
-          <span class="title">Mostrar label do filtro na árvore</span>
-          <span class="desc">Exibe o item de label do filtro no topo da treeview quando houver filtro ativo.</span>
+          <span class="title">${L('webview.settings.sidebar.showFilterLabel', 'Mostrar label do filtro na árvore')}</span>
+          <span class="desc">${L('webview.settings.sidebar.showFilterLabelDesc', 'Exibe o item de label do filtro no topo da treeview quando houver filtro ativo.')}</span>
         </div>
         <label>
           <input id="showFilterLabel" type="checkbox" />
@@ -381,12 +390,12 @@ export class SettingsPanelManager {
     </div>
 
     <div class="card">
-      <h2 class="card-title">Tabela</h2>
+      <h2 class="card-title">${L('webview.settings.table.title', 'Tabela')}</h2>
 
       <div class="item">
         <div class="meta">
-          <span class="title">Persistir layout de colunas</span>
-          <span class="desc">Ao abrir uma nova aba, as configurações de layout de colunas serão mantidas.</span>
+          <span class="title">${L('webview.settings.table.persistLayout', 'Persistir layout de colunas')}</span>
+          <span class="desc">${L('webview.settings.table.persistLayoutDesc', 'Ao abrir uma nova aba, as configurações de layout de colunas serão mantidas.')}</span>
         </div>
         <label>
           <input id="persistColumnLayout" type="checkbox" />
@@ -395,20 +404,20 @@ export class SettingsPanelManager {
 
       <div class="item">
         <div class="meta">
-          <span class="title">Número padrão de itens por página</span>
-          <span class="desc">Define o número padrão de itens exibidos por página na visualização de tabela. Pode ser ajustado para cada tabela individualmente.</span>
+          <span class="title">${L('webview.settings.table.defaultPageSize', 'Número padrão de itens por página')}</span>
+          <span class="desc">${L('webview.settings.table.defaultPageSizeDesc', 'Define o número padrão de itens exibidos por página na visualização de tabela. Pode ser ajustado para cada tabela individualmente.')}</span>
         </div>
         <input id="defaultPageSize" type="number" min="1" max="500" style="width:80px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border,transparent);border-radius:4px;padding:0 6px;height:26px;font-family:inherit;font-size:inherit;" />
       </div>
     </div>
 
     <div class="card">
-      <h2 class="card-title">SQL Book</h2>
+      <h2 class="card-title">${L('webview.settings.sqlbook.title', 'SQL Book')}</h2>
 
       <div class="item">
         <div class="meta">
-          <span class="title">Mostrar tabela integrada</span>
-          <span class="desc">Exibe o resultado inline na célula do SQL Book em vez de abrir o painel de resultados.</span>
+          <span class="title">${L('webview.settings.sqlbook.integratedTable', 'Mostrar tabela integrada')}</span>
+          <span class="desc">${L('webview.settings.sqlbook.integratedTableDesc', 'Exibe o resultado inline na célula do SQL Book em vez de abrir o painel de resultados.')}</span>
         </div>
         <label>
           <input id="sqlbookIntegratedTable" type="checkbox" />
@@ -417,8 +426,8 @@ export class SettingsPanelManager {
 
       <div class="item">
         <div class="meta">
-          <span class="title">Botão executar por query</span>
-          <span class="desc">Quando a célula tiver duas ou mais queries, mostra um botão Executar em cada uma. O Executar da célula continua rodando o bloco inteiro.</span>
+          <span class="title">${L('webview.settings.sqlbook.runPerQuery', 'Botão executar por query')}</span>
+          <span class="desc">${L('webview.settings.sqlbook.runPerQueryDesc', 'Quando a célula tiver duas ou mais queries, mostra um botão Executar em cada uma. O Executar da célula continua rodando o bloco inteiro.')}</span>
         </div>
         <label>
           <input id="sqlbookRunPerQuery" type="checkbox" />
@@ -427,12 +436,12 @@ export class SettingsPanelManager {
     </div>
 
     <div class="card" id="mcpCard">
-      <h2 class="card-title">MCP (IA)</h2>
+      <h2 class="card-title">${L('webview.settings.mcp.title', 'MCP (IA)')}</h2>
 
       <div class="item">
         <div class="meta">
-          <span class="title">Permitir SQL de escrita</span>
-          <span class="desc">Por padrão a IA só executa SELECT/WITH/EXPLAIN/SHOW. Ative para INSERT/UPDATE/DELETE/DDL.</span>
+          <span class="title">${L('webview.settings.mcp.allowWrites', 'Permitir SQL de escrita')}</span>
+          <span class="desc">${L('webview.settings.mcp.allowWritesDesc', 'Por padrão a IA só executa SELECT/WITH/EXPLAIN/SHOW. Ative para INSERT/UPDATE/DELETE/DDL.')}</span>
         </div>
         <label>
           <input id="mcpAllowWrites" type="checkbox" />
@@ -441,59 +450,59 @@ export class SettingsPanelManager {
 
       <div class="item">
         <div class="meta">
-          <span class="title">Máximo de linhas no query</span>
-          <span class="desc">Limite de linhas retornadas pela tool MCP query.</span>
+          <span class="title">${L('webview.settings.mcp.maxRows', 'Máximo de linhas no query')}</span>
+          <span class="desc">${L('webview.settings.mcp.maxRowsDesc', 'Limite de linhas retornadas pela tool MCP query.')}</span>
         </div>
         <input id="mcpMaxRows" type="number" min="1" max="5000" style="width:80px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border,transparent);border-radius:4px;padding:0 6px;height:26px;font-family:inherit;font-size:inherit;" />
       </div>
 
       <div class="item">
         <div class="meta">
-          <span class="title">Arquivo mcp.json do Cursor</span>
-          <span class="desc">Sincronizado automaticamente. O gear das entradas vindas do mcp.json abre este arquivo. A lista "Configurar Ferramentas" usa o provider da extensão.</span>
+          <span class="title">${L('webview.settings.mcp.jsonFile', 'Arquivo mcp.json do Cursor')}</span>
+          <span class="desc">${L('webview.settings.mcp.jsonFileDesc', 'Sincronizado automaticamente. O gear das entradas vindas do mcp.json abre este arquivo. A lista "Configurar Ferramentas" usa o provider da extensão.')}</span>
         </div>
-        <button id="openMcpJson" class="secondary">Abrir</button>
+        <button id="openMcpJson" class="secondary">${L('webview.settings.mcp.open', 'Abrir')}</button>
       </div>
 
       <div class="item">
         <div class="meta">
-          <span class="title">Config para Claude / outros clientes</span>
-          <span class="desc">Copia o JSON pronto para colar em claude_desktop_config.json ou claude mcp add.</span>
+          <span class="title">${L('webview.settings.mcp.copyConfig', 'Config para Claude / outros clientes')}</span>
+          <span class="desc">${L('webview.settings.mcp.copyConfigDesc', 'Copia o JSON pronto para colar em claude_desktop_config.json ou claude mcp add.')}</span>
         </div>
-        <button id="copyMcpConfig" class="secondary">Copiar</button>
+        <button id="copyMcpConfig" class="secondary">${L('webview.settings.mcp.copy', 'Copiar')}</button>
       </div>
     </div>
 
     <div class="card">
-      <h2 class="card-title">Outros</h2>
+      <h2 class="card-title">${L('webview.settings.other.title', 'Outros')}</h2>
 
       <div class="item">
         <div class="meta">
-          <span class="title">pgAdmin &ndash; diretório dos binários</span>
-          <span class="desc">Caminho para pg_dump e pg_restore. Deixe vazio para auto-detectar no momento do uso.</span>
+          <span class="title">${L('webview.settings.other.pgAdminBin', 'pgAdmin – diretório dos binários')}</span>
+          <span class="desc">${L('webview.settings.other.pgAdminBinDesc', 'Caminho para pg_dump e pg_restore. Deixe vazio para auto-detectar no momento do uso.')}</span>
           <div style="display:flex;gap:6px;margin-top:4px;">
-            <input id="pgAdminBinPath" type="text" placeholder="Ex: C:\\Program Files\\pgAdmin 4\\runtime"
+            <input id="pgAdminBinPath" type="text" placeholder="${L('webview.settings.other.pgAdminBinPlaceholder', 'Ex: C:\\\\Program Files\\\\pgAdmin 4\\\\runtime')}"
               style="flex:1;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border,transparent);border-radius:4px;padding:0 6px;height:26px;font-family:inherit;font-size:inherit;" />
-            <button id="detectPgAdmin" class="secondary" style="white-space:nowrap;">Detectar</button>
+            <button id="detectPgAdmin" class="secondary" style="white-space:nowrap;">${L('webview.common.detect', 'Detectar')}</button>
           </div>
         </div>
       </div>
 
       <div class="item">
         <div class="meta">
-          <span class="title">Arquivo global de conexões</span>
-          <span class="desc">Compartilhado entre todos os workspaces deste usuário no VS Code.</span>
+          <span class="title">${L('webview.settings.other.connectionsFile', 'Arquivo global de conexões')}</span>
+          <span class="desc">${L('webview.settings.other.connectionsFileDesc', 'Compartilhado entre todos os workspaces deste usuário no VS Code.')}</span>
           <span class="desc path" id="storagePath"></span>
         </div>
-        <button id="openConnectionsFile" class="secondary">Abrir</button>
+        <button id="openConnectionsFile" class="secondary">${L('webview.common.open', 'Abrir')}</button>
       </div>
 
       <div class="item">
         <div class="meta">
-          <span class="title">Configurações no VS Code</span>
-          <span class="desc">Abrir o editor de settings da extensão.</span>
+          <span class="title">${L('webview.settings.other.vscodeSettings', 'Configurações no VS Code')}</span>
+          <span class="desc">${L('webview.settings.other.vscodeSettingsDesc', 'Abrir o editor de settings da extensão.')}</span>
         </div>
-        <button id="openExtensionSettings" class="secondary">Abrir settings</button>
+        <button id="openExtensionSettings" class="secondary">${L('webview.settings.other.openSettings', 'Abrir settings')}</button>
       </div>
     </div>
 
@@ -501,7 +510,7 @@ export class SettingsPanelManager {
 
   <div class="actions">
     <span id="saveStatus" class="status"></span>
-    <button id="saveSettings">Salvar</button>
+    <button id="saveSettings">${L('webview.common.save', 'Salvar')}</button>
   </div>
 
   <script nonce="${nonce}">
@@ -742,7 +751,7 @@ export class SettingsPanelManager {
       const message = event.data;
       if (message.type === 'settingsSaved') {
         setDirty(false);
-        saveStatus.textContent = 'Configurações salvas';
+        saveStatus.textContent = t('webview.settings.saved', 'Configurações salvas');
         setTimeout(() => {
           if (!hasUnsavedChanges) {
             saveStatus.textContent = '';
@@ -826,4 +835,12 @@ async function detectPgAdminBinPathAsync(): Promise<string | undefined> {
   }
 
   return undefined;
+}
+
+function escapeHtmlAttr(value: string): string {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }

@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { t } from "./i18n";
 import { SqlBookController } from "./sqlBookNotebook";
 
 export const SQLBOOK_RUN_PER_QUERY_SETTING = "dbadmin.sqlbookRunPerQuery";
@@ -248,8 +249,8 @@ export function createSqlBookRunPerQueryCodeLensProvider(): {
         const position = document.positionAt(statement.start);
         const range = new vscode.Range(position, position);
         return new vscode.CodeLens(range, {
-          title: "$(play) Executar",
-          tooltip: "Executar esta query",
+          title: t("$(play) Run"),
+          tooltip: t("$(play) Run"),
           command: "dbadmin.executeSqlBookStatement",
           arguments: [document.uri, statement.sql],
         });
@@ -394,7 +395,7 @@ export async function executeSqlBookStatement(
   const cell = findSqlBookCell(parsed);
   if (!cell) {
     void vscode.window.showWarningMessage(
-      "Não foi possível localizar a célula do SQL Book.",
+      t("Could not locate the SQL Book cell."),
     );
     return;
   }

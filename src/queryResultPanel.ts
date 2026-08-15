@@ -1,4 +1,6 @@
 import * as vscode from "vscode";
+import { getBcp47Locale, t } from "./i18n";
+import { loadLocaleDict, webviewI18nBootstrap } from "./i18n/webviewLocale";
 import { PostgresConnection } from "./models";
 import { SqlQueryResult } from "./postgresService";
 
@@ -65,7 +67,7 @@ export class QueryResultPanelManager {
 
         if (message.type === "refresh") {
           if (!this.currentModel.onRefresh) {
-            void vscode.window.showInformationMessage("Sem contexto para reexecutar esta consulta.");
+            void vscode.window.showInformationMessage(t("No context to re-run this query."));
             return;
           }
 
@@ -142,14 +144,25 @@ export class QueryResultPanelManager {
   private getHtml(webview: vscode.Webview): string {
     const nonce = String(Date.now());
     const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';`;
+    const extensionPath = this.context.extensionPath;
+    const i18n = loadLocaleDict(extensionPath);
+    const i18nScript = webviewI18nBootstrap(extensionPath);
+    const i18nLang = getBcp47Locale();
+    const L = (key: string, fallback: string) =>
+      String(i18n[key] || fallback)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
 
     return `<!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="${i18nLang}">
 <head>
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="${csp}" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Resultado SQL</title>
+  <title>${L('webview.queryResult.documentTitle', 'Resultado SQL')}</title>
+  <script nonce="${nonce}">${i18nScript}</script>
   <style>
     :root {
       color-scheme: light dark;
@@ -369,12 +382,12 @@ export class QueryResultPanelManager {
   <div class="shell">
     <div class="toolbar">
       <div class="title-wrap">
-        <h1 id="title" class="title">Resultado da consulta</h1>
+        <h1 id="title" class="title">${L('webview.queryResult.title', 'Resultado da consulta')}</h1>
         <p id="subtitle" class="subtitle"></p>
       </div>
-      <input id="search" class="search" placeholder="Buscar nos resultados" />
-      <button id="reset">Resetar layout</button>
-      <button id="refresh" class="primary">Reexecutar</button>
+      <input id="search" class="search" placeholder="${L('webview.queryResult.searchPlaceholder', 'Buscar nos resultados')}" />
+      <button id="reset">${L('webview.queryResult.resetLayout', 'Resetar layout')}</button>
+      <button id="refresh" class="primary">${L('webview.queryResult.rerun', 'Reexecutar')}</button>
     </div>
     <div id="notify" class="notify"></div>
     <div class="meta">
@@ -384,7 +397,7 @@ export class QueryResultPanelManager {
       <span id="sql" class="sql-preview"></span>
     </div>
     <div id="gridWrap" class="grid-wrap">
-      <div id="empty" class="empty">Execute uma consulta para ver resultados.</div>
+      <div id="empty" class="empty">${L('webview.queryResult.empty', 'Execute uma consulta para ver resultados.')}</div>
       <table id="grid" style="display:none"></table>
     </div>
   </div>

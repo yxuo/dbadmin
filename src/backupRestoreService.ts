@@ -1,5 +1,6 @@
 import * as fs from "fs/promises";
 import { Client } from "pg";
+import { t } from "./i18n";
 import { PostgresConnection } from "./models";
 import {
   BackupOptions as PgAdminBackupOptions,
@@ -180,7 +181,7 @@ async function runDbAdminRestore(
 
   const script = await fs.readFile(options.filename, "utf8");
   if (!script.trim()) {
-    throw new Error("Arquivo SQL vazio.");
+    throw new Error(t("Empty SQL file."));
   }
 
   const statements = splitSqlStatements(script);
@@ -250,7 +251,7 @@ async function runDbAdminRestore(
 
     await client.query("COMMIT");
 
-    onLine("[DbAdmin] Restore SQL concluído.");
+    onLine(t("[DbAdmin] SQL restore completed."));
   } catch (error) {
     const aborted = isAbortError(error) || signal?.aborted;
 
@@ -263,7 +264,7 @@ async function runDbAdminRestore(
     }
 
     if (aborted) {
-      onLine("[DbAdmin] Restore abortado pelo usuário.");
+      onLine(t("[DbAdmin] Restore aborted by user."));
       throw createAbortError();
     }
 
@@ -398,7 +399,7 @@ function normalizeExecutableSql(sql: string): string {
 
 function createAbortError(): Error {
   const error = new Error(
-    "Restauração abortada pelo usuário. Rollback aplicado.",
+    t("Restore aborted by user. Rollback applied."),
   );
   error.name = "AbortError";
   return error;

@@ -1,4 +1,6 @@
 import * as vscode from "vscode";
+import { formatErrorForUi, getBcp47Locale, t } from "./i18n";
+import { loadLocaleDict, webviewI18nBootstrap } from "./i18n/webviewLocale";
 import { Client } from "pg";
 import {
   ConnectionActivityLog,
@@ -171,7 +173,7 @@ export class ConnectionManagerPanelManager {
       connection.nickname?.trim() ||
       connection.database ||
       connection.host ||
-      "Conexão";
+      t("Connection");
 
     const panel = vscode.window.createWebviewPanel(
       "dbadmin.connectionManager",
@@ -186,6 +188,7 @@ export class ConnectionManagerPanelManager {
     panel.webview.html = buildManagerHtml(
       panel.webview,
       this.context.extensionUri,
+      this.context.extensionPath,
       connection,
       initialPollSeconds,
       initialWindowMinutes,
@@ -450,12 +453,13 @@ export class ConnectionManagerPanelManager {
         if (!Number.isFinite(pid) || pid <= 0) {
           return;
         }
+        const terminateLabel = t("Terminate");
         const confirm = await vscode.window.showWarningMessage(
-          `Encerrar o backend PID ${pid}?`,
+          t("Terminate backend PID {0}?", pid),
           { modal: true },
-          "Encerrar",
+          terminateLabel,
         );
-        if (confirm !== "Encerrar") {
+        if (confirm !== terminateLabel) {
           return;
         }
         try {
@@ -467,14 +471,12 @@ export class ConnectionManagerPanelManager {
           );
           if (!ok) {
             vscode.window.showWarningMessage(
-              `Não foi possível encerrar o PID ${pid}.`,
+              t("Could not terminate PID {0}.", pid),
             );
           }
           await pushProcesses();
         } catch (error) {
-          vscode.window.showErrorMessage(
-            error instanceof Error ? error.message : String(error),
-          );
+          vscode.window.showErrorMessage(formatErrorForUi(error));
         }
       }
     });
@@ -525,6 +527,7 @@ function formatClock(ms: number): string {
 function buildManagerHtml(
   webview: vscode.Webview,
   extensionUri: vscode.Uri,
+  extensionPath: string,
   connection: PostgresConnection,
   pollSeconds: number,
   timeWindowMinutes: number,
@@ -546,14 +549,20 @@ function buildManagerHtml(
   const label =
     connection.nickname?.trim() ||
     `${connection.host}:${connection.port}/${connection.database}`;
+  const i18n = loadLocaleDict(extensionPath);
+  const i18nScript = webviewI18nBootstrap(extensionPath);
+  const i18nLang = getBcp47Locale();
+  const L = (key: string, fallback: string) =>
+    escapeHtml(i18n[key] || fallback);
 
   return `<!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="${i18nLang}">
 <head>
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="${csp}" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link href="${codiconsCssUri}" rel="stylesheet" />
+  <script nonce="${nonce}">${i18nScript}</script>
   <style>
     html, body { height: 100%; margin: 0; }
     :root { --dbadmin-input-focus: #007acc; accent-color: var(--dbadmin-input-focus); }
@@ -941,31 +950,31 @@ function buildManagerHtml(
   <div class="main">
     <div class="toolbar">
       <div class="section-select-wrap" id="sectionSelectWrap">
-        <button type="button" class="section-trigger" id="sectionTrigger" aria-haspopup="listbox" aria-expanded="false" aria-label="Seção">
+        <button type="button" class="section-trigger" id="sectionTrigger" aria-haspopup="listbox" aria-expanded="false" aria-label="${L('webview.manager.section', 'Seção')}">
           <span class="section-item-icon section-trigger-icon" id="sectionTriggerIcon" aria-hidden="true"><i class="codicon codicon-pulse"></i></span>
-          <span class="section-trigger-label" id="sectionTriggerLabel">Painel</span>
+          <span class="section-trigger-label" id="sectionTriggerLabel">${L('webview.manager.dashboard', 'Painel')}</span>
           <span class="section-trigger-chevron" aria-hidden="true"></span>
         </button>
-        <ul class="section-menu" id="sectionMenu" role="listbox" aria-label="Seções">
-          <li role="none"><button type="button" role="option" data-section="dashboard" class="active"><span class="section-item-icon"><i class="codicon codicon-pulse" aria-hidden="true"></i></span><span class="section-item-label">Painel</span></button></li>
-          <li role="none"><button type="button" role="option" data-section="log"><span class="section-item-icon"><i class="codicon codicon-output" aria-hidden="true"></i></span><span class="section-item-label">Log</span></button></li>
-          <li role="none"><button type="button" role="option" data-section="processes"><span class="section-item-icon"><i class="codicon codicon-list-flat" aria-hidden="true"></i></span><span class="section-item-label">Processos</span></button></li>
+        <ul class="section-menu" id="sectionMenu" role="listbox" aria-label="${L('webview.manager.sections', 'Seções')}">
+          <li role="none"><button type="button" role="option" data-section="dashboard" class="active"><span class="section-item-icon"><i class="codicon codicon-pulse" aria-hidden="true"></i></span><span class="section-item-label">${L('webview.manager.dashboard', 'Painel')}</span></button></li>
+          <li role="none"><button type="button" role="option" data-section="log"><span class="section-item-icon"><i class="codicon codicon-output" aria-hidden="true"></i></span><span class="section-item-label">${L('webview.manager.log', 'Log')}</span></button></li>
+          <li role="none"><button type="button" role="option" data-section="processes"><span class="section-item-icon"><i class="codicon codicon-list-flat" aria-hidden="true"></i></span><span class="section-item-label">${L('webview.manager.processes', 'Processos')}</span></button></li>
         </ul>
       </div>
       <span class="conn-label" id="connLabel" title="${escapeHtml(label)}"><span class="section-item-icon" aria-hidden="true"><i class="codicon codicon-plug"></i></span><span class="conn-label-text">${escapeHtml(label)}</span></span>
       <span class="spacer"></span>
       <div id="dashboardToolbarFields">
-        <label class="field-wrap input-suffix-wrap" title="Intervalo dos gráficos em minutos. 0 = sem limite.">
-          <span>Intervalo</span>
+        <label class="field-wrap input-suffix-wrap" title="${L('webview.manager.intervalTitle', 'Intervalo dos gráficos em minutos. 0 = sem limite.')}">
+          <span>${L('webview.manager.interval', 'Intervalo')}</span>
           <span class="input-suffix-field">
-            <input id="timeWindowInput" type="number" min="0" max="1440" step="1" value="${safeWindowMinutes}" aria-label="Intervalo em minutos" />
+            <input id="timeWindowInput" type="number" min="0" max="1440" step="1" value="${safeWindowMinutes}" aria-label="${L('webview.manager.intervalAria', 'Intervalo em minutos')}" />
             <span class="input-suffix">min</span>
           </span>
         </label>
-        <label class="field-wrap input-suffix-wrap" title="Intervalo de atualização automática (1–60 segundos)">
-          <span>Atualizar</span>
+        <label class="field-wrap input-suffix-wrap" title="${L('webview.manager.refreshTitle', 'Intervalo de atualização automática (1–60 segundos)')}">
+          <span>${L('webview.manager.refresh', 'Atualizar')}</span>
           <span class="input-suffix-field">
-            <input id="pollIntervalInput" type="number" min="1" max="60" step="1" value="${safePollSeconds}" aria-label="Atualizar a cada segundos" />
+            <input id="pollIntervalInput" type="number" min="1" max="60" step="1" value="${safePollSeconds}" aria-label="${L('webview.manager.refreshAria', 'Atualizar a cada segundos')}" />
             <span class="input-suffix">s</span>
           </span>
         </label>
@@ -1002,9 +1011,9 @@ function buildManagerHtml(
     let windowDebounceTimer = 0;
 
     const SECTION_LABELS = {
-      dashboard: 'Painel',
-      log: 'Log',
-      processes: 'Processos',
+      dashboard: t('webview.manager.dashboard', 'Painel'),
+      log: t('webview.manager.log', 'Log'),
+      processes: t('webview.manager.processes', 'Processos'),
     };
     const SECTION_ICONS = {
       dashboard: 'codicon-pulse',
@@ -1263,7 +1272,7 @@ function buildManagerHtml(
     function setSection(next) {
       section = next === 'log' || next === 'processes' ? next : 'dashboard';
       if (sectionTriggerLabel) {
-        sectionTriggerLabel.textContent = SECTION_LABELS[section] || 'Painel';
+        sectionTriggerLabel.textContent = SECTION_LABELS[section] || t('webview.manager.dashboard', 'Painel');
       }
       setSectionTriggerIcon(section);
       sectionMenu?.querySelectorAll('button[data-section]').forEach((btn) => {
@@ -1313,7 +1322,7 @@ function buildManagerHtml(
       logView.innerHTML = '';
       const list = Array.isArray(entries) ? entries : [];
       if (list.length === 0) {
-        logView.innerHTML = '<div class="muted">Nenhuma atividade registrada ainda.</div>';
+        logView.innerHTML = '<div class="muted">' + escapeHtml(t('webview.manager.noActivity', 'Nenhuma atividade registrada ainda.')) + '</div>';
         return;
       }
       list.forEach((entry) => {
@@ -1338,10 +1347,10 @@ function buildManagerHtml(
 
     function toggleHtml(value) {
       if (value === true) {
-        return '<span class="toggle on">LIGADO</span>';
+        return '<span class="toggle on">' + escapeHtml(t('webview.manager.on', 'LIGADO')) + '</span>';
       }
       if (value === false) {
-        return '<span class="toggle off">DESLIGADO</span>';
+        return '<span class="toggle off">' + escapeHtml(t('webview.manager.off', 'DESLIGADO')) + '</span>';
       }
       return '<span class="v">—</span>';
     }
@@ -1374,27 +1383,27 @@ function buildManagerHtml(
       dashboardView.innerHTML =
         '<div class="dash-grid">' +
           '<div class="card">' +
-            '<h2><i class="codicon codicon-server" aria-hidden="true"></i>Informações do servidor</h2>' +
+            '<h2><i class="codicon codicon-server" aria-hidden="true"></i>' + escapeHtml(t('webview.manager.serverInfo', 'Informações do servidor')) + '</h2>' +
             '<div class="info-rows">' +
-              infoRow('Porta', valueText('—'), 'infoPort') +
-              infoRow('Versão', valueText('—'), 'infoVersion') +
-              infoRow('Log de consultas lentas', toggleHtml(null), 'infoSlow') +
-              infoRow('Rastreamento de atividade', toggleHtml(null), 'infoTrack') +
-              infoRow('Arquivo de configuração', valueText('—'), 'infoConfig') +
-              infoRow('Diretório de dados', valueText('—'), 'infoDataDir') +
+              infoRow(t('webview.manager.port', 'Porta'), valueText('—'), 'infoPort') +
+              infoRow(t('webview.manager.version', 'Versão'), valueText('—'), 'infoVersion') +
+              infoRow(t('webview.manager.slowQueryLog', 'Log de consultas lentas'), toggleHtml(null), 'infoSlow') +
+              infoRow(t('webview.manager.activityTracking', 'Rastreamento de atividade'), toggleHtml(null), 'infoTrack') +
+              infoRow(t('webview.manager.configFile', 'Arquivo de configuração'), valueText('—'), 'infoConfig') +
+              infoRow(t('webview.manager.dataDir', 'Diretório de dados'), valueText('—'), 'infoDataDir') +
             '</div>' +
           '</div>' +
           '<div class="card">' +
-            '<h2><i class="codicon codicon-zap" aria-hidden="true"></i>Tráfego</h2>' +
+            '<h2><i class="codicon codicon-zap" aria-hidden="true"></i>' + escapeHtml(t('webview.manager.traffic', 'Tráfego')) + '</h2>' +
             '<div class="legend">' +
-              legendItem(COLORS.read, 'leitura') +
-              legendItem(COLORS.hit, 'acerto') +
+              legendItem(COLORS.read, t('webview.manager.read', 'leitura')) +
+              legendItem(COLORS.hit, t('webview.manager.hit', 'acerto')) +
             '</div>' +
             '<div class="chart-wrap" id="trafficChart"></div>' +
           '</div>' +
         '</div>' +
         '<div class="card dash-queries">' +
-          '<h2><i class="codicon codicon-graph" aria-hidden="true"></i>Consultas</h2>' +
+          '<h2><i class="codicon codicon-graph" aria-hidden="true"></i>' + escapeHtml(t('webview.manager.queries', 'Consultas')) + '</h2>' +
           '<div class="legend">' +
             legendItem(COLORS.insert, 'insert') +
             legendItem(COLORS.update, 'update') +
@@ -1406,28 +1415,28 @@ function buildManagerHtml(
         '</div>' +
         '<div class="dash-charts-2">' +
           chartCard(
-            'Sessões do servidor',
+            t('webview.manager.sessions', 'Sessões do servidor'),
             'person',
             '<div class="legend">' +
-              legendItem(COLORS.hit, 'total') +
-              legendItem(COLORS.update, 'ativas') +
-              legendItem(COLORS.read, 'ociosas') +
+              legendItem(COLORS.hit, t('webview.manager.total', 'total')) +
+              legendItem(COLORS.update, t('webview.manager.active', 'ativas')) +
+              legendItem(COLORS.read, t('webview.manager.idle', 'ociosas')) +
             '</div>',
             'sessionsChart',
           ) +
           chartCard(
-            'Transações por intervalo',
+            t('webview.manager.transactions', 'Transações por intervalo'),
             'sync',
             '<div class="legend">' +
-              legendItem(COLORS.update, 'commits') +
-              legendItem(COLORS.read, 'rollbacks') +
+              legendItem(COLORS.update, t('webview.manager.commits', 'commits')) +
+              legendItem(COLORS.read, t('webview.manager.rollbacks', 'rollbacks')) +
             '</div>',
             'transactionsChart',
           ) +
         '</div>' +
         '<div class="dash-charts-2">' +
           chartCard(
-            'Tuplas (entrada)',
+            t('webview.manager.tuplesIn', 'Tuplas (entrada)'),
             'arrow-down',
             '<div class="legend">' +
               legendItem(COLORS.insert, 'inserts') +
@@ -1437,7 +1446,7 @@ function buildManagerHtml(
             'tuplesInChart',
           ) +
           chartCard(
-            'Tuplas (saída)',
+            t('webview.manager.tuplesOut', 'Tuplas (saída)'),
             'arrow-up',
             '<div class="legend">' +
               legendItem(COLORS.hit, 'fetched') +
@@ -1777,7 +1786,7 @@ function buildManagerHtml(
 
     function renderDashboard(dashboard) {
       if (!dashboard || !dashboard.server) {
-        dashboardView.innerHTML = '<div class="muted">Carregando…</div>';
+        dashboardView.innerHTML = '<div class="muted">' + escapeHtml(t('webview.manager.loading', 'Carregando…')) + '</div>';
         dashboardBuilt = false;
         return;
       }
@@ -1993,10 +2002,10 @@ function buildManagerHtml(
     function renderProcesses(processes) {
       const list = Array.isArray(processes) ? processes : [];
       if (list.length === 0) {
-        processesView.innerHTML = '<div class="muted">Nenhum processo encontrado.</div>';
+        processesView.innerHTML = '<div class="muted">' + escapeHtml(t('webview.manager.noProcesses', 'Nenhum processo encontrado.')) + '</div>';
         return;
       }
-      let html = '<table><thead><tr><th>PID</th><th>Usuário</th><th>Banco</th><th>App</th><th>Estado</th><th>Query</th><th></th></tr></thead><tbody>';
+      let html = '<table><thead><tr><th>' + escapeHtml(t('webview.manager.pid', 'PID')) + '</th><th>' + escapeHtml(t('webview.manager.user', 'Usuário')) + '</th><th>' + escapeHtml(t('webview.manager.database', 'Banco')) + '</th><th>' + escapeHtml(t('webview.manager.app', 'App')) + '</th><th>' + escapeHtml(t('webview.manager.state', 'Estado')) + '</th><th>' + escapeHtml(t('webview.manager.query', 'Query')) + '</th><th></th></tr></thead><tbody>';
       list.forEach((p) => {
         html += '<tr>' +
           '<td>' + escapeHtml(String(p.pid)) + '</td>' +
@@ -2005,7 +2014,7 @@ function buildManagerHtml(
           '<td>' + escapeHtml(String(p.applicationName || '')) + '</td>' +
           '<td>' + escapeHtml(String(p.state || '')) + '</td>' +
           '<td class="query" title="' + escapeAttr(String(p.query || '')) + '">' + escapeHtml(String(p.query || '')) + '</td>' +
-          '<td><button type="button" class="kill" data-pid="' + escapeAttr(String(p.pid)) + '">Encerrar</button></td>' +
+          '<td><button type="button" class="kill" data-pid="' + escapeAttr(String(p.pid)) + '">' + escapeHtml(t('webview.manager.terminate', 'Encerrar')) + '</button></td>' +
           '</tr>';
       });
       html += '</tbody></table>';

@@ -2,6 +2,8 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { getBcp47Locale } from './i18n';
+import { loadLocaleDict, webviewI18nBootstrap } from './i18n/webviewLocale';
 import { SchemaNodeRef } from './models';
 import { BackupOptions, listRoles, runBackup } from './backupRestoreService';
 
@@ -33,7 +35,7 @@ export class BackupPanelManager {
     logBackupPanelLifecycle('show() — abrir ou focar painel de backup', key, node);
     const existing = this.panels.get(key);
     if (existing) {
-      existing.webview.html = buildBackupHtml(existing.webview, node);
+      existing.webview.html = buildBackupHtml(existing.webview, node, this.context.extensionPath);
       logBackupPanelLifecycle('HTML da webview atualizado (painel já existia)', key, node);
       existing.reveal(vscode.ViewColumn.Active, false);
       return;
@@ -47,7 +49,7 @@ export class BackupPanelManager {
     );
 
     panel.iconPath = new vscode.ThemeIcon('cloud-download');
-    panel.webview.html = buildBackupHtml(panel.webview, node);
+    panel.webview.html = buildBackupHtml(panel.webview, node, this.context.extensionPath);
     logBackupPanelLifecycle('Painel novo criado + HTML definido', key, node);
     this.panels.set(key, panel);
 
@@ -127,19 +129,25 @@ function safeInlineJson(value: unknown): string {
   return JSON.stringify(value).replace(/</g, '\\u003c');
 }
 
-function buildBackupHtml(webview: vscode.Webview, node: SchemaNodeRef): string {
+function buildBackupHtml(webview: vscode.Webview, node: SchemaNodeRef, extensionPath: string): string {
   const nonce = String(Date.now());
   const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';`;
   const title = `${node.schemaName} @ ${node.databaseName}`;
   const dbSuggestion = suggestDumpPath('sql');
   const pgSuggestion = suggestDumpPath('backup');
+  const i18n = loadLocaleDict(extensionPath);
+  const i18nScript = webviewI18nBootstrap(extensionPath);
+  const i18nLang = getBcp47Locale();
+  const L = (key: string, fallback: string) =>
+    escapeHtml(i18n[key] || fallback);
 
   return `<!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="${i18nLang}">
 <head>
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="${csp}" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script nonce="${nonce}">${i18nScript}</script>
   <style>
     *, *::before, *::after { box-sizing: border-box; }
     html, body { height: 100%; margin: 0; }
@@ -284,7 +292,7 @@ function buildBackupHtml(webview: vscode.Webview, node: SchemaNodeRef): string {
 </head>
 <body>
   <div class="header" id="backup-header">
-    <h2>Backup &mdash; ${escapeHtml(title)}</h2>
+    <h2>${L('webview.backup.title', 'Backup')} &mdash; ${escapeHtml(title)}</h2>
     <div class="provider-tabs" role="tablist">
       <button type="button" class="tab provider-tab active" data-provider="tab1" role="tab" aria-selected="true">DbAdmin</button>
       <button type="button" class="tab provider-tab" data-provider="tab2" role="tab" aria-selected="false">PgAdmin</button>
@@ -295,48 +303,48 @@ function buildBackupHtml(webview: vscode.Webview, node: SchemaNodeRef): string {
     <div class="provider-pane active" id="provider-tab1">
       <div class="field row">
         <div>
-          <label for="dbFilename">Arquivo SQL de destino</label>
-          <input id="dbFilename" type="text" placeholder="Caminho do arquivo .sql..." />
+          <label for="dbFilename">${L('webview.backup.sqlDest', 'Arquivo SQL de destino')}</label>
+          <input id="dbFilename" type="text" placeholder="${L('webview.backup.sqlPlaceholder', 'Caminho do arquivo .sql...')}" />
         </div>
-        <button id="dbBrowseBtn" class="secondary" type="button" style="white-space:nowrap;flex-shrink:0;">Procurar</button>
+        <button id="dbBrowseBtn" class="secondary" type="button" style="white-space:nowrap;flex-shrink:0;">${L('webview.common.browse', 'Procurar')}</button>
       </div>
-      <div class="check-row"><input type="checkbox" id="dbIncludeData" checked /><label for="dbIncludeData">Incluir dados no dump</label></div>
+      <div class="check-row"><input type="checkbox" id="dbIncludeData" checked /><label for="dbIncludeData">${L('webview.backup.includeData', 'Incluir dados no dump')}</label></div>
       <div class="field">
-        <label for="dbRoleName">Role (opcional)</label>
+        <label for="dbRoleName">${L('webview.backup.role', 'Role (opcional)')}</label>
         <select id="dbRoleName">
-          <option value="">(Padrão)</option>
+          <option value="">${L('webview.common.default', '(Padrão)')}</option>
         </select>
       </div>
-      <div class="check-row"><input type="checkbox" id="dbVerbose" /><label for="dbVerbose">Verbose</label></div>
+      <div class="check-row"><input type="checkbox" id="dbVerbose" /><label for="dbVerbose">${L('webview.backup.verbose', 'Verbose')}</label></div>
       <div class="field" style="margin-top:12px;">
-        <label for="dbLockWaitTimeout">Lock wait timeout (ms, 0 = sem limite)</label>
+        <label for="dbLockWaitTimeout">${L('webview.backup.lockWait', 'Lock wait timeout (ms, 0 = sem limite)')}</label>
         <input id="dbLockWaitTimeout" type="number" value="0" min="0" style="width:120px;" />
       </div>
       <div class="field">
-        <label for="dbExcludeTables">Ignorar dados das tabelas (opcional)</label>
-        <textarea id="dbExcludeTables" rows="4" placeholder="Um nome por linha ou separados por vírgula&#10;Ex.: django_migrations&#10;tmp_financials"></textarea>
+        <label for="dbExcludeTables">${L('webview.backup.excludeTables', 'Ignorar dados das tabelas (opcional)')}</label>
+        <textarea id="dbExcludeTables" rows="4" placeholder="${L('webview.backup.excludeTablesPlaceholder', 'Um nome por linha ou separados por vírgula').replace(/\n/g, '&#10;')}"></textarea>
       </div>
-      <div class="status">O schema e o DDL das tabelas continuam no arquivo; só as linhas (INSERT) e setval das sequences ligadas são omitidos.</div>
+      <div class="status">${L('webview.backup.excludeTablesNote', 'O schema e o DDL das tabelas continuam no arquivo; só as linhas (INSERT) e setval das sequences ligadas são omitidos.')}</div>
     </div>
     <div class="provider-pane" id="provider-tab2">
       <div id="pgadmin-tabs-root">
         <div class="tabs" role="tablist">
-          <button type="button" class="tab pg-tab active" data-tab="geral" role="tab" aria-selected="true">Geral</button>
-          <button type="button" class="tab pg-tab" data-tab="dados" role="tab" aria-selected="false">Dados</button>
-          <button type="button" class="tab pg-tab" data-tab="query" role="tab" aria-selected="false">Query</button>
-          <button type="button" class="tab pg-tab" data-tab="opcoes" role="tab" aria-selected="false">Op&ccedil;&otilde;es</button>
+          <button type="button" class="tab pg-tab active" data-tab="geral" role="tab" aria-selected="true">${L('webview.common.general', 'Geral')}</button>
+          <button type="button" class="tab pg-tab" data-tab="dados" role="tab" aria-selected="false">${L('webview.common.data', 'Dados')}</button>
+          <button type="button" class="tab pg-tab" data-tab="query" role="tab" aria-selected="false">${L('webview.common.query', 'Query')}</button>
+          <button type="button" class="tab pg-tab" data-tab="opcoes" role="tab" aria-selected="false">${L('webview.common.options', 'Opções')}</button>
         </div>
 
         <div class="tab-pane active" id="pane-geral">
           <div class="field row">
             <div>
-              <label for="filename">Arquivo de destino</label>
-              <input id="filename" type="text" placeholder="Caminho do arquivo de saída..." />
+              <label for="filename">${L('webview.backup.destFile', 'Arquivo de destino')}</label>
+              <input id="filename" type="text" placeholder="${L('webview.backup.destPlaceholder', 'Caminho do arquivo de saída...')}" />
             </div>
-            <button id="browseBtn" class="secondary" type="button" style="white-space:nowrap;flex-shrink:0;">Procurar</button>
+            <button id="browseBtn" class="secondary" type="button" style="white-space:nowrap;flex-shrink:0;">${L('webview.common.browse', 'Procurar')}</button>
           </div>
           <div class="field">
-            <label for="format">Formato</label>
+            <label for="format">${L('webview.backup.format', 'Formato')}</label>
             <select id="format">
               <option value="custom" selected>Custom</option>
               <option value="tar">Tar</option>
@@ -345,43 +353,43 @@ function buildBackupHtml(webview: vscode.Webview, node: SchemaNodeRef): string {
             </select>
           </div>
           <div class="field">
-            <label for="jobs">N&uacute;mero de jobs paralelos (formato Directory)</label>
+            <label for="jobs">${L('webview.backup.jobs', 'Número de jobs paralelos (formato Directory)')}</label>
             <input id="jobs" type="number" value="1" min="1" max="64" style="width:100px;" />
           </div>
           <div class="field">
-            <label for="roleName">Role (opcional)</label>
+            <label for="roleName">${L('webview.backup.role', 'Role (opcional)')}</label>
             <select id="roleName">
-              <option value="">(Padrão)</option>
+              <option value="">${L('webview.common.default', '(Padrão)')}</option>
             </select>
           </div>
         </div>
 
         <div class="tab-pane" id="pane-dados">
-          <div class="section-title">Seções</div>
+          <div class="section-title">${L('webview.backup.sections', 'Seções')}</div>
           <div class="check-row"><input type="checkbox" id="secPreData" checked /><label for="secPreData">Pre-data</label></div>
           <div class="check-row"><input type="checkbox" id="secData" checked /><label for="secData">Data</label></div>
           <div class="check-row"><input type="checkbox" id="secPostData" checked /><label for="secPostData">Post-data</label></div>
 
-          <div class="section-title">Tipo de objeto</div>
-          <div class="check-row"><input type="checkbox" id="onlyData" /><label for="onlyData">Somente dados</label></div>
-          <div class="check-row"><input type="checkbox" id="onlySchema" /><label for="onlySchema">Somente sch&eacute;ma</label></div>
+          <div class="section-title">${L('webview.backup.objectType', 'Tipo de objeto')}</div>
+          <div class="check-row"><input type="checkbox" id="onlyData" /><label for="onlyData">${L('webview.backup.onlyData', 'Somente dados')}</label></div>
+          <div class="check-row"><input type="checkbox" id="onlySchema" /><label for="onlySchema">${L('webview.backup.onlySchema', 'Somente schéma')}</label></div>
         </div>
 
         <div class="tab-pane" id="pane-query">
-          <div class="section-title">Opções de INSERT</div>
-          <div class="check-row"><input type="checkbox" id="useInserts" /><label for="useInserts">Usar INSERT em vez de COPY</label></div>
-          <div class="check-row"><input type="checkbox" id="columnInserts" /><label for="columnInserts">Listar colunas nos INSERTs</label></div>
+          <div class="section-title">${L('webview.backup.insertOptions', 'Opções de INSERT')}</div>
+          <div class="check-row"><input type="checkbox" id="useInserts" /><label for="useInserts">${L('webview.backup.useInserts', 'Usar INSERT em vez de COPY')}</label></div>
+          <div class="check-row"><input type="checkbox" id="columnInserts" /><label for="columnInserts">${L('webview.backup.columnInserts', 'Listar colunas nos INSERTs')}</label></div>
 
-          <div class="section-title">Outros</div>
-          <div class="check-row"><input type="checkbox" id="disableDollarQuoting" /><label for="disableDollarQuoting">Desabilitar dollar-quoting</label></div>
-          <div class="check-row"><input type="checkbox" id="disableTriggers" /><label for="disableTriggers">Desabilitar triggers</label></div>
+          <div class="section-title">${L('webview.common.other', 'Outros')}</div>
+          <div class="check-row"><input type="checkbox" id="disableDollarQuoting" /><label for="disableDollarQuoting">${L('webview.backup.disableDollar', 'Desabilitar dollar-quoting')}</label></div>
+          <div class="check-row"><input type="checkbox" id="disableTriggers" /><label for="disableTriggers">${L('webview.backup.disableTriggers', 'Desabilitar triggers')}</label></div>
         </div>
 
         <div class="tab-pane" id="pane-opcoes">
-          <div class="check-row"><input type="checkbox" id="verbose" /><label for="verbose">Verbose</label></div>
+          <div class="check-row"><input type="checkbox" id="verbose" /><label for="verbose">${L('webview.backup.verbose', 'Verbose')}</label></div>
           <div class="check-row"><input type="checkbox" id="serializableDeferrable" /><label for="serializableDeferrable">Serializable deferrable</label></div>
           <div class="field" style="margin-top:12px;">
-            <label for="lockWaitTimeout">Lock wait timeout (ms, 0 = sem limite)</label>
+            <label for="lockWaitTimeout">${L('webview.backup.lockWait', 'Lock wait timeout (ms, 0 = sem limite)')}</label>
             <input id="lockWaitTimeout" type="number" value="0" min="0" style="width:120px;" />
           </div>
         </div>
@@ -392,8 +400,8 @@ function buildBackupHtml(webview: vscode.Webview, node: SchemaNodeRef): string {
 
   <div class="footer">
     <span id="statusMsg" class="status"></span>
-    <button id="cancelBtn" class="secondary" type="button">Fechar</button>
-    <button id="executeBtn" type="button">Executar</button>
+    <button id="cancelBtn" class="secondary" type="button">${L('webview.common.close', 'Fechar')}</button>
+    <button id="executeBtn" type="button">${L('webview.common.execute', 'Executar')}</button>
   </div>
 
   <script nonce="${nonce}">

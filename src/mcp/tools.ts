@@ -1,19 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { ConnectionStore } from "../connectionStore";
+import { formatMcpError, mcpT } from "../i18n/mcpLocale";
 import { PostgresConnection } from "../models";
 import { PostgresService, SqlQueryResult } from "../postgresService";
 import { McpRuntimeConfig } from "./config";
 import { assertSqlAllowed, truncateRows } from "./safety";
-
-const connectionRefShape = {
-  connectionId: z.string().optional().describe("Id da conexao salva no DBAdmin"),
-  nickname: z.string().optional().describe("Apelido da conexao salva no DBAdmin"),
-};
-
-const databaseShape = {
-  database: z.string().optional().describe("Banco alvo. Se omitido, usa o database padrao da conexao"),
-};
 
 function jsonSafe(value: unknown): string {
   return JSON.stringify(
@@ -38,9 +30,8 @@ function textResult(value: unknown) {
 }
 
 function errorResult(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error || "Erro desconhecido");
   return {
-    content: [{ type: "text" as const, text: message }],
+    content: [{ type: "text" as const, text: formatMcpError(error) }],
     isError: true as const,
   };
 }
@@ -69,7 +60,7 @@ async function resolveConnection(
   if (connectionId) {
     const found = connections.find((connection) => connection.id === connectionId);
     if (!found) {
-      throw new Error("Conexao nao encontrada.");
+      throw new Error(mcpT("mcp.error.connectionNotFound"));
     }
     return found;
   }
@@ -79,10 +70,10 @@ async function resolveConnection(
       (connection) => connection.nickname.trim().toLowerCase() === nickname,
     );
     if (matches.length === 0) {
-      throw new Error("Conexao nao encontrada.");
+      throw new Error(mcpT("mcp.error.connectionNotFound"));
     }
     if (matches.length > 1) {
-      throw new Error("Ha varias conexoes com esse apelido. Use connectionId.");
+      throw new Error(mcpT("mcp.error.multipleNicknames"));
     }
     return matches[0];
   }
@@ -91,13 +82,13 @@ async function resolveConnection(
     return connections[0];
   }
 
-  throw new Error("Informe connectionId ou nickname.");
+  throw new Error(mcpT("mcp.error.needConnectionRef"));
 }
 
 function resolveDatabase(connection: PostgresConnection, database?: string): string {
   const name = String(database || "").trim() || connection.database;
   if (!name) {
-    throw new Error("Database e obrigatorio.");
+    throw new Error(mcpT("mcp.error.databaseRequired"));
   }
   return name;
 }
@@ -133,6 +124,15 @@ export function registerDbAdminTools(
   postgres: PostgresService,
   config: McpRuntimeConfig,
 ): void {
+  const connectionRefShape = {
+    connectionId: z.string().optional().describe(mcpT("mcp.param.connectionId")),
+    nickname: z.string().optional().describe(mcpT("mcp.param.nickname")),
+  };
+
+  const databaseShape = {
+    database: z.string().optional().describe(mcpT("mcp.param.database")),
+  };
+
   const readOnlyAnnotations = {
     readOnlyHint: true,
     destructiveHint: false,
@@ -147,9 +147,8 @@ export function registerDbAdminTools(
   server.registerTool(
     "list_connections",
     {
-      title: "Listar conexoes",
-      description:
-        "Lista as conexoes PostgreSQL salvas no DBAdmin (sem senha). Use o id ou o nickname nas demais tools.",
+      title: mcpT("mcp.tools.list_connections.title"),
+      description: mcpT("mcp.tools.list_connections.description"),
       annotations: readOnlyAnnotations,
     },
     async () => {
@@ -165,8 +164,8 @@ export function registerDbAdminTools(
   server.registerTool(
     "list_databases",
     {
-      title: "Listar databases",
-      description: "Lista os databases visiveis na conexao PostgreSQL escolhida.",
+      title: mcpT("mcp.tools.list_databases.title"),
+      description: mcpT("mcp.tools.list_databases.description"),
       inputSchema: connectionRefShape,
       annotations: readOnlyAnnotations,
     },
@@ -187,8 +186,8 @@ export function registerDbAdminTools(
   server.registerTool(
     "list_schemas",
     {
-      title: "Listar schemas",
-      description: "Lista os schemas de um database (exceto pg_catalog e information_schema).",
+      title: mcpT("mcp.tools.list_schemas.title"),
+      description: mcpT("mcp.tools.list_schemas.description"),
       inputSchema: {
         ...connectionRefShape,
         ...databaseShape,
@@ -214,12 +213,12 @@ export function registerDbAdminTools(
   server.registerTool(
     "list_tables",
     {
-      title: "Listar tabelas",
-      description: "Lista as tabelas de um schema.",
+      title: mcpT("mcp.tools.list_tables.title"),
+      description: mcpT("mcp.tools.list_tables.description"),
       inputSchema: {
         ...connectionRefShape,
         ...databaseShape,
-        schema: z.string().describe("Nome do schema"),
+        schema: z.string().describe(mcpT("mcp.param.schema")),
       },
       annotations: readOnlyAnnotations,
     },
@@ -229,7 +228,7 @@ export function registerDbAdminTools(
         const database = resolveDatabase(connection, input.database);
         const schema = String(input.schema || "").trim();
         if (!schema) {
-          throw new Error("Schema e obrigatorio.");
+          throw new Error(mcpT("mcp.error.schemaRequired"));
         }
         const tables = await postgres.listTables(connection, database, schema);
         return textResult({
@@ -247,13 +246,13 @@ export function registerDbAdminTools(
   server.registerTool(
     "describe_table",
     {
-      title: "Descrever tabela",
-      description: "Retorna colunas (PK/UK/FK) e constraints de uma tabela.",
+      title: mcpT("mcp.tools.describe_table.title"),
+      description: mcpT("mcp.tools.describe_table.description"),
       inputSchema: {
         ...connectionRefShape,
         ...databaseShape,
-        schema: z.string().describe("Nome do schema"),
-        table: z.string().describe("Nome da tabela"),
+        schema: z.string().describe(mcpT("mcp.param.schema")),
+        table: z.string().describe(mcpT("mcp.param.table")),
       },
       annotations: readOnlyAnnotations,
     },
@@ -264,10 +263,10 @@ export function registerDbAdminTools(
         const schema = String(input.schema || "").trim();
         const table = String(input.table || "").trim();
         if (!schema) {
-          throw new Error("Schema e obrigatorio.");
+          throw new Error(mcpT("mcp.error.schemaRequired"));
         }
         if (!table) {
-          throw new Error("Tabela e obrigatoria.");
+          throw new Error(mcpT("mcp.error.tableRequired"));
         }
         const [columns, constraints] = await Promise.all([
           postgres.getTableColumns(connection, database, schema, table),
@@ -290,14 +289,14 @@ export function registerDbAdminTools(
   server.registerTool(
     "query",
     {
-      title: "Executar SQL",
+      title: mcpT("mcp.tools.query.title"),
       description: config.allowWrites
-        ? "Executa SQL na conexao escolhida. Escritas estao habilitadas."
-        : "Executa SQL de leitura (SELECT, WITH, EXPLAIN, SHOW, VALUES, TABLE) na conexao escolhida.",
+        ? mcpT("mcp.tools.query.descriptionWrites")
+        : mcpT("mcp.tools.query.descriptionReadonly"),
       inputSchema: {
         ...connectionRefShape,
         ...databaseShape,
-        sql: z.string().describe("Instrucao SQL"),
+        sql: z.string().describe(mcpT("mcp.param.sql")),
       },
       annotations: queryAnnotations,
     },

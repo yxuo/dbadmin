@@ -1,4 +1,6 @@
 import * as vscode from "vscode";
+import { getBcp47Locale } from "./i18n";
+import { loadLocaleDict, webviewI18nBootstrap } from "./i18n/webviewLocale";
 import { SchemaNodeRef } from "./models";
 import {
   RestoreOptions,
@@ -31,7 +33,7 @@ export class RestorePanelManager {
     const key = `${node.connection.id}:${node.databaseName}:${node.schemaName}`;
     const existing = this.panels.get(key);
     if (existing) {
-      existing.webview.html = buildRestoreHtml(existing.webview, node);
+      existing.webview.html = buildRestoreHtml(existing.webview, node, this.context.extensionPath);
       existing.reveal(vscode.ViewColumn.Active, false);
       return;
     }
@@ -44,7 +46,7 @@ export class RestorePanelManager {
     );
 
     panel.iconPath = new vscode.ThemeIcon("cloud-upload");
-    panel.webview.html = buildRestoreHtml(panel.webview, node);
+    panel.webview.html = buildRestoreHtml(panel.webview, node, this.context.extensionPath);
     this.panels.set(key, panel);
 
     let running = false;
@@ -248,17 +250,24 @@ export class RestorePanelManager {
 function buildRestoreHtml(
   webview: vscode.Webview,
   node: SchemaNodeRef,
+  extensionPath: string,
 ): string {
   const nonce = String(Date.now());
   const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';`;
   const title = `${node.schemaName} @ ${node.databaseName}`;
+  const i18n = loadLocaleDict(extensionPath);
+  const i18nScript = webviewI18nBootstrap(extensionPath);
+  const i18nLang = getBcp47Locale();
+  const L = (key: string, fallback: string) =>
+    escapeHtml(i18n[key] || fallback);
 
   return `<!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="${i18nLang}">
 <head>
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="${csp}" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script nonce="${nonce}">${i18nScript}</script>
   <style>
     *, *::before, *::after { box-sizing: border-box; }
     html, body { height: 100%; margin: 0; }
@@ -409,7 +418,7 @@ function buildRestoreHtml(
 </head>
 <body>
   <div class="header" id="restore-header">
-    <h2>Restaurar &mdash; ${escapeHtml(title)}</h2>
+    <h2>${L('webview.restore.title', 'Restaurar')} &mdash; ${escapeHtml(title)}</h2>
     <div class="provider-tabs" role="tablist">
       <button type="button" class="tab provider-tab active" data-provider="dbadmin" role="tab" aria-selected="true">DbAdmin</button>
       <button type="button" class="tab provider-tab" data-provider="pgadmin" role="tab" aria-selected="false">PgAdmin</button>
@@ -420,16 +429,16 @@ function buildRestoreHtml(
 
     <div class="provider-pane" id="provider-pgadmin">
       <div class="tabs" role="tablist">
-        <button type="button" class="tab pg-tab active" data-tab="geral" role="tab" aria-selected="true">Geral</button>
-        <button type="button" class="tab pg-tab" data-tab="dados" role="tab" aria-selected="false">Dados</button>
-        <button type="button" class="tab pg-tab" data-tab="query" role="tab" aria-selected="false">Query</button>
-        <button type="button" class="tab pg-tab" data-tab="tabela" role="tab" aria-selected="false">Tabela</button>
-        <button type="button" class="tab pg-tab" data-tab="opcoes" role="tab" aria-selected="false">Op&ccedil;&otilde;es</button>
+        <button type="button" class="tab pg-tab active" data-tab="geral" role="tab" aria-selected="true">${L('webview.common.general', 'Geral')}</button>
+        <button type="button" class="tab pg-tab" data-tab="dados" role="tab" aria-selected="false">${L('webview.common.data', 'Dados')}</button>
+        <button type="button" class="tab pg-tab" data-tab="query" role="tab" aria-selected="false">${L('webview.common.query', 'Query')}</button>
+        <button type="button" class="tab pg-tab" data-tab="tabela" role="tab" aria-selected="false">${L('webview.settings.table.title', 'Tabela')}</button>
+        <button type="button" class="tab pg-tab" data-tab="opcoes" role="tab" aria-selected="false">${L('webview.common.options', 'Opções')}</button>
       </div>
 
       <div class="tab-pane active" id="pane-geral">
         <div class="field">
-          <label for="format">Format</label>
+          <label for="format">${L('webview.restore.format', 'Format')}</label>
           <select id="format">
             <option value="custom" selected>Custom</option>
             <option value="tar">Tar</option>
@@ -438,90 +447,90 @@ function buildRestoreHtml(
         </div>
         <div class="field row">
           <div>
-            <label for="filename">Arquivo de backup</label>
-            <input id="filename" type="text" placeholder="Caminho do arquivo de backup..." />
+            <label for="filename">${L('webview.restore.backupFile', 'Arquivo de backup')}</label>
+            <input id="filename" type="text" placeholder="${L('webview.restore.backupPlaceholder', 'Caminho do arquivo de backup...')}" />
           </div>
-          <button id="browseBtn" class="secondary" style="white-space:nowrap;flex-shrink:0;">Procurar</button>
+          <button id="browseBtn" class="secondary" style="white-space:nowrap;flex-shrink:0;">${L('webview.common.browse', 'Procurar')}</button>
         </div>
         <div class="field">
-          <label for="jobs">N&uacute;mero de jobs paralelos</label>
+          <label for="jobs">${L('webview.restore.jobs', 'Número de jobs paralelos')}</label>
           <input id="jobs" type="number" value="1" min="1" max="64" style="width:100px;" />
         </div>
         <div class="field">
-          <label for="roleName">Role (opcional)</label>
-          <input id="roleName" type="text" placeholder="Nome da role" />
+          <label for="roleName">${L('webview.backup.role', 'Role (opcional)')}</label>
+          <input id="roleName" type="text" placeholder="${L('webview.restore.rolePlaceholder', 'Nome da role')}" />
         </div>
       </div>
 
       <div class="tab-pane" id="pane-dados">
-        <div class="section-title">Seções</div>
+        <div class="section-title">${L('webview.backup.sections', 'Seções')}</div>
         <div class="check-row"><input type="checkbox" id="secPreData" checked /><label for="secPreData">Pre-data</label></div>
         <div class="check-row"><input type="checkbox" id="secData" checked /><label for="secData">Data</label></div>
         <div class="check-row"><input type="checkbox" id="secPostData" checked /><label for="secPostData">Post-data</label></div>
 
-        <div class="section-title">Tipo de objeto</div>
-        <div class="check-row"><input type="checkbox" id="onlyData" /><label for="onlyData">Somente dados</label></div>
-        <div class="check-row"><input type="checkbox" id="onlySchema" /><label for="onlySchema">Somente sch&eacute;ma</label></div>
+        <div class="section-title">${L('webview.backup.objectType', 'Tipo de objeto')}</div>
+        <div class="check-row"><input type="checkbox" id="onlyData" /><label for="onlyData">${L('webview.backup.onlyData', 'Somente dados')}</label></div>
+        <div class="check-row"><input type="checkbox" id="onlySchema" /><label for="onlySchema">${L('webview.backup.onlySchema', 'Somente schéma')}</label></div>
       </div>
 
       <div class="tab-pane" id="pane-query">
-        <div class="check-row"><input type="checkbox" id="includeCreateDatabase" /><label for="includeCreateDatabase">Incluir CREATE DATABASE</label></div>
-        <div class="check-row"><input type="checkbox" id="cleanBeforeRestore" /><label for="cleanBeforeRestore">Limpar antes de restaurar</label></div>
-        <div class="check-row"><input type="checkbox" id="includeIfExists" /><label for="includeIfExists">Incluir IF EXISTS</label></div>
-        <div class="check-row"><input type="checkbox" id="singleTransaction" /><label for="singleTransaction">Transa&ccedil;&atilde;o &uacute;nica</label></div>
+        <div class="check-row"><input type="checkbox" id="includeCreateDatabase" /><label for="includeCreateDatabase">${L('webview.restore.includeCreateDb', 'Incluir CREATE DATABASE')}</label></div>
+        <div class="check-row"><input type="checkbox" id="cleanBeforeRestore" /><label for="cleanBeforeRestore">${L('webview.restore.cleanBefore', 'Limpar antes de restaurar')}</label></div>
+        <div class="check-row"><input type="checkbox" id="includeIfExists" /><label for="includeIfExists">${L('webview.restore.includeIfExists', 'Incluir IF EXISTS')}</label></div>
+        <div class="check-row"><input type="checkbox" id="singleTransaction" /><label for="singleTransaction">${L('webview.restore.singleTransaction', 'Transação única')}</label></div>
       </div>
 
       <div class="tab-pane" id="pane-tabela">
-        <div class="check-row"><input type="checkbox" id="enableRowSecurity" /><label for="enableRowSecurity">Habilitar row security</label></div>
-        <div class="check-row"><input type="checkbox" id="noDataForFailedTables" /><label for="noDataForFailedTables">Sem dados para tabelas com erro</label></div>
+        <div class="check-row"><input type="checkbox" id="enableRowSecurity" /><label for="enableRowSecurity">${L('webview.restore.enableRowSecurity', 'Habilitar row security')}</label></div>
+        <div class="check-row"><input type="checkbox" id="noDataForFailedTables" /><label for="noDataForFailedTables">${L('webview.restore.noDataFailed', 'Sem dados para tabelas com erro')}</label></div>
       </div>
 
       <div class="tab-pane" id="pane-opcoes">
-        <div class="section-title">Desabilitar</div>
-        <div class="check-row"><input type="checkbox" id="disableTriggers" /><label for="disableTriggers">Triggers</label></div>
+        <div class="section-title">${L('webview.restore.disable', 'Desabilitar')}</div>
+        <div class="check-row"><input type="checkbox" id="disableTriggers" /><label for="disableTriggers">${L('webview.restore.triggers', 'Triggers')}</label></div>
 
-        <div class="section-title">Geral</div>
-        <div class="check-row"><input type="checkbox" id="verbose" /><label for="verbose">Verbose</label></div>
-        <div class="check-row"><input type="checkbox" id="useSetSessionAuthorization" /><label for="useSetSessionAuthorization">Usar SET SESSION AUTHORIZATION</label></div>
-        <div class="check-row"><input type="checkbox" id="exitOnError" /><label for="exitOnError">Abortar em caso de erro</label></div>
-        <div class="check-row"><input type="checkbox" id="dropSchema" /><label for="dropSchema">Excluir schema</label></div>
+        <div class="section-title">${L('webview.common.general', 'Geral')}</div>
+        <div class="check-row"><input type="checkbox" id="verbose" /><label for="verbose">${L('webview.backup.verbose', 'Verbose')}</label></div>
+        <div class="check-row"><input type="checkbox" id="useSetSessionAuthorization" /><label for="useSetSessionAuthorization">${L('webview.restore.useSetSession', 'Usar SET SESSION AUTHORIZATION')}</label></div>
+        <div class="check-row"><input type="checkbox" id="exitOnError" /><label for="exitOnError">${L('webview.restore.exitOnError', 'Abortar em caso de erro')}</label></div>
+        <div class="check-row"><input type="checkbox" id="dropSchema" /><label for="dropSchema">${L('webview.restore.dropSchema', 'Excluir schema')}</label></div>
 
-        <div class="section-title">Compatibilidade</div>
-        <div class="check-row"><input type="checkbox" id="noPrivileges" /><label for="noPrivileges">Sem privil&eacute;gios (no acl)</label></div>
-        <div class="check-row"><input type="checkbox" id="noOwner" /><label for="noOwner">Sem owner</label></div>
+        <div class="section-title">${L('webview.restore.compatibility', 'Compatibilidade')}</div>
+        <div class="check-row"><input type="checkbox" id="noPrivileges" /><label for="noPrivileges">${L('webview.restore.noPrivileges', 'Sem privilégios (no acl)')}</label></div>
+        <div class="check-row"><input type="checkbox" id="noOwner" /><label for="noOwner">${L('webview.restore.noOwner', 'Sem owner')}</label></div>
       </div>
     </div>
 
     <div class="provider-pane active" id="provider-dbadmin">
       <div class="field row">
         <div>
-          <label for="dbFilename">Arquivo SQL</label>
-          <input id="dbFilename" type="text" placeholder="Caminho do arquivo .sql..." />
+          <label for="dbFilename">${L('webview.restore.sqlFile', 'Arquivo SQL')}</label>
+          <input id="dbFilename" type="text" placeholder="${L('webview.restore.sqlPlaceholder', 'Caminho do arquivo .sql...')}" />
         </div>
-        <button id="dbBrowseBtn" class="secondary" style="white-space:nowrap;flex-shrink:0;">Procurar</button>
+        <button id="dbBrowseBtn" class="secondary" style="white-space:nowrap;flex-shrink:0;">${L('webview.common.browse', 'Procurar')}</button>
       </div>
       <div class="field">
-        <label for="dbRoleName">Role (opcional)</label>
-        <input id="dbRoleName" type="text" placeholder="Nome da role" />
+        <label for="dbRoleName">${L('webview.backup.role', 'Role (opcional)')}</label>
+        <input id="dbRoleName" type="text" placeholder="${L('webview.restore.rolePlaceholder', 'Nome da role')}" />
       </div>
-      <div class="status">O arquivo SQL inteiro é enviado ao PostgreSQL em uma única transação (BEGIN … COMMIT), como num script simples.</div>
+      <div class="status">${L('webview.restore.sqlNote', 'O arquivo SQL inteiro é enviado ao PostgreSQL em uma única transação (BEGIN … COMMIT), como num script simples.')}</div>
       <div class="check-row" style="justify-content: space-between; gap: 12px;">
         <div style="display:flex; align-items:center; gap:8px;">
           <input type="checkbox" id="dbCleanBeforeRestore" />
-          <label for="dbCleanBeforeRestore">Limpar schema antes do restore</label>
+          <label for="dbCleanBeforeRestore">${L('webview.restore.cleanSchemaBefore', 'Limpar schema antes do restore')}</label>
         </div>
-        <button id="clearSchemaBtn" class="secondary" type="button">Limpar agora</button>
+        <button id="clearSchemaBtn" class="secondary" type="button">${L('webview.restore.clearNow', 'Limpar agora')}</button>
       </div>
-      <div class="status">Remove e recria o schema inteiro.</div>
-      <div class="check-row"><input type="checkbox" id="dbVerbose" /><label for="dbVerbose">Verbose (estatísticas no log)</label></div>
+      <div class="status">${L('webview.restore.clearSchemaNote', 'Remove e recria o schema inteiro.')}</div>
+      <div class="check-row"><input type="checkbox" id="dbVerbose" /><label for="dbVerbose">${L('webview.restore.verboseStats', 'Verbose (estatísticas no log)')}</label></div>
       <div class="check-row" style="justify-content: space-between; gap: 12px; margin-top: 10px;">
         <div style="display:flex; align-items:center; gap:8px;">
           <input type="checkbox" id="dbClearTablesBeforeRestore" />
-          <label for="dbClearTablesBeforeRestore">Limpar tabelas antes do restore</label>
+          <label for="dbClearTablesBeforeRestore">${L('webview.restore.clearTablesBefore', 'Limpar tabelas antes do restore')}</label>
         </div>
-        <button id="clearTablesBtn" class="secondary" type="button">Limpar agora</button>
+        <button id="clearTablesBtn" class="secondary" type="button">${L('webview.restore.clearNow', 'Limpar agora')}</button>
       </div>
-      <div class="status">Detecta tabelas com INSERT no SQL e executa TRUNCATE ... CASCADE nelas.</div>
+      <div class="status">${L('webview.restore.clearTablesNote', 'Detecta tabelas com INSERT no SQL e executa TRUNCATE ... CASCADE nelas.')}</div>
     </div>
 
     <div id="outputBox" class="output"></div>
@@ -529,8 +538,8 @@ function buildRestoreHtml(
 
   <div class="footer">
     <span id="statusMsg" class="status"></span>
-    <button id="cancelBtn" class="secondary">Fechar</button>
-    <button id="executeBtn">Restaurar</button>
+    <button id="cancelBtn" class="secondary">${L('webview.common.close', 'Fechar')}</button>
+    <button id="executeBtn">${L('webview.restore.execute', 'Restaurar')}</button>
   </div>
 
   <script nonce="${nonce}">

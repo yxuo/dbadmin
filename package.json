@@ -1,7 +1,7 @@
 {
   "name": "dbadmin",
-  "displayName": "DBAdmin",
-  "description": "Database manager for VS Code.",
+  "displayName": "%displayName%",
+  "description": "%description%",
   "version": "0.0.1",
   "publisher": "yxuo",
   "repository": {
@@ -22,22 +22,22 @@
   "contributes": {
     "configuration": [
       {
-        "title": "DBAdmin",
+        "title": "%dbadmin.config.title%",
         "properties": {
           "dbadmin.persistColumnLayout": {
             "type": "boolean",
             "default": false,
-            "description": "Persistir ocultação, ordem e largura de colunas mesmo fora da restauração automática de abas."
+            "description": "%dbadmin.config.persistColumnLayout%"
           },
           "dbadmin.pgAdminBinPath": {
             "type": "string",
             "default": "",
-            "description": "Caminho para o diretório dos binários do pgAdmin (pg_dump, pg_restore). Deixe vazio para detectar automaticamente."
+            "description": "%dbadmin.config.pgAdminBinPath%"
           },
           "dbadmin.showFilterLabel": {
             "type": "boolean",
             "default": true,
-            "description": "Mostrar o label do filtro no topo do DBAdmin quando houver filtro ativo."
+            "description": "%dbadmin.config.showFilterLabel%"
           },
           "dbadmin.defaultPageSize": {
             "type": "integer",
@@ -46,7 +46,7 @@
             "maximum": 500,
             "scope": "window",
             "order": 50,
-            "description": "Número padrão de itens por página na visualização de tabela."
+            "description": "%dbadmin.config.defaultPageSize%"
           },
           "dbadmin.managerPollIntervalSeconds": {
             "type": "integer",
@@ -55,7 +55,7 @@
             "maximum": 60,
             "scope": "window",
             "order": 53,
-            "description": "Intervalo (em segundos) de atualização automática do painel Gerenciar conexão. Mínimo 1s, máximo 60s."
+            "description": "%dbadmin.config.managerPollIntervalSeconds%"
           },
           "dbadmin.managerTimeWindowMinutes": {
             "type": "integer",
@@ -64,28 +64,28 @@
             "maximum": 1440,
             "scope": "window",
             "order": 54,
-            "description": "Intervalo dos gráficos do Gerenciar conexão, em minutos. 0 = sem limite (a série cresce sem descartar pontos)."
+            "description": "%dbadmin.config.managerTimeWindowMinutes%"
           },
           "dbadmin.dynamicDefaultColumnWidth": {
             "type": "boolean",
             "default": true,
             "scope": "window",
             "order": 51,
-            "description": "Quando ativo, calcula a largura padrão das colunas de forma dinâmica com base no conteúdo visível. Quando desativado, usa largura fixa (170)."
+            "description": "%dbadmin.config.dynamicDefaultColumnWidth%"
           },
           "dbadmin.expandFilterResults": {
             "type": "boolean",
             "default": false,
             "scope": "window",
             "order": 52,
-            "description": "Quando ativo, ao digitar no filtro de tabelas recolhe e expande automaticamente os resultados na árvore."
+            "description": "%dbadmin.config.expandFilterResults%"
           },
           "dbadmin.mcpAllowWrites": {
             "type": "boolean",
             "default": false,
             "scope": "window",
             "order": 60,
-            "description": "Permitir que o servidor MCP execute SQL de escrita (INSERT/UPDATE/DELETE/DDL). O padrão é somente leitura."
+            "description": "%dbadmin.config.mcpAllowWrites%"
           },
           "dbadmin.mcpMaxRows": {
             "type": "integer",
@@ -94,24 +94,24 @@
             "maximum": 5000,
             "scope": "window",
             "order": 61,
-            "description": "Número máximo de linhas retornadas pela tool MCP query."
+            "description": "%dbadmin.config.mcpMaxRows%"
           }
         }
       },
       {
-        "title": "SQLBook",
+        "title": "%dbadmin.config.sqlbook.title%",
         "properties": {
           "dbadmin.sqlbookIntegratedTable": {
             "type": "boolean",
             "default": false,
             "order": 1,
-            "description": "Mostrar tabela integrada no SQL Book (resultado inline na célula em vez de abrir o painel)."
+            "description": "%dbadmin.config.sqlbookIntegratedTable%"
           },
           "dbadmin.sqlbookRunPerQuery": {
             "type": "boolean",
             "default": false,
             "order": 2,
-            "description": "Mostrar um botão Executar em cada query quando a célula do SQL Book tiver duas ou mais instruções (separadas por ponto e vírgula ou linha em branco)."
+            "description": "%dbadmin.config.sqlbookRunPerQuery%"
           }
         }
       }
@@ -120,7 +120,7 @@
       "activitybar": [
         {
           "id": "dbadmin",
-          "title": "DBAdmin",
+          "title": "%dbadmin.view.explorer%",
           "icon": "resources/icons/extension.svg"
         }
       ]
@@ -129,285 +129,286 @@
       "dbadmin": [
         {
           "id": "databaseExplorer",
-          "name": "DBAdmin",
+          "name": "%dbadmin.view.explorer%",
           "icon": "resources/icons/extension.svg",
           "order": 1
         },
         {
           "id": "databaseExplorerFilter",
-          "name": "Filtro de tabelas",
+          "name": "%dbadmin.view.filter%",
           "icon": "resources/icons/extension.svg",
           "type": "webview",
-          "order": 2
+          "order": 2,
+          "when": "false"
         }
       ]
     },
     "viewsWelcome": [
       {
         "view": "databaseExplorer",
-        "contents": "Sem provedor de dados."
+        "contents": "%dbadmin.viewsWelcome%"
       }
     ],
     "commands": [
       {
         "command": "dbadmin.createConnection",
-        "title": "Criar Conexão",
+        "title": "%dbadmin.command.createConnection%",
         "icon": "$(add)"
       },
       {
         "command": "dbadmin.openConnectionManager",
-        "title": "Gerenciar conexão",
+        "title": "%dbadmin.command.openConnectionManager%",
         "category": "DBAdmin",
         "icon": "$(settings)"
       },
       {
         "command": "dbadmin.editConnection",
-        "title": "Editar Conexão",
+        "title": "%dbadmin.command.editConnection%",
         "icon": "$(edit)"
       },
       {
         "command": "dbadmin.deleteConnection",
-        "title": "Excluir Conexão",
+        "title": "%dbadmin.command.deleteConnection%",
         "icon": "$(trash)"
       },
       {
         "command": "dbadmin.refresh",
-        "title": "Atualizar",
+        "title": "%dbadmin.command.refresh%",
         "icon": "$(refresh)"
       },
       {
         "command": "dbadmin.collapseAllExplorer",
-        "title": "Recolher tudo",
+        "title": "%dbadmin.command.collapseAllExplorer%",
         "icon": "$(collapse-all)",
         "enablement": "dbadmin.hasExpandedTreeItems"
       },
       {
         "command": "dbadmin.refreshConnection",
-        "title": "Atualizar Conexão",
+        "title": "%dbadmin.command.refreshConnection%",
         "icon": "$(refresh)"
       },
       {
         "command": "dbadmin.refreshDatabase",
-        "title": "Atualizar Banco de Dados",
+        "title": "%dbadmin.command.refreshDatabase%",
         "icon": "$(refresh)"
       },
       {
         "command": "dbadmin.refreshSchema",
-        "title": "Atualizar Schema",
+        "title": "%dbadmin.command.refreshSchema%",
         "icon": "$(refresh)"
       },
       {
         "command": "dbadmin.openSettings",
-        "title": "Configurações",
+        "title": "%dbadmin.command.openSettings%",
         "icon": "$(settings-gear)"
       },
       {
         "command": "dbadmin.copyMcpConfig",
-        "title": "Copiar config MCP",
+        "title": "%dbadmin.command.copyMcpConfig%",
         "category": "DBAdmin",
         "icon": "$(copy)"
       },
       {
         "command": "dbadmin.openMcpJson",
-        "title": "Abrir mcp.json (Cursor)",
+        "title": "%dbadmin.command.openMcpJson%",
         "category": "DBAdmin",
         "icon": "$(json)"
       },
       {
         "command": "dbadmin.openMcpSettings",
-        "title": "Configurações MCP",
+        "title": "%dbadmin.command.openMcpSettings%",
         "category": "DBAdmin",
         "icon": "$(server-process)"
       },
       {
         "command": "dbadmin.openTable",
-        "title": "Abrir Tabela"
+        "title": "%dbadmin.command.openTable%"
       },
       {
         "command": "dbadmin.openTableInNewTab",
-        "title": "Abrir em nova aba",
+        "title": "%dbadmin.command.openTableInNewTab%",
         "icon": "$(diff-renamed)"
       },
       {
         "command": "dbadmin.truncateTable",
-        "title": "Esvaziar tabela",
+        "title": "%dbadmin.command.truncateTable%",
         "icon": "$(trash)"
       },
       {
         "command": "dbadmin.createDatabase",
-        "title": "Criar",
+        "title": "%dbadmin.command.create%",
         "icon": "$(add)"
       },
       {
         "command": "dbadmin.renameDatabase",
-        "title": "Renomear",
+        "title": "%dbadmin.command.rename%",
         "icon": "$(edit)"
       },
       {
         "command": "dbadmin.duplicateDatabase",
-        "title": "Duplicar",
+        "title": "%dbadmin.command.duplicate%",
         "icon": "$(copy)"
       },
       {
         "command": "dbadmin.dropDatabase",
-        "title": "Excluir",
+        "title": "%dbadmin.command.delete%",
         "icon": "$(trash)"
       },
       {
         "command": "dbadmin.backupSchema",
-        "title": "Backup",
+        "title": "%dbadmin.command.backup%",
         "icon": "$(cloud-download)"
       },
       {
         "command": "dbadmin.restoreSchema",
-        "title": "Restaurar",
+        "title": "%dbadmin.command.restore%",
         "icon": "$(cloud-upload)"
       },
       {
         "command": "dbadmin.clearSchema",
-        "title": "Limpar schema",
+        "title": "%dbadmin.command.clearSchema%",
         "icon": "$(clear-all)"
       },
       {
         "command": "dbadmin.createSchema",
-        "title": "Criar",
+        "title": "%dbadmin.command.create%",
         "icon": "$(add)"
       },
       {
         "command": "dbadmin.createFunction",
-        "title": "Criar function",
+        "title": "%dbadmin.command.createFunction%",
         "icon": "$(add)"
       },
       {
         "command": "dbadmin.editFunction",
-        "title": "Editar function",
+        "title": "%dbadmin.command.editFunction%",
         "icon": "$(edit)"
       },
       {
         "command": "dbadmin.deleteFunction",
-        "title": "Excluir function",
+        "title": "%dbadmin.command.deleteFunction%",
         "icon": "$(trash)"
       },
       {
         "command": "dbadmin.createProcedure",
-        "title": "Criar procedure",
+        "title": "%dbadmin.command.createProcedure%",
         "icon": "$(add)"
       },
       {
         "command": "dbadmin.editProcedure",
-        "title": "Editar procedure",
+        "title": "%dbadmin.command.editProcedure%",
         "icon": "$(edit)"
       },
       {
         "command": "dbadmin.deleteProcedure",
-        "title": "Excluir procedure",
+        "title": "%dbadmin.command.deleteProcedure%",
         "icon": "$(trash)"
       },
       {
         "command": "dbadmin.createTrigger",
-        "title": "Criar trigger",
+        "title": "%dbadmin.command.createTrigger%",
         "icon": "$(add)"
       },
       {
         "command": "dbadmin.editTrigger",
-        "title": "Editar trigger",
+        "title": "%dbadmin.command.editTrigger%",
         "icon": "$(edit)"
       },
       {
         "command": "dbadmin.deleteTrigger",
-        "title": "Excluir trigger",
+        "title": "%dbadmin.command.deleteTrigger%",
         "icon": "$(trash)"
       },
       {
         "command": "dbadmin.dropSchema",
-        "title": "Excluir schema",
+        "title": "%dbadmin.command.dropSchema%",
         "icon": "$(trash)"
       },
       {
         "command": "dbadmin.openColumnDetails",
-        "title": "Abrir detalhes da coluna"
+        "title": "%dbadmin.command.openColumnDetails%"
       },
       {
         "command": "dbadmin.openConstraintDetails",
-        "title": "Abrir detalhes da restrição"
+        "title": "%dbadmin.command.openConstraintDetails%"
       },
       {
         "command": "dbadmin.openColumnDetailsInNewTab",
-        "title": "Abrir em nova aba",
+        "title": "%dbadmin.command.openTableInNewTab%",
         "icon": "$(diff-renamed)"
       },
       {
         "command": "dbadmin.openConstraintDetailsInNewTab",
-        "title": "Abrir em nova aba",
+        "title": "%dbadmin.command.openTableInNewTab%",
         "icon": "$(diff-renamed)"
       },
       {
         "command": "dbadmin.editTableFilter",
-        "title": "Filtrar tabelas",
+        "title": "%dbadmin.command.editTableFilter%",
         "icon": "$(search)"
       },
       {
         "command": "dbadmin.clearTableFilter",
-        "title": "Limpar filtro de tabelas",
+        "title": "%dbadmin.command.clearTableFilter%",
         "icon": "$(close)"
       },
       {
         "command": "dbadmin.spacer",
-        "title": "Espaçador",
+        "title": "%dbadmin.command.spacer%",
         "icon": "$(blank)"
       },
       {
         "command": "dbadmin.expandNode",
-        "title": "Expandir",
+        "title": "%dbadmin.command.expandNode%",
         "icon": "$(expand-all)"
       },
       {
         "command": "dbadmin.executeSqlFromActiveEditor",
-        "title": "Executar SQL do Editor Ativo",
+        "title": "%dbadmin.command.executeSqlFromActiveEditor%",
         "icon": "$(play)"
       },
       {
         "command": "dbadmin.sqlRunner.selectConnection",
-        "title": "SQL Runner: Selecionar Conexão"
+        "title": "%dbadmin.command.sqlRunner.selectConnection%"
       },
       {
         "command": "dbadmin.sqlRunner.selectDatabase",
-        "title": "SQL Runner: Selecionar Banco"
+        "title": "%dbadmin.command.sqlRunner.selectDatabase%"
       },
       {
         "command": "dbadmin.sqlRunner.selectSchema",
-        "title": "SQL Runner: Selecionar Schema"
+        "title": "%dbadmin.command.sqlRunner.selectSchema%"
       },
       {
         "command": "dbadmin.toggleSqlBookIntegratedTable",
-        "title": "Mostrar tabela integrada",
+        "title": "%dbadmin.command.toggleSqlBookIntegratedTable%",
         "category": "DBAdmin"
       },
       {
         "command": "dbadmin.toggleSqlBookIntegratedTableChecked",
-        "title": "✓ Mostrar tabela integrada",
+        "title": "%dbadmin.command.toggleSqlBookIntegratedTableChecked%",
         "category": "DBAdmin",
         "icon": "$(check)"
       },
       {
         "command": "dbadmin.toggleSqlBookRunPerQuery",
-        "title": "Botão executar por query",
+        "title": "%dbadmin.command.toggleSqlBookRunPerQuery%",
         "category": "DBAdmin"
       },
       {
         "command": "dbadmin.toggleSqlBookRunPerQueryChecked",
-        "title": "✓ Botão executar por query",
+        "title": "%dbadmin.command.toggleSqlBookRunPerQueryChecked%",
         "category": "DBAdmin",
         "icon": "$(check)"
       },
       {
         "command": "dbadmin.executeSqlBookStatement",
-        "title": "Executar query do SQL Book",
+        "title": "%dbadmin.command.executeSqlBookStatement%",
         "category": "DBAdmin"
       },
       {
         "command": "dbadmin.openLastSqlBookResult",
-        "title": "Abrir último resultado do SQL Book",
+        "title": "%dbadmin.command.openLastSqlBookResult%",
         "category": "DBAdmin"
       }
     ],
@@ -456,7 +457,7 @@
     "notebooks": [
       {
         "type": "sqlbook",
-        "displayName": "DBAdmin SQL Book",
+        "displayName": "%dbadmin.notebook.sqlbook%",
         "selector": [
           {
             "filenamePattern": "*.sqlbook"
@@ -467,7 +468,7 @@
     "notebookRenderer": [
       {
         "id": "dbadmin-sqlbook-table",
-        "displayName": "DBAdmin SQL Book Table",
+        "displayName": "%dbadmin.notebookRenderer.sqlbookTable%",
         "entrypoint": "./resources/sqlBookTableRenderer.js",
         "mimeTypes": [
           "application/vnd.dbadmin.sqlbook-table+json"
@@ -478,7 +479,7 @@
     "mcpServerDefinitionProviders": [
       {
         "id": "dbadmin",
-        "label": "DBAdmin"
+        "label": "%dbadmin.mcpProvider.label%"
       }
     ],
     "keybindings": [
@@ -839,5 +840,6 @@
     "@vscode/codicons": "^0.0.45",
     "pg": "^8.13.1",
     "zod": "^4.4.3"
-  }
+  },
+  "l10n": "./l10n"
 }

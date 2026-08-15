@@ -1,6 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { initMcpLocale, mcpT } from "../i18n/mcpLocale";
 
 export const DEFAULT_MCP_MAX_ROWS = 200;
 export const DEFAULT_MCP_STATEMENT_TIMEOUT_MS = 15_000;
@@ -77,9 +78,8 @@ export async function resolveStorageRoot(): Promise<string> {
     }
   }
 
-  throw new Error(
-    "DBADMIN_STORAGE_ROOT nao definido e connections.json nao encontrado. Defina o caminho do globalStorage do DBAdmin.",
-  );
+  initMcpLocale();
+  throw new Error(mcpT("mcp.config.storageMissing"));
 }
 
 export async function loadMcpRuntimeConfig(): Promise<McpRuntimeConfig> {

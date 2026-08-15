@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import { getBcp47Locale, t } from './i18n';
+import { loadLocaleDict, webviewI18nBootstrap } from './i18n/webviewLocale';
 import { PostgresConnection, PostgresConnectionInput } from './models';
 import { PostgresService } from './postgresService';
 
@@ -20,7 +22,7 @@ export async function showConnectionForm(
 ): Promise<ConnectionDraft | undefined> {
   const panel = vscode.window.createWebviewPanel(
     'database.connectionForm',
-    mode === 'create' ? 'Nova conexão' : `Editar conexão: ${current?.nickname ?? ''}`,
+    mode === 'create' ? t('New connection') : t('Edit connection: {0}', current?.nickname ?? ''),
     {
       preserveFocus: false,
       viewColumn: vscode.ViewColumn.Active,
@@ -42,7 +44,7 @@ export async function showConnectionForm(
     ssl: current?.ssl ?? false,
   };
 
-  panel.webview.html = getHtml(panel.webview, context.extensionUri, mode, initialData);
+  panel.webview.html = getHtml(panel.webview, context.extensionUri, mode, initialData, context.extensionPath);
 
   return new Promise<ConnectionDraft | undefined>((resolve) => {
     let settled = false;
@@ -79,7 +81,7 @@ export async function showConnectionForm(
           panel.webview.postMessage({
             type: 'testResult',
             ok: true,
-            message: `Conexão OK. ${version}`,
+            message: t('Connection OK. {0}', version),
           });
         } catch (error) {
           const errorMessage = getErrorMessage(error);
@@ -117,31 +119,31 @@ export async function showConnectionForm(
 
 function validateDraft(draft: ConnectionDraft): void {
   if (!draft.nickname.trim()) {
-    throw new Error('Apelido e obrigatorio.');
+    throw new Error(t('Nickname is required.'));
   }
   if (!draft.host.trim()) {
-    throw new Error('Host e obrigatorio.');
+    throw new Error(t('Host is required.'));
   }
   if (!Number.isInteger(draft.port) || draft.port < 1 || draft.port > 65535) {
-    throw new Error('Porta invalida. Use um valor entre 1 e 65535.');
+    throw new Error(t('Invalid port. Use a value between 1 and 65535.'));
   }
   if (!draft.database.trim()) {
-    throw new Error('Database e obrigatorio.');
+    throw new Error(t('Database is required.'));
   }
   if (!draft.user.trim()) {
-    throw new Error('Usuario e obrigatorio.');
+    throw new Error(t('User is required.'));
   }
 }
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     const message = error.message?.trim();
-    return message || 'Erro inesperado';
+    return message || t('Unexpected error.');
   }
 
   if (typeof error === 'string') {
     const message = error.trim();
-    return message || 'Erro inesperado';
+    return message || t('Unexpected error.');
   }
 
   if (error && typeof error === 'object' && 'message' in error) {
@@ -152,9 +154,9 @@ function getErrorMessage(error: unknown): string {
   }
 
   try {
-    return JSON.stringify(error) || 'Erro inesperado';
+    return JSON.stringify(error) || t('Unexpected error.');
   } catch {
-    return 'Erro inesperado';
+    return t('Unexpected error.');
   }
 }
 
@@ -162,20 +164,32 @@ function getHtml(
   webview: vscode.Webview,
   extensionUri: vscode.Uri,
   mode: FormMode,
-  initialData: ConnectionDraft
+  initialData: ConnectionDraft,
+  extensionPath: string
 ): string {
+  void extensionUri;
   const nonce = String(Date.now());
-  const title = mode === 'create' ? 'Nova conexão' : 'Editar conexão';
+  const title = mode === 'create' ? t('New connection') : t('Edit connection');
   const escaped = JSON.stringify(initialData).replace(/</g, '\\u003c');
   const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';`;
+  const i18n = loadLocaleDict(extensionPath);
+  const i18nScript = webviewI18nBootstrap(extensionPath);
+  const i18nLang = getBcp47Locale();
+  const L = (key: string, fallback: string) =>
+    String(i18n[key] || fallback)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
 
   return `<!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="${i18nLang}">
 <head>
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="${csp}" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>${title}</title>
+  <script nonce="${nonce}">${i18nScript}</script>
   <style>
     :root {
       color-scheme: light dark;
@@ -341,47 +355,47 @@ function getHtml(
     <div class="card">
       <div>
         <h1 class="title">${title}</h1>
-        <p class="subtitle">Escolha o tipo de banco, configure a conexão, teste e salve.</p>
+        <p class="subtitle">${L('webview.connection.subtitle', 'Escolha o tipo de banco, configure a conexão, teste e salve.')}</p>
       </div>
 
       <div class="grid">
         <div class="field full">
-          <label for="engine">Tipo de banco</label>
+          <label for="engine">${L('webview.connection.engine', 'Tipo de banco')}</label>
           <input id="engine" readonly aria-readonly="true" value="PostgreSQL" />
         </div>
         <div class="field">
-          <label for="nickname">Apelido</label>
+          <label for="nickname">${L('webview.connection.nickname', 'Apelido')}</label>
           <input id="nickname" />
         </div>
         <div class="field">
-          <label for="host">Host</label>
+          <label for="host">${L('webview.connection.host', 'Host')}</label>
           <input id="host" />
         </div>
         <div class="field">
-          <label for="port">Porta</label>
+          <label for="port">${L('webview.connection.port', 'Porta')}</label>
           <input id="port" type="number" min="1" max="65535" />
         </div>
         <div class="field">
-          <label for="database">Database</label>
+          <label for="database">${L('webview.connection.database', 'Database')}</label>
           <input id="database" />
         </div>
         <div class="field full">
-          <label for="visibleDatabases">Bancos visiveis na sidebar (opcional)</label>
-          <textarea id="visibleDatabases" placeholder="Um nome por linha ou separado por virgula"></textarea>
+          <label for="visibleDatabases">${L('webview.connection.visibleDatabases', 'Bancos visíveis na sidebar (opcional)')}</label>
+          <textarea id="visibleDatabases" placeholder="${L('webview.connection.visibleDatabasesPlaceholder', 'Um nome por linha ou separado por vírgula')}"></textarea>
         </div>
         <div class="field">
-          <label for="user">Usuario</label>
+          <label for="user">${L('webview.connection.user', 'Usuário')}</label>
           <input id="user" />
         </div>
         <div class="field">
-          <label for="password">Senha</label>
+          <label for="password">${L('webview.connection.password', 'Senha')}</label>
           <input id="password" type="password" />
         </div>
         <div class="field full">
-          <label>SSL</label>
+          <label>${L('webview.connection.ssl', 'SSL')}</label>
           <label class="row" for="ssl">
             <input id="ssl" type="checkbox" />
-            <span>Ativar SSL</span>
+            <span>${L('webview.connection.enableSsl', 'Ativar SSL')}</span>
           </label>
         </div>
       </div>
@@ -389,9 +403,9 @@ function getHtml(
       <div id="status" class="status"></div>
 
       <div class="actions">
-        <button id="cancel">Cancelar</button>
-        <button id="test">Testar conexão</button>
-        <button id="save" class="primary">Salvar</button>
+        <button id="cancel">${L('webview.common.cancel', 'Cancelar')}</button>
+        <button id="test">${L('webview.connection.test', 'Testar conexão')}</button>
+        <button id="save" class="primary">${L('webview.connection.save', 'Salvar')}</button>
       </div>
     </div>
   </div>

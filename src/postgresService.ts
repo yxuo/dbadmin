@@ -140,7 +140,7 @@ export class PostgresService {
     if (error instanceof Error && error.message) {
       return error.message;
     }
-    return String(error || "Erro desconhecido");
+    return String(error || "Unexpected error.");
   }
 
   private async withUserActivity<T>(
@@ -164,7 +164,7 @@ export class PostgresService {
       this.activity(
         connectionId,
         "fail",
-        `Falha na execução : ${this.errorMessage(error)}`,
+        `Execution failed: ${this.errorMessage(error)}`,
       );
       throw error;
     }
@@ -226,7 +226,7 @@ export class PostgresService {
       },
       (_result, elapsedMs) => ({
         kind: "completed",
-        message: `Concluído em ${elapsedMs}ms`,
+        message: `Completed in ${elapsedMs}ms`,
       }),
     );
   }
@@ -253,7 +253,7 @@ export class PostgresService {
       },
       (_result, elapsedMs) => ({
         kind: "completed",
-        message: `Concluído em ${elapsedMs}ms`,
+        message: `Completed in ${elapsedMs}ms`,
       }),
     );
   }
@@ -280,7 +280,7 @@ export class PostgresService {
       },
       (_result, elapsedMs) => ({
         kind: "completed",
-        message: `Concluído em ${elapsedMs}ms`,
+        message: `Completed in ${elapsedMs}ms`,
       }),
     );
   }
@@ -306,7 +306,7 @@ export class PostgresService {
       },
       (_result, elapsedMs) => ({
         kind: "completed",
-        message: `Concluído em ${elapsedMs}ms`,
+        message: `Completed in ${elapsedMs}ms`,
       }),
     );
   }
@@ -333,7 +333,7 @@ export class PostgresService {
       },
       (_result, elapsedMs) => ({
         kind: "completed",
-        message: `Concluído em ${elapsedMs}ms`,
+        message: `Completed in ${elapsedMs}ms`,
       }),
     );
   }
@@ -360,7 +360,7 @@ export class PostgresService {
       },
       (_result, elapsedMs) => ({
         kind: "completed",
-        message: `Concluído em ${elapsedMs}ms`,
+        message: `Completed in ${elapsedMs}ms`,
       }),
     );
   }
@@ -388,7 +388,7 @@ export class PostgresService {
       },
       (_result, elapsedMs) => ({
         kind: "completed",
-        message: `Concluído em ${elapsedMs}ms`,
+        message: `Completed in ${elapsedMs}ms`,
       }),
     );
   }
@@ -559,7 +559,7 @@ export class PostgresService {
   ): Promise<void> {
     const trimmed = String(sql || "").trim();
     if (!trimmed) {
-      throw new Error("SQL vazio.");
+      throw new Error("SQL is empty.");
     }
 
     const client = await this.connect({
@@ -580,7 +580,7 @@ export class PostgresService {
   ): Promise<SqlQueryResult> {
     const trimmed = String(sql || "").trim();
     if (!trimmed) {
-      throw new Error("SQL vazio.");
+      throw new Error("SQL is empty.");
     }
 
     return this.withUserActivity(
@@ -642,12 +642,12 @@ export class PostgresService {
         if (command === "SELECT" || result.columns.length > 0) {
           return {
             kind: "result",
-            message: `Resultado: ${result.rowCount} linhas em ${elapsedMs}ms`,
+            message: `Result: ${result.rowCount} rows in ${elapsedMs}ms`,
           };
         }
         return {
           kind: "completed",
-          message: `Concluído em ${elapsedMs}ms`,
+          message: `Completed in ${elapsedMs}ms`,
         };
       },
     );
@@ -718,7 +718,7 @@ export class PostgresService {
       },
       (_result, elapsedMs) => ({
         kind: "completed",
-        message: `Concluído em ${elapsedMs}ms`,
+        message: `Completed in ${elapsedMs}ms`,
       }),
     );
   }
@@ -754,7 +754,7 @@ export class PostgresService {
       },
       (_result, elapsedMs) => ({
         kind: "completed",
-        message: `Concluído em ${elapsedMs}ms`,
+        message: `Completed in ${elapsedMs}ms`,
       }),
     );
   }
@@ -774,13 +774,13 @@ export class PostgresService {
 
     if (rows.length === 0) {
       throw new Error(
-        `Trigger "${triggerName}" não encontrada em ${schemaName}.`,
+        `Trigger "${triggerName}" not found in ${schemaName}.`,
       );
     }
 
     if (rows.length > 1) {
       throw new Error(
-        `Há mais de uma trigger chamada "${triggerName}" em ${schemaName}. Remoção/edição ambígua.`,
+        `Multiple triggers named "${triggerName}" in ${schemaName}. Ambiguous operation.`,
       );
     }
 
@@ -1256,7 +1256,7 @@ export class PostgresService {
         ),
       (result, elapsedMs) => ({
         kind: "result",
-        message: `Resultado: ${result.rows.length} linhas em ${elapsedMs}ms`,
+        message: `Result: ${result.rows.length} rows in ${elapsedMs}ms`,
       }),
     );
   }
@@ -1572,7 +1572,7 @@ VALUES (${insertValuesSql.join(", ")})`;
       },
       (_result, elapsedMs) => ({
         kind: "completed",
-        message: `Concluído em ${elapsedMs}ms`,
+        message: `Completed in ${elapsedMs}ms`,
       }),
     );
   }
@@ -1659,13 +1659,13 @@ VALUES (${insertValuesSql.join(", ")})`;
 
       if (result.rows.length === 0) {
         throw new Error(
-          `${routineLabel} "${routineName}" não encontrada em ${schemaName}.`,
+          `${routineLabel} "${routineName}" not found in ${schemaName}.`,
         );
       }
 
       if (result.rows.length > 1) {
         throw new Error(
-          `Há mais de uma ${routineLabel} chamada "${routineName}" em ${schemaName}. Operação ambígua.`,
+          `Multiple ${routineLabel}s named "${routineName}" in ${schemaName}. Ambiguous operation.`,
         );
       }
 
@@ -1781,7 +1781,7 @@ VALUES (${insertValuesSql.join(", ")})`;
         return JSON.stringify(JSON.parse(trimmed));
       } catch {
         throw new Error(
-          `Valor invalido para a coluna "${column.name}" (${column.dataType}). Informe um JSON valido.`,
+          `Invalid value for column "${column.name}" (${column.dataType}). Provide valid JSON.`,
         );
       }
     }
@@ -1790,7 +1790,7 @@ VALUES (${insertValuesSql.join(", ")})`;
       return JSON.stringify(value);
     } catch {
       throw new Error(
-        `Valor invalido para a coluna "${column.name}" (${column.dataType}). Informe um JSON valido.`,
+        `Invalid value for column "${column.name}" (${column.dataType}). Provide valid JSON.`,
       );
     }
   }
@@ -1937,10 +1937,10 @@ VALUES (${insertValuesSql.join(", ")})`;
     const table = String(targetTable || "").trim();
     const column = String(targetColumn || "").trim();
     if (!schema || !table || !column) {
-      throw new Error("Alvo da chave estrangeira incompleto.");
+      throw new Error("Incomplete foreign key target.");
     }
     if (value === null || value === undefined || String(value).trim() === "") {
-      throw new Error("Valor vazio para pesquisar menções.");
+      throw new Error("Empty value to search mentions.");
     }
 
     const perTableLimit = Math.max(

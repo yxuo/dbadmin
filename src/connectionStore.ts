@@ -35,7 +35,7 @@ export class ConnectionStore {
     );
 
     if (duplicated) {
-      throw new Error('Ja existe uma conexão com esse apelido.');
+      throw new Error('A connection with this nickname already exists.');
     }
 
     const now = new Date().toISOString();
@@ -63,7 +63,7 @@ export class ConnectionStore {
     const index = data.connections.findIndex((connection) => connection.id === id);
 
     if (index < 0) {
-      throw new Error('Conexão não encontrada.');
+      throw new Error('Connection not found.');
     }
 
     const duplicated = data.connections.some(
@@ -73,7 +73,7 @@ export class ConnectionStore {
     );
 
     if (duplicated) {
-      throw new Error('Ja existe uma conexão com esse apelido.');
+      throw new Error('A connection with this nickname already exists.');
     }
 
     const current = data.connections[index];
@@ -94,7 +94,7 @@ export class ConnectionStore {
     const next = data.connections.filter((connection) => connection.id !== id);
 
     if (next.length === data.connections.length) {
-      throw new Error('Conexão não encontrada.');
+      throw new Error('Connection not found.');
     }
 
     await this.writeFile({ ...data, connections: next });
@@ -102,27 +102,27 @@ export class ConnectionStore {
 
   private validateInput(input: PostgresConnectionInput): void {
     if (!input.nickname.trim()) {
-      throw new Error('Apelido e obrigatorio.');
+      throw new Error('Nickname is required.');
     }
 
     if (!input.host.trim()) {
-      throw new Error('Host e obrigatorio.');
+      throw new Error('Host is required.');
     }
 
     if (!Number.isInteger(input.port) || input.port < 1 || input.port > 65535) {
-      throw new Error('Porta invalida. Use um valor entre 1 e 65535.');
+      throw new Error('Invalid port. Use a value between 1 and 65535.');
     }
 
     if (!input.database.trim()) {
-      throw new Error('Database e obrigatorio.');
+      throw new Error('Database is required.');
     }
 
     if (!input.user.trim()) {
-      throw new Error('Usuario e obrigatorio.');
+      throw new Error('User is required.');
     }
 
     if (input.visibleDatabases && !Array.isArray(input.visibleDatabases)) {
-      throw new Error('Lista de bancos visiveis invalida.');
+      throw new Error('Invalid visible databases list.');
     }
   }
 
@@ -152,7 +152,7 @@ export class ConnectionStore {
     try {
       const parsed = JSON.parse(raw) as Partial<ConnectionsFile>;
       if (parsed.version !== 1 || !Array.isArray(parsed.connections)) {
-        throw new Error('Formato invalido.');
+        throw new Error('Invalid format.');
       }
 
       return {
@@ -162,8 +162,8 @@ export class ConnectionStore {
         ),
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Erro desconhecido';
-      throw new Error(`Arquivo de conexoes corrompido: ${message}`);
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new Error(`Corrupted connections file: ${message}`);
     }
   }
 

@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { ConnectionStore } from './connectionStore';
+import { loadLocaleDict, LocaleDict } from './i18n/webviewLocale';
 import { PostgresService, SqlQueryResult } from './postgresService';
 import { PostgresConnection } from './models';
 import { getSqlBookIntegratedTableEnabled } from './sqlBookIntegratedTable';
@@ -39,6 +40,7 @@ export interface SqlBookTablePayload {
   rows: Record<string, unknown>[];
   rowCount: number;
   command: string;
+  i18n?: LocaleDict;
 }
 
 // ---------- Serializer ----------
@@ -115,6 +117,7 @@ export class SqlBookController {
     private readonly store: ConnectionStore,
     private readonly postgresService: PostgresService,
     private readonly onResult?: (payload: SqlBookExecutionResult) => Promise<void> | void,
+    private readonly extensionPath?: string,
   ) {
     this._controller = vscode.notebooks.createNotebookController(
       'dbadmin-sqlbook',
@@ -206,7 +209,7 @@ export class SqlBookController {
         execution.replaceOutput([
           new vscode.NotebookCellOutput([
             vscode.NotebookCellOutputItem.json(
-              toSqlBookTablePayload(result),
+              toSqlBookTablePayload(result, this.extensionPath),
               SQLBOOK_TABLE_MIME,
             ),
           ]),
@@ -319,13 +322,20 @@ function quoteIdent(identifier: string): string {
   return `"${String(identifier || '').replace(/"/g, '""')}"`;
 }
 
-function toSqlBookTablePayload(result: SqlQueryResult): SqlBookTablePayload {
-  return {
+function toSqlBookTablePayload(
+  result: SqlQueryResult,
+  extensionPath?: string,
+): SqlBookTablePayload {
+  const payload: SqlBookTablePayload = {
     columns: result.columns,
     rows: result.rows as Record<string, unknown>[],
     rowCount: result.rowCount,
     command: result.command || "",
   };
+  if (extensionPath) {
+    payload.i18n = loadLocaleDict(extensionPath);
+  }
+  return payload;
 }
 
 function formatFriendlySqlError(error: unknown): string {

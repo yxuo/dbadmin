@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { getLocale, t } from "../i18n";
 import {
   DEFAULT_MCP_MAX_ROWS,
   buildMcpClientConfig,
@@ -29,6 +30,8 @@ async function syncCursorMcpJson(context: vscode.ExtensionContext): Promise<stri
     storageRoot: context.globalStorageUri.fsPath,
     allowWrites: settings.allowWrites,
     maxRows: settings.maxRows,
+    locale: getLocale(),
+    extensionRoot: context.extensionPath,
   });
 }
 
@@ -59,6 +62,8 @@ function registerProvider(context: vscode.ExtensionContext): vscode.Disposable |
             DBADMIN_STORAGE_ROOT: context.globalStorageUri.fsPath,
             DBADMIN_MCP_ALLOW_WRITES: settings.allowWrites ? "true" : "false",
             DBADMIN_MCP_MAX_ROWS: String(settings.maxRows),
+            DBADMIN_MCP_LOCALE: getLocale(),
+            DBADMIN_EXTENSION_ROOT: context.extensionPath,
           },
           `1.0.0-w${settings.allowWrites ? "1" : "0"}-r${settings.maxRows}`,
         );
@@ -80,7 +85,7 @@ function registerProvider(context: vscode.ExtensionContext): vscode.Disposable |
     return vscode.Disposable.from(provider, configListener, didChange);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.warn(`[DBAdmin MCP] Provider não registrado: ${message}`);
+    console.warn(`[DBAdmin MCP] Provider not registered: ${message}`);
     return undefined;
   }
 }
@@ -101,7 +106,7 @@ export function setupDbAdminMcp(context: vscode.ExtensionContext): vscode.Dispos
   const runSync = (): void => {
     void syncCursorMcpJson(context).catch((error) => {
       const message = error instanceof Error ? error.message : String(error);
-      console.error(`[DBAdmin MCP] Falha ao sincronizar mcp.json: ${message}`);
+      console.error(`[DBAdmin MCP] Failed to sync mcp.json: ${message}`);
     });
   };
 
@@ -143,6 +148,6 @@ export async function copyDbAdminMcpConfig(
   });
   await vscode.env.clipboard.writeText(snippet);
   await vscode.window.showInformationMessage(
-    "Config MCP do DBAdmin copiada. Cole em mcp.json, claude_desktop_config.json ou use claude mcp add.",
+    t("DBAdmin MCP config copied. Paste into mcp.json, claude_desktop_config.json, or use claude mcp add."),
   );
 }
