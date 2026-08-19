@@ -19,7 +19,7 @@ import {
   TreeNodeRef,
 } from './models';
 import { t } from './i18n';
-import { PostgresService } from './postgresService';
+import { PostgresService, comparePostgresSchemaNames } from './postgresService';
 
 type SnapshotLoadStatus = 'created' | 'loading' | 'ready' | 'error';
 
@@ -343,7 +343,9 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
         }
 
         if (element.kind === 'schemas') {
-          const schemas = Array.from(database.schemaByName.keys()).sort((a, b) => a.localeCompare(b));
+          const schemas = Array.from(database.schemaByName.keys()).sort(
+            comparePostgresSchemaNames,
+          );
           if (schemas.length === 0) {
             if (database.status === 'error') {
               return [
@@ -642,14 +644,14 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
     if (element.type === 'filterControl') {
       const activeFilter = element.value.trim();
       const item = new vscode.TreeItem(
-        activeFilter ? `${activeFilter}` : 'Filtrar tabelas...',
+        activeFilter ? `${activeFilter}` : t('Filter tables...'),
         vscode.TreeItemCollapsibleState.None
       );
       item.contextValue = 'filterControl';
-      item.description = activeFilter && !this.filterHasResults ? 'sem resultados' : undefined;
+      item.description = activeFilter && !this.filterHasResults ? t('no results') : undefined;
       item.tooltip = activeFilter
-        ? `Filtro global de tabelas ativo: ${activeFilter}\n(Duplo clique ou F2 para editar)`
-        : 'Filtro global de tabelas\n(Duplo clique ou F2 para editar)';
+        ? t('Global table filter active: {0}\n(Double-click or F2 to edit)', activeFilter)
+        : t('Global table filter\n(Double-click or F2 to edit)');
       item.iconPath = new vscode.ThemeIcon('search');
       return item;
     }
@@ -753,7 +755,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
           element.itemKind === 'column'
             ? 'dbadmin.openColumnDetails'
             : 'dbadmin.openConstraintDetails',
-        title: 'Abrir detalhes',
+        title: t('Open details'),
         arguments: [element],
       };
       return item;
@@ -771,7 +773,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
     if (element.kind === 'table') {
       objectItem.command = {
         command: 'dbadmin.openTable',
-        title: 'Open Table',
+        title: t('Open Table'),
         arguments: [element],
       };
     }

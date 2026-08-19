@@ -236,14 +236,16 @@ export function createSqlBookRunPerQueryCodeLensProvider(): {
       if (document.languageId !== "sql") {
         return [];
       }
-      if (!findSqlBookCell(document.uri)) {
-        return [];
-      }
 
       const statements = findExecutableSqlStatements(document.getText());
       if (statements.length < 2) {
         return [];
       }
+
+      const isSqlBookCell = Boolean(findSqlBookCell(document.uri));
+      const command = isSqlBookCell
+        ? "dbadmin.executeSqlBookStatement"
+        : "dbadmin.executeSqlRunnerStatement";
 
       return statements.map((statement) => {
         const position = document.positionAt(statement.start);
@@ -251,8 +253,8 @@ export function createSqlBookRunPerQueryCodeLensProvider(): {
         return new vscode.CodeLens(range, {
           title: t("$(play) Run"),
           tooltip: t("$(play) Run"),
-          command: "dbadmin.executeSqlBookStatement",
-          arguments: [document.uri, statement.sql],
+          command,
+          arguments: [document.uri, statement.sql, statement.start],
         });
       });
     },
@@ -390,6 +392,7 @@ export async function executeSqlBookStatement(
   controller: SqlBookController,
   uri: vscode.Uri | string,
   sql: string,
+  sourceOffset?: number,
 ): Promise<void> {
   const parsed = typeof uri === "string" ? vscode.Uri.parse(uri) : uri;
   const cell = findSqlBookCell(parsed);
@@ -399,5 +402,5 @@ export async function executeSqlBookStatement(
     );
     return;
   }
-  await controller.executeCellStatement(cell, sql);
+  await controller.executeCellStatement(cell, sql, sourceOffset);
 }

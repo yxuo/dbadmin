@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { getBcp47Locale } from './i18n';
+import { getBcp47Locale, t } from './i18n';
 import { loadLocaleDict, webviewI18nBootstrap } from './i18n/webviewLocale';
 import { SchemaNodeRef } from './models';
 import { BackupOptions, listRoles, runBackup } from './backupRestoreService';
@@ -75,10 +75,10 @@ export class BackupPanelManager {
 
         if (message.type === 'browse') {
           const uri = await vscode.window.showSaveDialog({
-            title: 'Salvar arquivo de backup',
+            title: t('Save backup file'),
             filters: {
-              'Backup PostgreSQL': ['backup', 'dump', 'tar', 'sql'],
-              'Todos os arquivos': ['*'],
+              [t('PostgreSQL backup')]: ['backup', 'dump', 'tar', 'sql'],
+              [t('All files')]: ['*'],
             },
           });
           if (uri) {
@@ -523,7 +523,7 @@ function buildBackupHtml(webview: vscode.Webview, node: SchemaNodeRef, extension
         };
 
         if (!options.filename.trim()) {
-          document.getElementById('statusMsg').textContent = 'Informe o arquivo SQL de destino.';
+          document.getElementById('statusMsg').textContent = t('webview.backup.needSqlFile', 'Informe o arquivo SQL de destino.');
           document.getElementById('statusMsg').className = 'status error';
           return;
         }
@@ -562,7 +562,7 @@ function buildBackupHtml(webview: vscode.Webview, node: SchemaNodeRef, extension
       };
 
       if (!options.filename.trim()) {
-        document.getElementById('statusMsg').textContent = 'Informe o arquivo de destino.';
+        document.getElementById('statusMsg').textContent = t('webview.backup.needDestFile', 'Informe o arquivo de destino.');
         document.getElementById('statusMsg').className = 'status error';
         return;
       }
@@ -587,7 +587,7 @@ function buildBackupHtml(webview: vscode.Webview, node: SchemaNodeRef, extension
 
           const blank = document.createElement('option');
           blank.value = '';
-          blank.textContent = '(Padrão)';
+          blank.textContent = t('webview.common.default', '(Padrão)');
           selectEl.appendChild(blank);
 
           roles.forEach((role) => {
@@ -616,7 +616,7 @@ function buildBackupHtml(webview: vscode.Webview, node: SchemaNodeRef, extension
 
       if (msg.type === 'started') {
         document.getElementById('executeBtn').disabled = true;
-        document.getElementById('statusMsg').textContent = 'Executando...';
+        document.getElementById('statusMsg').textContent = t('webview.backup.executing', 'Executando...');
         document.getElementById('statusMsg').className = 'status';
         const box = document.getElementById('outputBox');
         box.textContent = '';
@@ -635,10 +635,10 @@ function buildBackupHtml(webview: vscode.Webview, node: SchemaNodeRef, extension
         document.getElementById('executeBtn').disabled = false;
         const statusEl = document.getElementById('statusMsg');
         if (msg.success) {
-          statusEl.textContent = 'Backup concluído com sucesso.';
+          statusEl.textContent = t('webview.backup.completed', 'Backup concluído com sucesso.');
           statusEl.className = 'status success';
         } else {
-          statusEl.textContent = 'Erro: ' + (msg.error || 'Falha desconhecida.');
+          statusEl.textContent = tf('error.failed', { detail: msg.error || t('webview.common.unknownFailure', 'Falha desconhecida.') }, 'Erro: ' + (msg.error || 'Falha desconhecida.'));
           statusEl.className = 'status error';
         }
       }

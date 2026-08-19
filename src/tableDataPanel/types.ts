@@ -14,6 +14,16 @@ export interface OpenTableInput {
   initialState?: TableState;
 }
 
+export interface TableWebviewSession {
+  connectionId: string;
+  databaseName: string;
+  schemaName: string;
+  objectName: string;
+  newTab: boolean;
+  layout?: TableLayoutState;
+  state?: TableState;
+}
+
 export interface TableState {
   searchText: string;
   searchMode: "local" | "query";
@@ -50,8 +60,10 @@ export type WebviewMessage =
       rows: Array<Record<string, unknown>>;
     }
   | { type: "openInNewTab" }
+  | { type: "togglePin" }
   | { type: "openSettings" }
   | { type: "showInExplorer" }
+  | { type: "showTableDdl" }
   | {
       type: "openJsonInNativeEditor";
       content: string;

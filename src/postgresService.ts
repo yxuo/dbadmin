@@ -11,6 +11,21 @@ export interface SchemaObjectCounts {
   triggers: number;
 }
 
+/** Same system schemas pg_dump skips by default (`pg_*`, information_schema). */
+export function isPostgresSystemSchema(schemaName: string): boolean {
+  const name = String(schemaName || "").trim();
+  return name === "information_schema" || name.startsWith("pg_");
+}
+
+export function comparePostgresSchemaNames(a: string, b: string): number {
+  const aSystem = isPostgresSystemSchema(a);
+  const bSystem = isPostgresSystemSchema(b);
+  if (aSystem !== bSystem) {
+    return aSystem ? 1 : -1;
+  }
+  return a.localeCompare(b);
+}
+
 export interface TableColumnMeta {
   name: string;
   dataType: string;
@@ -393,6 +408,34 @@ export class PostgresService {
     );
   }
 
+  public async dropTable(
+    connection: PostgresConnection,
+    databaseName: string,
+    schemaName: string,
+    tableName: string,
+  ): Promise<void> {
+    const sql = `DROP TABLE ${this.quoteIdentifier(schemaName)}.${this.quoteIdentifier(tableName)} CASCADE`;
+    await this.withUserActivity(
+      connection.id,
+      `Executando: ${sql}`,
+      async () => {
+        const client = await this.connect({
+          ...connection,
+          database: databaseName,
+        });
+        try {
+          await client.query(sql);
+        } finally {
+          await client.end();
+        }
+      },
+      (_result, elapsedMs) => ({
+        kind: "completed",
+        message: `Completed in ${elapsedMs}ms`,
+      }),
+    );
+  }
+
   public async listSchemas(
     connection: PostgresConnection,
     databaseName: string,
@@ -406,7 +449,12 @@ export class PostgresService {
         `SELECT schema_name
          FROM information_schema.schemata
          WHERE schema_name NOT IN ('pg_catalog', 'information_schema')
-         ORDER BY schema_name`,
+         ORDER BY
+           CASE
+             WHEN schema_name LIKE 'pg\_%' ESCAPE '\' THEN 1
+             ELSE 0
+           END,
+           schema_name`,
       );
       return result.rows.map((row) => row.schema_name);
     } finally {
@@ -1135,101 +1183,7 @@ export class PostgresService {
       database: databaseName,
     });
     try {
-      const result = await client.query<{
-        name: string;
-        data_type: string;
-        is_nullable: "YES" | "NO";
-        column_default: string | null;
-        is_primary_key: boolean;
-        is_unique: boolean;
-        is_foreign_key: boolean;
-        foreign_key_target_schema: string | null;
-        foreign_key_target_table: string | null;
-        foreign_key_target_column: string | null;
-      }>(
-        `SELECT
-           c.column_name AS name,
-           c.data_type,
-           c.is_nullable,
-           c.column_default,
-           EXISTS (
-             SELECT 1
-             FROM information_schema.table_constraints tc
-             JOIN information_schema.key_column_usage kcu
-               ON tc.constraint_name = kcu.constraint_name
-              AND tc.constraint_schema = kcu.constraint_schema
-             WHERE tc.constraint_type = 'PRIMARY KEY'
-               AND kcu.table_schema = c.table_schema
-               AND kcu.table_name = c.table_name
-               AND kcu.column_name = c.column_name
-           ) AS is_primary_key,
-           EXISTS (
-             SELECT 1
-             FROM information_schema.table_constraints tc
-             JOIN information_schema.key_column_usage kcu
-               ON tc.constraint_name = kcu.constraint_name
-              AND tc.constraint_schema = kcu.constraint_schema
-             WHERE tc.constraint_type = 'UNIQUE'
-               AND kcu.table_schema = c.table_schema
-               AND kcu.table_name = c.table_name
-               AND kcu.column_name = c.column_name
-           ) AS is_unique,
-           EXISTS (
-             SELECT 1
-             FROM information_schema.key_column_usage kcu
-             JOIN information_schema.referential_constraints rc
-               ON rc.constraint_name = kcu.constraint_name
-              AND rc.constraint_schema = kcu.constraint_schema
-             WHERE kcu.table_schema = c.table_schema
-               AND kcu.table_name = c.table_name
-               AND kcu.column_name = c.column_name
-           ) AS is_foreign_key,
-           fk.foreign_key_target_schema,
-           fk.foreign_key_target_table,
-           fk.foreign_key_target_column
-         FROM information_schema.columns c
-         LEFT JOIN (
-           SELECT
-             kcu.table_schema,
-             kcu.table_name,
-             kcu.column_name,
-             ukcu.table_schema AS foreign_key_target_schema,
-             ukcu.table_name AS foreign_key_target_table,
-             ukcu.column_name AS foreign_key_target_column
-           FROM information_schema.table_constraints tc
-           JOIN information_schema.key_column_usage kcu
-             ON tc.constraint_name = kcu.constraint_name
-            AND tc.constraint_schema = kcu.constraint_schema
-           JOIN information_schema.referential_constraints rc
-             ON rc.constraint_name = tc.constraint_name
-            AND rc.constraint_schema = tc.constraint_schema
-           JOIN information_schema.key_column_usage ukcu
-             ON ukcu.constraint_name = rc.unique_constraint_name
-            AND ukcu.constraint_schema = rc.unique_constraint_schema
-            AND ukcu.ordinal_position = kcu.position_in_unique_constraint
-           WHERE tc.constraint_type = 'FOREIGN KEY'
-         ) fk
-           ON fk.table_schema = c.table_schema
-          AND fk.table_name = c.table_name
-          AND fk.column_name = c.column_name
-         WHERE c.table_schema = $1
-           AND c.table_name = $2
-         ORDER BY c.ordinal_position`,
-        [schemaName, tableName],
-      );
-
-      return result.rows.map((row) => ({
-        name: row.name,
-        dataType: row.data_type,
-        isNullable: row.is_nullable === "YES",
-        hasDefault: row.column_default !== null,
-        isPrimaryKey: Boolean(row.is_primary_key),
-        isUnique: Boolean(row.is_unique),
-        isForeignKey: Boolean(row.is_foreign_key),
-        foreignKeyTargetSchema: row.foreign_key_target_schema,
-        foreignKeyTargetTable: row.foreign_key_target_table,
-        foreignKeyTargetColumn: row.foreign_key_target_column,
-      }));
+      return await this.queryColumnsWithClient(client, schemaName, tableName);
     } finally {
       await client.end();
     }

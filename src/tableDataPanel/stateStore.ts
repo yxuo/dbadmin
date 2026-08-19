@@ -4,17 +4,8 @@ import {
   DEFAULT_PAGE_SIZE_SETTING,
   TableLayoutState,
   TableState,
+  TableWebviewSession,
 } from "./types";
-
-export interface StoredOpenTab {
-  connectionId: string;
-  databaseName: string;
-  schemaName: string;
-  objectName: string;
-  newTab: boolean;
-  layout?: TableLayoutState;
-  state?: TableState;
-}
 
 export function getConfiguredDefaultPageSize(): number {
   const configured = vscode.workspace
@@ -85,44 +76,29 @@ export async function persistLayout(
   await context.globalState.update(buildTableLayoutStorageKey(node), layout);
 }
 
-export async function persistOpenTabs(
-  context: vscode.ExtensionContext,
-  openTabs: StoredOpenTab[],
-): Promise<void> {
-  await context.globalState.update("dbadmin.openTabs", openTabs);
-}
-
-export function getStoredOpenTabs(
-  context: vscode.ExtensionContext,
-): StoredOpenTab[] {
-  return context.globalState.get("dbadmin.openTabs", []) as StoredOpenTab[];
-}
-
-export function buildOpenTabsSnapshot(
-  panelNodes: Map<vscode.WebviewPanel, DbObjectNodeRef>,
-  panelIsNewTab: Map<vscode.WebviewPanel, boolean>,
-  panelLayouts: Map<vscode.WebviewPanel, TableLayoutState>,
-  panelStates: Map<vscode.WebviewPanel, TableState>,
-  cloneTableState: (state: TableState) => TableState,
-  defaultState: TableState,
-): StoredOpenTab[] {
-  const openTabs: StoredOpenTab[] = [];
-
-  for (const [panel, node] of panelNodes.entries()) {
-    if (!node || !node.connection) {
-      continue;
-    }
-
-    openTabs.push({
-      connectionId: node.connection.id,
-      databaseName: node.databaseName,
-      schemaName: node.schemaName,
-      objectName: node.objectName,
-      newTab: panelIsNewTab.get(panel) ?? false,
-      layout: panelLayouts.get(panel),
-      state: cloneTableState(panelStates.get(panel) ?? defaultState),
-    });
+export function parseTableWebviewSession(
+  raw: unknown,
+): TableWebviewSession | undefined {
+  if (!raw || typeof raw !== "object") {
+    return undefined;
   }
 
-  return openTabs;
+  const value = raw as Partial<TableWebviewSession>;
+  const connectionId = String(value.connectionId || "").trim();
+  const databaseName = String(value.databaseName || "").trim();
+  const schemaName = String(value.schemaName || "").trim();
+  const objectName = String(value.objectName || "").trim();
+  if (!connectionId || !databaseName || !schemaName || !objectName) {
+    return undefined;
+  }
+
+  return {
+    connectionId,
+    databaseName,
+    schemaName,
+    objectName,
+    newTab: Boolean(value.newTab),
+    layout: value.layout,
+    state: value.state,
+  };
 }

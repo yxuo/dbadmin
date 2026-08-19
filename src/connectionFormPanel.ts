@@ -487,7 +487,7 @@ function getHtml(
     });
 
     document.getElementById('test').addEventListener('click', () => {
-      setStatus('Testando conexão...', '');
+      setStatus(t('webview.connection.testing', 'Testando conexão...'), '');
       vscode.postMessage({ type: 'test', payload: payload() });
     });
 

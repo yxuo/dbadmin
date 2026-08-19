@@ -177,7 +177,7 @@ export class ConnectionManagerPanelManager {
 
     const panel = vscode.window.createWebviewPanel(
       "dbadmin.connectionManager",
-      `Gerenciar — ${title}`,
+      t("Manage — {0}", title),
       { viewColumn: vscode.ViewColumn.Active, preserveFocus: false },
       { enableScripts: true, retainContextWhenHidden: true },
     );

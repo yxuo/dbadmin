@@ -1,106 +1,106 @@
-# Desenvolvimento
+# Development
 
-Este guia reúne instruções voltadas para desenvolvimento local, build, empacotamento, validação de conteúdo do pacote e publicação.
+This guide covers local development, build, packaging, package content validation, and publishing.
 
-## 1) Pré-requisitos
+## 1) Prerequisites
 
-- Node.js e npm instalados
-- Dependências do projeto instaladas
-- Conta com acesso ao publisher no Visual Studio Marketplace (para publicação)
-- PAT criado no Azure DevOps (para publicação)
+- Node.js and npm installed
+- Project dependencies installed
+- Marketplace publisher account (for publishing)
+- Azure DevOps PAT (for publishing)
 
-## 2) Instalar dependências
+## 2) Install dependencies
 
 ```bash
 npm install
 ```
 
-## 3) Compilar a extensão
+## 3) Compile the extension
 
 ```bash
 npm run compile
 ```
 
-## 4) Empacotar VSIX
+## 4) Package VSIX
 
-Comando padrão:
+Default command:
 
 ```bash
-npx @vscode/vsce package --no-dependencies --out <nome-do-pacote>.vsix
+npx @vscode/vsce package --no-dependencies --out <package-name>.vsix
 ```
 
-## 5) Instalar VSIX localmente
+## 5) Install VSIX locally
 
 Via CLI:
 
 ```bash
-code --install-extension .\<nome-do-pacote>.vsix --force
+code --install-extension .\<package-name>.vsix --force
 ```
 
-Via interface:
+Via UI:
 
-1. Abra Extensions no VS Code.
-2. Clique em `...`.
-3. Selecione `Install from VSIX...`.
-4. Escolha o arquivo VSIX gerado.
+1. Open Extensions in VS Code.
+2. Click `...`.
+3. Select `Install from VSIX...`.
+4. Choose the generated VSIX file.
 
-## 6) Verificar o que vai para o pacote
+## 6) Verify package contents
 
-Para listar arquivos incluídos no VSIX:
+To list files included in the VSIX:
 
 ```bash
 npx @vscode/vsce ls
 ```
 
-Se necessário, ajuste o arquivo `.vscodeignore` para remover artefatos de desenvolvimento, arquivos temporários e conteúdos locais.
+If needed, adjust `.vscodeignore` to exclude development artifacts, temporary files, and local-only content.
 
-## 7) Publicação no Marketplace
+## 7) Publish to the Marketplace
 
-### 7.1 Criar PAT (Azure DevOps)
+### 7.1 Create a PAT (Azure DevOps)
 
-1. Acesse `https://aex.dev.azure.com/me`.
-2. Abra `Personal access tokens`.
-3. Crie um token com:
+1. Go to `https://aex.dev.azure.com/me`.
+2. Open `Personal access tokens`.
+3. Create a token with:
    - Scope: `Custom defined`
-   - Marketplace: `Manage` (e `Publish` se o painel separar permissões)
-4. Não usar `Full access`.
+   - Marketplace: `Manage` (and `Publish` if the panel separates permissions)
+4. Do not use `Full access`.
 
-### 7.2 Login com vsce
+### 7.2 Log in with vsce
 
 ```bash
 npx @vscode/vsce login <publisher-id>
 ```
 
-### 7.3 Publicar
+### 7.3 Publish
 
 ```bash
 npx @vscode/vsce publish
 ```
 
-ou:
+or:
 
 ```bash
-npx @vscode/vsce publish <versao>
+npx @vscode/vsce publish <version>
 ```
 
-## 8) Checklist de release
+## 8) Release checklist
 
-- Build concluído sem erros.
-- VSIX gerado com sucesso.
-- Conteúdo do pacote revisado (`vsce ls`).
-- `README.md` atualizado para página da loja.
-- `CHANGELOG.md` atualizado com a versão.
-- `LICENSE` presente.
+- Build completed without errors.
+- VSIX generated successfully.
+- Package contents reviewed (`vsce ls`).
+- `README.md` updated for the store page.
+- `CHANGELOG.md` updated for the version.
+- `LICENSE` present.
 
-## 8.1) Configuração de conexões
+## 8.1) Connection configuration
 
-- Cada conexão pode definir uma lista opcional de bancos visíveis na sidebar.
-- Quando a lista estiver preenchida, apenas esses bancos serão exibidos no explorador.
-- Quando a lista estiver vazia, todos os bancos disponíveis para a conexão serão exibidos.
+- Each connection can define an optional list of databases visible in the sidebar.
+- When the list is set, only those databases appear in the explorer.
+- When the list is empty, all databases available to the connection are shown.
 
-## 9) Segurança e operação
+## 9) Security and operations
 
-- Use PAT com escopo mínimo.
-- Defina expiração curta e faça rotação periódica.
-- Nunca versionar PAT no repositório.
-- Em CI, usar secrets do provedor (ex.: GitHub Actions Secrets).
+- Use PATs with minimum scope.
+- Set short expiration and rotate periodically.
+- Never commit PATs to the repository.
+- In CI, store credentials in provider secrets (e.g. GitHub Actions Secrets).

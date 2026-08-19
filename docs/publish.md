@@ -1,49 +1,49 @@
-# Publicar no VS Code Marketplace
+# Publish to the VS Code Marketplace
 
-Este guia apresenta o fluxo de publicação no Marketplace de forma genérica.
+This guide describes the Marketplace publishing flow in general terms.
 
-## 1) Pré-requisitos
+## 1) Prerequisites
 
-- Conta Microsoft com acesso ao publisher da extensão.
-- PAT (Personal Access Token) criado no Azure DevOps.
-- Projeto compilando e empacotando sem erros.
+- Microsoft account with access to the extension publisher.
+- PAT (Personal Access Token) created in Azure DevOps.
+- Project compiling and packaging without errors.
 
-## 2) Criar PAT
+## 2) Create a PAT
 
-1. Acesse `https://aex.dev.azure.com/me`.
-2. Abra `Personal access tokens`.
-3. Crie um novo token com:
+1. Go to `https://aex.dev.azure.com/me`.
+2. Open `Personal access tokens`.
+3. Create a new token with:
    - Scope: `Custom defined`
-   - Marketplace: `Manage` (e `Publish` se o painel separar permissões)
-4. Não use `Full access`.
+   - Marketplace: `Manage` (and `Publish` if the panel separates permissions)
+4. Do not use `Full access`.
 
-## 3) Login
+## 3) Log in
 
 ```bash
 npx @vscode/vsce login <publisher-id>
 ```
 
-## 4) Publicar
+## 4) Publish
 
 ```bash
 npx @vscode/vsce publish
 ```
 
-ou:
+or:
 
 ```bash
-npx @vscode/vsce publish <versao>
+npx @vscode/vsce publish <version>
 ```
 
-## 5) Boas práticas
+## 5) Best practices
 
-- Usar PAT com escopo mínimo.
-- Definir expiração curta e rotacionar periodicamente.
-- Em CI, salvar o PAT em secrets.
-- Nunca versionar PAT no repositório.
+- Use PATs with minimum scope.
+- Set short expiration and rotate periodically.
+- In CI, store the PAT in secrets.
+- Never commit PATs to the repository.
 
-## 6) Guia completo para dev
+## 6) Full developer guide
 
-Para fluxo completo de desenvolvimento (build, VSIX, validação do pacote e release), consulte:
+For the complete development workflow (build, VSIX, package validation, and release), see:
 
-- [docs/development.md](docs/development.md)
+- [docs/development.md](development.md)

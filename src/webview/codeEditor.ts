@@ -162,25 +162,28 @@ export function buildCodeEditorStyles(): string {
   `;
 }
 
-export function buildCodeEditorMarkup(idPrefix = "codeEditor"): string {
+export function buildCodeEditorMarkup(
+  idPrefix = "codeEditor",
+  L: (key: string, fallback: string) => string = (_key, fallback) => fallback,
+): string {
   return `
     <div class="code-editor-shell" id="${idPrefix}Root">
       <div class="code-editor-find-widget" id="${idPrefix}FindWidget">
         <div class="code-editor-find-row">
           <div class="code-editor-find-input-wrap">
-            <input class="code-editor-find-input" id="${idPrefix}FindInput" placeholder="Buscar" />
-            <button class="code-editor-toggle-replace-chevron" id="${idPrefix}ToggleReplace" title="Mostrar substituir">▶</button>
+            <input class="code-editor-find-input" id="${idPrefix}FindInput" placeholder="${L('webview.editor.find', 'Buscar')}" />
+            <button class="code-editor-toggle-replace-chevron" id="${idPrefix}ToggleReplace" title="${L('webview.editor.showReplace', 'Mostrar substituir')}">▶</button>
           </div>
           <span class="code-editor-find-result" id="${idPrefix}FindResult"></span>
-          <button id="${idPrefix}FindPrev" class="secondary" title="Anterior">↑</button>
-          <button id="${idPrefix}FindNext" class="secondary" title="Próximo">↓</button>
+          <button id="${idPrefix}FindPrev" class="secondary" title="${L('webview.editor.findPrev', 'Anterior')}">↑</button>
+          <button id="${idPrefix}FindNext" class="secondary" title="${L('webview.editor.findNext', 'Próximo')}">↓</button>
           <button id="${idPrefix}Regex" class="secondary" title="Regex">.*</button>
-          <button id="${idPrefix}CloseFind" class="secondary" title="Fechar busca">✕</button>
+          <button id="${idPrefix}CloseFind" class="secondary" title="${L('webview.editor.closeFind', 'Fechar busca')}">✕</button>
         </div>
         <div class="code-editor-replace-row" id="${idPrefix}ReplaceRow">
-          <input class="code-editor-replace-input" id="${idPrefix}ReplaceInput" placeholder="Substituir" />
-          <button id="${idPrefix}ReplaceOne" class="secondary" title="Substituir">Substituir</button>
-          <button id="${idPrefix}ReplaceAll" class="secondary" title="Substituir tudo">Tudo</button>
+          <input class="code-editor-replace-input" id="${idPrefix}ReplaceInput" placeholder="${L('webview.editor.replace', 'Substituir')}" />
+          <button id="${idPrefix}ReplaceOne" class="secondary" title="${L('webview.editor.replace', 'Substituir')}">${L('webview.editor.replace', 'Substituir')}</button>
+          <button id="${idPrefix}ReplaceAll" class="secondary" title="${L('webview.editor.replaceAll', 'Substituir tudo')}">${L('webview.editor.replaceAllShort', 'Tudo')}</button>
         </div>
       </div>
       <div class="code-editor-line-numbers" id="${idPrefix}LineNumbers"></div>
@@ -464,7 +467,7 @@ export function buildCodeEditorScript(): string {
           if (currentIndex < 0) {
             currentIndex = 0;
           }
-          findResultEl.textContent = String(currentIndex + 1) + ' de ' + String(matches.length);
+          findResultEl.textContent = tf('webview.editor.findOf', { current: currentIndex + 1, total: matches.length }, String(currentIndex + 1) + ' of ' + String(matches.length));
         }
 
         function findNext(reverse) {

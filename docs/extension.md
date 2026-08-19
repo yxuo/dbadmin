@@ -1,67 +1,67 @@
-# Gerar VSIX (instalar localmente)
+# Build a VSIX (local install)
 
-Este guia mostra como empacotar a extensão em um arquivo VSIX e instalar no VS Code.
+This guide shows how to package the extension as a VSIX file and install it in VS Code.
 
-## Pré-requisitos
+## Prerequisites
 
-- Node.js e npm instalados
-- Dependências do projeto instaladas
+- Node.js and npm installed
+- Project dependencies installed
 
-## 1 Instalar dependências
+## 1) Install dependencies
 
 ```bash
 npm install
 ```
 
-## 2 Compilar a extensão
+## 2) Compile the extension
 
 ```bash
 npm run compile
 ```
 
-## 3 Gerar o VSIX
+## 3) Generate the VSIX
 
-Comando padrão:
-
-```bash
-npx @vscode/vsce package --out dbadmin-0.0.1.vsix
-```
-
-Neste projeto, o `vsce` pode pedir confirmação por avisos de manifesto. Para automação local, use:
+Default command:
 
 ```bash
-"y" | npx @vscode/vsce package --allow-missing-repository --allow-star-activation --out dbadmin-0.0.1.vsix
+npx @vscode/vsce package --out dbadmin-1.0.0.vsix
 ```
 
-## 4 Instalar no VS Code
+In this project, `vsce` may prompt for confirmation due to manifest warnings. For local automation, use:
+
+```bash
+"y" | npx @vscode/vsce package --allow-missing-repository --allow-star-activation --out dbadmin-1.0.0.vsix
+```
+
+## 4) Install in VS Code
 
 Via CLI:
 
 ```bash
-code --install-extension .\\dbadmin-0.0.1.vsix --force
+code --install-extension .\dbadmin-1.0.0.vsix --force
 ```
 
-Via interface:
+Via UI:
 
-1. Abra Extensions no VS Code.
-2. Clique em `...` (menu da view).
-3. Selecione `Install from VSIX...`.
-4. Escolha o arquivo VSIX gerado.
+1. Open Extensions in VS Code.
+2. Click `...` (view menu).
+3. Select `Install from VSIX...`.
+4. Choose the generated VSIX file.
 
-## 5 Atualizar versão local
+## 5) Update a local install
 
-Ao gerar novas builds locais:
+When generating new local builds:
 
-- Reexecute `npm run compile`
-- Reexecute `vsce package`
-- Reinstale com `--force`
+- Run `npm run compile` again
+- Run `vsce package` again
+- Reinstall with `--force`
 
-## Dicas
+## Tips
 
-- O conteúdo do pacote pode ser inspecionado com:
+- Inspect package contents with:
 
 ```bash
 npx @vscode/vsce ls
 ```
 
-- Se o pacote ficar grande, revise o arquivo `.vscodeignore`.
+- If the package is too large, review `.vscodeignore`.

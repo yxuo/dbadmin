@@ -1,17 +1,22 @@
 # Changelog
 
-## [0.0.1] - 2025-01-01
+## [1.0.0] - 2026-08-18
 
-### Adicionado
+First stable release — **PostgreSQL foundation** for VS Code / Cursor.
 
-- Gerenciador de conexões PostgreSQL com armazenamento global (compartilhado entre workspaces)
-- Sidebar com explorador de banco de dados em árvore (conexões → databases → schemas → tabelas)
-- Formulário de criação e edição de conexões
-- Visualização de dados de tabelas com paginação e filtros avançados
-- Metadados de tabelas (colunas, índices, restrições)
-- Exportação de dados para CSV e JSON
-- Backup e restore de banco de dados via `pg_dump` / `pg_restore`
-- SQL Book: notebooks SQL com execução interativa
-- Painel de configurações globais da extensão
-- Botão "Recolher tudo" na barra da sidebar, habilitado apenas quando há itens expandidos
-- Filtro de tabelas na sidebar
+### Added
+
+- Connection manager with global persistence and optional database allowlists
+- Tree explorer: connections → databases → schemas → tables, views, functions, procedures, triggers, and extensions
+- Table view: pagination, column filters, in-place editing, FK navigation, copy/paste, and layout persistence
+- Table DDL: show full `CREATE TABLE` script; create and drop tables from the tree or table menu
+- Metadata panels for columns and constraints; edit column nullable/default values
+- ER diagram with relationship highlighting and export
+- Connection dashboard: traffic, queries, sessions, and transactions
+- Schema and database operations: create, rename, duplicate, drop; backup, restore, and clear schema
+- Routines: create, edit, and delete functions, procedures, and triggers via the SQL runner
+- Data export to CSV and JSON
+- SQL Book and SQL runner with connection context; optional inline table with persisted cell outputs
+- Native schema dump and optional `pg_dump` / `pg_restore` integration
+- MCP server for AI tools (list connections, inspect schemas, run SQL)
+- Settings panel, table filter in the sidebar, and i18n (English / Portuguese)

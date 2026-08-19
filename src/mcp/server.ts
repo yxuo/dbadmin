@@ -16,7 +16,7 @@ async function main(): Promise<void> {
 
   const server = new McpServer({
     name: "dbadmin",
-    version: "0.0.1",
+    version: "1.0.0",
   });
 
   registerDbAdminTools(server, store, postgres, config);

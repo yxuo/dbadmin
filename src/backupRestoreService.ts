@@ -987,6 +987,147 @@ async function getDumpTables(
   return tables;
 }
 
+async function getDumpTable(
+  client: Client,
+  schemaName: string,
+  tableName: string,
+): Promise<DumpTable | null> {
+  const tablesResult = await client.query<{ table_name: string }>(
+    `SELECT c.relname AS table_name
+     FROM pg_class c
+     JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = $1
+       AND c.relname = $2
+       AND c.relkind IN ('r', 'p')`,
+    [schemaName, tableName],
+  );
+
+  if (tablesResult.rows.length === 0) {
+    return null;
+  }
+
+  const columnsResult = await client.query<{
+    name: string;
+    data_type: string;
+    is_not_null: boolean;
+    default_expression: string | null;
+    identity_kind: "" | "a" | "d";
+    generated_kind: "" | "s";
+    generation_expression: string | null;
+  }>(
+    `SELECT
+       a.attname AS name,
+       pg_catalog.format_type(a.atttypid, a.atttypmod) AS data_type,
+       a.attnotnull AS is_not_null,
+       CASE
+         WHEN a.attgenerated = 's' THEN NULL
+         ELSE pg_get_expr(ad.adbin, ad.adrelid)
+       END AS default_expression,
+       a.attidentity AS identity_kind,
+       a.attgenerated AS generated_kind,
+       CASE
+         WHEN a.attgenerated = 's' THEN pg_get_expr(ad.adbin, ad.adrelid)
+         ELSE NULL
+       END AS generation_expression
+     FROM pg_attribute a
+     JOIN pg_class c ON c.oid = a.attrelid
+     JOIN pg_namespace n ON n.oid = c.relnamespace
+     LEFT JOIN pg_attrdef ad
+       ON ad.adrelid = a.attrelid
+      AND ad.adnum = a.attnum
+     WHERE n.nspname = $1
+       AND c.relname = $2
+       AND a.attnum > 0
+       AND NOT a.attisdropped
+     ORDER BY a.attnum`,
+    [schemaName, tableName],
+  );
+
+  return {
+    name: tableName,
+    columns: columnsResult.rows.map((column) => ({
+      name: column.name,
+      dataType: column.data_type,
+      isNotNull: Boolean(column.is_not_null),
+      defaultExpression: column.default_expression,
+      identityKind: column.identity_kind,
+      generatedKind: column.generated_kind,
+      generationExpression: column.generation_expression,
+    })),
+  };
+}
+
+export async function buildTableDdlScript(
+  connection: PostgresConnection,
+  databaseName: string,
+  schemaName: string,
+  tableName: string,
+): Promise<string> {
+  const client = await connectClient(connection, databaseName);
+
+  try {
+    const table = await getDumpTable(client, schemaName, tableName);
+    if (!table) {
+      throw new Error(
+        t('Table "{0}.{1}" was not found.', schemaName, tableName),
+      );
+    }
+
+    const [allConstraints, allIndexes] = await Promise.all([
+      getDumpConstraints(client, schemaName),
+      getDumpIndexes(client, schemaName),
+    ]);
+
+    const constraints = allConstraints.filter(
+      (constraint) => constraint.tableName === tableName,
+    );
+    const indexes = allIndexes.filter((index) => index.tableName === tableName);
+
+    const scriptParts: string[] = [
+      `-- DDL for ${quoteQualifiedName(schemaName, tableName)}`,
+      buildTableStatement(schemaName, table),
+    ];
+
+    const defaultStatements = buildDefaultStatements(schemaName, [table]);
+    if (defaultStatements.length > 0) {
+      scriptParts.push("\n-- Column defaults");
+      scriptParts.push(...defaultStatements);
+    }
+
+    const nonForeignConstraints = constraints.filter(
+      (constraint) => constraint.type !== "f",
+    );
+    const foreignConstraints = constraints.filter(
+      (constraint) => constraint.type === "f",
+    );
+
+    if (nonForeignConstraints.length > 0) {
+      scriptParts.push("\n-- Constraints");
+      for (const constraint of nonForeignConstraints) {
+        scriptParts.push(buildConstraintStatement(schemaName, constraint));
+      }
+    }
+
+    if (indexes.length > 0) {
+      scriptParts.push("\n-- Indexes");
+      for (const index of indexes) {
+        scriptParts.push(ensureSqlTerminated(index.definition));
+      }
+    }
+
+    if (foreignConstraints.length > 0) {
+      scriptParts.push("\n-- Foreign keys");
+      for (const constraint of foreignConstraints) {
+        scriptParts.push(buildConstraintStatement(schemaName, constraint));
+      }
+    }
+
+    return scriptParts.filter(Boolean).join("\n\n") + "\n";
+  } finally {
+    await client.end();
+  }
+}
+
 async function getDumpSequences(
   client: Client,
   schemaName: string,

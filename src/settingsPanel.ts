@@ -5,6 +5,7 @@ import * as vscode from 'vscode';
 import { getBcp47Locale, t } from './i18n';
 import { loadLocaleDict, webviewI18nBootstrap } from './i18n/webviewLocale';
 import { getSqlBookIntegratedTableEnabled, setSqlBookIntegratedTableEnabled } from './sqlBookIntegratedTable';
+import { getSqlBookSaveIntegratedTableEnabled, setSqlBookSaveIntegratedTableEnabled, syncSqlBookSaveIntegratedTableContext } from './sqlBookSaveIntegratedTable';
 import { getSqlBookRunPerQueryEnabled, setSqlBookRunPerQueryEnabled } from './sqlBookRunPerQuery';
 
 const PERSIST_LAYOUT_SETTING = 'dbadmin.persistColumnLayout';
@@ -27,6 +28,7 @@ type SettingsWebviewMessage =
         defaultPageSize: number;
         pgAdminBinPath: string;
         sqlbookIntegratedTable: boolean;
+        sqlbookSaveIntegratedTable: boolean;
         sqlbookRunPerQuery: boolean;
         mcpAllowWrites: boolean;
         mcpMaxRows: number;
@@ -52,7 +54,7 @@ export class SettingsPanelManager {
 
     if (this.panel) {
       this.panel.reveal(vscode.ViewColumn.Active, false);
-      void this.pushCurrentState(this.panel);
+      this.panel.webview.html = this.buildHtml(this.panel.webview);
       return;
     }
 
@@ -69,6 +71,25 @@ export class SettingsPanelManager {
       }
     );
 
+    this.attachPanel(panel);
+  }
+
+  public deserialize(webviewPanel: vscode.WebviewPanel, state: unknown): void {
+    if (this.panel && this.panel !== webviewPanel) {
+      this.panel.dispose();
+    }
+
+    const raw = state && typeof state === 'object'
+      ? (state as { section?: unknown })
+      : undefined;
+    if (raw?.section === 'mcp') {
+      this.pendingSection = 'mcp';
+    }
+
+    this.attachPanel(webviewPanel);
+  }
+
+  private attachPanel(panel: vscode.WebviewPanel): void {
     panel.iconPath = new vscode.ThemeIcon('settings-gear');
     panel.webview.html = this.buildHtml(panel.webview);
     this.panel = panel;
@@ -135,6 +156,9 @@ export class SettingsPanelManager {
           setSqlBookIntegratedTableEnabled(
             Boolean(message.settings.sqlbookIntegratedTable),
           ),
+          setSqlBookSaveIntegratedTableEnabled(
+            Boolean(message.settings.sqlbookSaveIntegratedTable),
+          ),
           setSqlBookRunPerQueryEnabled(
             Boolean(message.settings.sqlbookRunPerQuery),
           ),
@@ -145,6 +169,7 @@ export class SettingsPanelManager {
           'dbadmin.sqlbookIntegratedTable',
           Boolean(message.settings.sqlbookIntegratedTable),
         );
+        await syncSqlBookSaveIntegratedTableContext();
         await vscode.commands.executeCommand(
           'setContext',
           'dbadmin.sqlbookRunPerQuery',
@@ -228,6 +253,7 @@ export class SettingsPanelManager {
       .getConfiguration()
       .get<number>(MCP_MAX_ROWS_SETTING, 200);
     const sqlbookIntegratedTable = getSqlBookIntegratedTableEnabled();
+    const sqlbookSaveIntegratedTable = getSqlBookSaveIntegratedTableEnabled();
     const sqlbookRunPerQuery = getSqlBookRunPerQueryEnabled();
     const focusSection = this.pendingSection;
     this.pendingSection = undefined;
@@ -239,6 +265,7 @@ export class SettingsPanelManager {
       defaultPageSize,
       pgAdminBinPath,
       sqlbookIntegratedTable,
+      sqlbookSaveIntegratedTable,
       sqlbookRunPerQuery,
       mcpAllowWrites,
       mcpMaxRows,
@@ -426,8 +453,18 @@ export class SettingsPanelManager {
 
       <div class="item">
         <div class="meta">
+          <span class="title">${L('webview.settings.sqlbook.saveIntegratedTable', 'Salvar tabela integrada')}</span>
+          <span class="desc">${L('webview.settings.sqlbook.saveIntegratedTableDesc', 'Persiste o resultado da tabela integrada no arquivo .sqlbook, como notebooks Jupyter.')}</span>
+        </div>
+        <label>
+          <input id="sqlbookSaveIntegratedTable" type="checkbox" />
+        </label>
+      </div>
+
+      <div class="item">
+        <div class="meta">
           <span class="title">${L('webview.settings.sqlbook.runPerQuery', 'Botão executar por query')}</span>
-          <span class="desc">${L('webview.settings.sqlbook.runPerQueryDesc', 'Quando a célula tiver duas ou mais queries, mostra um botão Executar em cada uma. O Executar da célula continua rodando o bloco inteiro.')}</span>
+          <span class="desc">${L('webview.settings.sqlbook.runPerQueryDesc', 'Quando o arquivo SQL ou a célula tiver duas ou mais queries, mostra um botão Executar em cada uma. O Executar principal continua rodando o bloco inteiro.')}</span>
         </div>
         <label>
           <input id="sqlbookRunPerQuery" type="checkbox" />
@@ -515,11 +552,18 @@ export class SettingsPanelManager {
 
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
+    vscode.setState({
+      kind: 'settings',
+      ...((vscode.getState() && vscode.getState().section === 'mcp')
+        ? { section: 'mcp' }
+        : {}),
+    });
     const showFilterLabel = document.getElementById('showFilterLabel');
     const persistColumnLayout = document.getElementById('persistColumnLayout');
     const defaultPageSize = document.getElementById('defaultPageSize');
     const pgAdminBinPath = document.getElementById('pgAdminBinPath');
     const sqlbookIntegratedTable = document.getElementById('sqlbookIntegratedTable');
+    const sqlbookSaveIntegratedTable = document.getElementById('sqlbookSaveIntegratedTable');
     const sqlbookRunPerQuery = document.getElementById('sqlbookRunPerQuery');
     const mcpAllowWrites = document.getElementById('mcpAllowWrites');
     const mcpMaxRows = document.getElementById('mcpMaxRows');
@@ -680,6 +724,7 @@ export class SettingsPanelManager {
         defaultPageSize: clampPageSize(defaultPageSize.value),
         pgAdminBinPath: String(pgAdminBinPath.value || ''),
         sqlbookIntegratedTable: Boolean(sqlbookIntegratedTable.checked),
+        sqlbookSaveIntegratedTable: Boolean(sqlbookSaveIntegratedTable && sqlbookSaveIntegratedTable.checked),
         sqlbookRunPerQuery: Boolean(sqlbookRunPerQuery.checked),
         mcpAllowWrites: Boolean(mcpAllowWrites.checked),
         mcpMaxRows: clampMcpMaxRows(mcpMaxRows.value),
@@ -704,6 +749,10 @@ export class SettingsPanelManager {
     });
 
     sqlbookIntegratedTable.addEventListener('change', () => {
+      setDirty(true);
+    });
+
+    sqlbookSaveIntegratedTable?.addEventListener('change', () => {
       setDirty(true);
     });
 
@@ -775,12 +824,20 @@ export class SettingsPanelManager {
       defaultPageSize.value = String(message.defaultPageSize ?? 50);
       pgAdminBinPath.value = String(message.pgAdminBinPath || '');
       sqlbookIntegratedTable.checked = Boolean(message.sqlbookIntegratedTable);
+      if (sqlbookSaveIntegratedTable) {
+        sqlbookSaveIntegratedTable.checked = Boolean(message.sqlbookSaveIntegratedTable);
+      }
       sqlbookRunPerQuery.checked = Boolean(message.sqlbookRunPerQuery);
       mcpAllowWrites.checked = Boolean(message.mcpAllowWrites);
       mcpMaxRows.value = String(message.mcpMaxRows ?? 200);
       storagePath.textContent = String(message.storagePath || '');
       storagePath.title = String(message.storagePath || '');
       setDirty(false);
+
+      vscode.setState({
+        kind: 'settings',
+        ...(message.focusSection === 'mcp' ? { section: 'mcp' } : {}),
+      });
 
       if (message.focusSection === 'mcp') {
         const mcpCard = document.getElementById('mcpCard');

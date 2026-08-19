@@ -14,6 +14,8 @@ const FALLBACK_I18N = {
   "webview.renderer.hideColFilters": "Ocultar filtros de coluna",
   "webview.renderer.widthMin": "Colunas com largura mínima (conteúdo)",
   "webview.renderer.widthEqual": "Colunas com largura igual",
+  "webview.renderer.clear": "Limpar",
+  "webview.renderer.filterColumn": "Filtrar {column}",
 };
 
 export function activate(context) {
@@ -53,7 +55,7 @@ function safeJson(outputItem) {
 }
 
 /**
- * @param {{ columns?: string[], rows?: Record<string, unknown>[], rowCount?: number, command?: string, i18n?: Record<string, string> }} data
+ * @param {{ columns?: string[], rows?: Record<string, unknown>[], rowCount?: number, command?: string, sql?: string, connectionId?: string, connectionHost?: string, connectionPort?: number, databaseName?: string, schemaName?: string, i18n?: Record<string, string> }} data
  * @param {import('vscode-notebook-renderer').RendererContext} context
  */
 function buildTable(data, context) {
@@ -67,6 +69,15 @@ function buildTable(data, context) {
     data.i18n && typeof data.i18n === "object" ? data.i18n : FALLBACK_I18N;
   const t = (key, fallback) =>
     dict[key] != null && dict[key] !== "" ? String(dict[key]) : fallback;
+  const tf = (key, vars, fallback) => {
+    let s = t(key, fallback);
+    if (!vars) {
+      return s;
+    }
+    return String(s).replace(/\{(\w+)\}/g, (_, k) =>
+      vars[k] != null ? String(vars[k]) : `{${k}}`,
+    );
+  };
   const rowsLabel = t("webview.renderer.rows", "linha(s)");
   const summary =
     command.length > 0
@@ -75,9 +86,11 @@ function buildTable(data, context) {
 
   const root = el("div", { className: "dbadmin-it" });
   injectStyles(root);
+  const shell = el("div", { className: "dbadmin-it__shell" });
+  root.appendChild(shell);
 
   if (columns.length === 0 || sourceRows.length === 0) {
-    root.appendChild(
+    shell.appendChild(
       el("p", {
         className: "dbadmin-it__empty",
         textContent: command
@@ -159,7 +172,21 @@ function buildTable(data, context) {
     textContent: t("webview.renderer.open", "Abrir"),
   });
   openBtn.addEventListener("click", () => {
-    context.postMessage?.({ type: "openLastResult" });
+    context.postMessage?.({
+      type: "openLastResult",
+      payload: {
+        columns: data.columns,
+        rows: data.rows,
+        rowCount: data.rowCount,
+        command: data.command,
+        sql: data.sql,
+        connectionId: data.connectionId,
+        connectionHost: data.connectionHost,
+        connectionPort: data.connectionPort,
+        databaseName: data.databaseName,
+        schemaName: data.schemaName,
+      },
+    });
   });
   header.append(searchWrap, widthToggleBtn, filterToggleBtn, exportBtn, openBtn);
 
@@ -204,13 +231,13 @@ function buildTable(data, context) {
     el("input", {
       className: "dbadmin-it__popover-input",
       type: "text",
-      placeholder: "Filtrar…",
+      placeholder: t("webview.renderer.filter", "Filtrar") + "…",
     })
   );
   const popoverClear = el("button", {
     className: "dbadmin-it__popover-clear",
     type: "button",
-    title: "Limpar",
+    title: t("webview.renderer.clear", "Limpar"),
     textContent: "×",
   });
   popover.append(popoverInput, popoverClear);
@@ -297,7 +324,7 @@ function buildTable(data, context) {
     });
 
     const searchSlot = el("div", { className: "dbadmin-it__search-slot" });
-    searchSlot.title = `Filtrar ${col}`;
+    searchSlot.title = tf("webview.renderer.filterColumn", { column: col }, `Filtrar ${col}`);
     searchSlots.push(searchSlot);
     const filterLabel = el("span", { className: "dbadmin-it__filter-label" });
     filterLabels.push(filterLabel);
@@ -328,7 +355,7 @@ function buildTable(data, context) {
       el("input", {
         className: "dbadmin-it__col-filter",
         type: "text",
-        placeholder: "Filtrar",
+        placeholder: t("webview.renderer.filter", "Filtrar"),
       })
     );
     colFilter.setAttribute("size", "1");
@@ -357,7 +384,8 @@ function buildTable(data, context) {
   const tbody = el("tbody");
   table.append(colgroup, thead, tbody);
   scroll.appendChild(table);
-  root.append(header, scroll);
+  root.appendChild(shell);
+  shell.append(header, scroll);
 
   table.addEventListener("mousedown", (event) => {
     const target = event.target;
@@ -613,7 +641,11 @@ function buildTable(data, context) {
     closeExportMenu();
     openPopoverCol = colIdx;
     popoverAnchor = anchor;
-    popoverInput.placeholder = `Filtrar ${columns[colIdx]}…`;
+    popoverInput.placeholder = tf(
+      "webview.renderer.filterColumn",
+      { column: columns[colIdx] },
+      `Filtrar ${columns[colIdx]}`,
+    ) + "…";
     popoverInput.value = state.columns[colIdx] || "";
     popover.hidden = false;
     popover.style.visibility = "hidden";
@@ -672,7 +704,7 @@ function buildTable(data, context) {
       searchSlots[idx].classList.toggle("is-open", open);
       searchSlots[idx].title = filled
         ? `${columns[idx]}: ${value}`
-        : `Filtrar ${columns[idx]}`;
+        : tf("webview.renderer.filterColumn", { column: columns[idx] }, `Filtrar ${columns[idx]}`);
     });
   }
 
@@ -705,7 +737,7 @@ function buildTable(data, context) {
     const sortW = 16;
     const lupaW = state.showColFilters ? 0 : 20;
     const filterFloor = state.showColFilters
-      ? Math.max(60, Math.ceil(measureText("Filtrar", filterFont)) + 16)
+      ? Math.max(60, Math.ceil(measureText(t("webview.renderer.filter", "Filtrar"), filterFont)) + 16)
       : 48;
 
     return columns.map((colName) => {
@@ -964,11 +996,20 @@ function injectStyles(root) {
       border-radius: 4px;
       overflow: visible;
       background: var(--vscode-editor-background);
+      background-clip: padding-box;
       font-family: var(--vscode-font-family);
       font-size: var(--vscode-font-size);
       color: var(--vscode-foreground);
       --dbadmin-input-focus: #007acc;
       accent-color: var(--dbadmin-input-focus);
+    }
+    .dbadmin-it__shell {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      border-radius: 3px;
+      overflow: hidden;
+      background: inherit;
     }
     .dbadmin-it input,
     .dbadmin-it textarea,
@@ -999,9 +1040,11 @@ function injectStyles(root) {
       gap: 6px;
       align-items: center;
       flex-wrap: nowrap;
-      padding: 6px 8px;
+      padding: 3px 6px;
       border-bottom: 1px solid var(--vscode-editorGroup-border);
       background: var(--vscode-sideBar-background, var(--vscode-editorWidget-background));
+      border-top-left-radius: 3px;
+      border-top-right-radius: 3px;
     }
     .dbadmin-it__search-wrap {
       flex: 1 1 auto;
@@ -1135,17 +1178,17 @@ function injectStyles(root) {
     .dbadmin-it__table td {
       user-select: text;
       cursor: text;
+      background: transparent;
+    }
+    .dbadmin-it__table tbody tr,
+    .dbadmin-it__table tbody tr:nth-child(odd),
+    .dbadmin-it__table tbody tr:nth-child(even) {
+      background: transparent;
     }
     .dbadmin-it__table.is-equal-width th,
     .dbadmin-it__table.is-equal-width td {
       overflow: hidden;
       text-overflow: ellipsis;
-    }
-    .dbadmin-it__table tbody tr:nth-child(odd) td {
-      background: color-mix(in srgb, #ffffff 7%, var(--vscode-editor-background));
-    }
-    .dbadmin-it__table tbody tr:nth-child(even) td {
-      background: color-mix(in srgb, #000000 8%, var(--vscode-editor-background));
     }
     .dbadmin-it__table th {
       position: sticky;
@@ -1408,7 +1451,7 @@ function injectStyles(root) {
       background: color-mix(in srgb, var(--vscode-focusBorder) 70%, transparent);
     }
     .dbadmin-it__null {
-      opacity: 0.4;
+      color: color-mix(in srgb, var(--vscode-foreground) 40%, transparent);
       font-style: italic;
     }
   `;

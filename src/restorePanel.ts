@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { getBcp47Locale } from "./i18n";
+import { getBcp47Locale, t } from "./i18n";
 import { loadLocaleDict, webviewI18nBootstrap } from "./i18n/webviewLocale";
 import { SchemaNodeRef } from "./models";
 import {
@@ -92,11 +92,11 @@ export class RestorePanelManager {
 
         if (message.type === "browse") {
           const uris = await vscode.window.showOpenDialog({
-            title: "Selecionar arquivo de backup",
+            title: t("Select backup file"),
             canSelectMany: false,
             filters: {
-              "Backup PostgreSQL": ["backup", "dump", "tar", "sql"],
-              "Todos os arquivos": ["*"],
+              [t("PostgreSQL backup")]: ["backup", "dump", "tar", "sql"],
+              [t("All files")]: ["*"],
             },
           });
           if (uris && uris[0]) {
@@ -151,7 +151,7 @@ export class RestorePanelManager {
             panel.webview.postMessage({
               type: "done",
               success: false,
-              error: "Informe o arquivo SQL antes de limpar as tabelas.",
+              error: t("Enter the SQL file before clearing tables."),
             });
             return;
           }
@@ -169,7 +169,7 @@ export class RestorePanelManager {
             panel.webview.postMessage({
               type: "done",
               success: true,
-              label: "Tabelas limpas com sucesso.",
+              label: t("Tables cleared successfully."),
             });
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
@@ -202,7 +202,7 @@ export class RestorePanelManager {
             panel.webview.postMessage({
               type: "done",
               success: true,
-              label: "Schema limpo com sucesso.",
+              label: t("Schema cleared successfully."),
             });
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
@@ -225,7 +225,7 @@ export class RestorePanelManager {
 
           panel.webview.postMessage({
             type: "line",
-            text: "[DbAdmin] Solicitação de abort recebida. Encerrando restore...",
+            text: t("[DbAdmin] Abort requested. Stopping restore..."),
           });
           abortController.abort();
           return;
@@ -662,7 +662,7 @@ function buildRestoreHtml(
         rememberFilename('dbadmin', options.filename);
 
         if (!options.filename.trim()) {
-          document.getElementById('statusMsg').textContent = 'Informe o arquivo SQL.';
+          document.getElementById('statusMsg').textContent = t('webview.restore.needSqlFile', 'Informe o arquivo SQL.');
           document.getElementById('statusMsg').className = 'status error';
           return;
         }
@@ -703,7 +703,7 @@ function buildRestoreHtml(
       rememberFilename('pgadmin', options.filename);
 
       if (!options.filename.trim()) {
-        document.getElementById('statusMsg').textContent = 'Informe o arquivo de backup.';
+        document.getElementById('statusMsg').textContent = t('webview.restore.needBackupFile', 'Informe o arquivo de backup.');
         document.getElementById('statusMsg').className = 'status error';
         return;
       }
@@ -740,8 +740,8 @@ function buildRestoreHtml(
         document.getElementById('executeBtn').disabled = true;
         clearTablesBtn.disabled = true;
         clearSchemaBtn.disabled = true;
-        document.getElementById('cancelBtn').textContent = 'Abortar';
-        document.getElementById('statusMsg').textContent = 'Restaurando...';
+        document.getElementById('cancelBtn').textContent = t('webview.restore.abort', 'Abortar');
+        document.getElementById('statusMsg').textContent = t('webview.restore.restoring', 'Restaurando...');
         document.getElementById('statusMsg').className = 'status';
         const box = document.getElementById('outputBox');
         box.textContent = '';
@@ -761,13 +761,13 @@ function buildRestoreHtml(
         document.getElementById('executeBtn').disabled = false;
         clearTablesBtn.disabled = false;
         clearSchemaBtn.disabled = false;
-        document.getElementById('cancelBtn').textContent = 'Fechar';
+        document.getElementById('cancelBtn').textContent = t('webview.common.close', 'Fechar');
         const statusEl = document.getElementById('statusMsg');
         if (msg.success) {
-          statusEl.textContent = msg.label ?? 'Restauração concluída com sucesso.';
+          statusEl.textContent = msg.label ?? t('webview.restore.completed', 'Restauração concluída com sucesso.');
           statusEl.className = 'status success';
         } else {
-          statusEl.textContent = 'Erro: ' + (msg.error || 'Falha desconhecida.');
+          statusEl.textContent = tf('error.failed', { detail: msg.error || t('webview.common.unknownFailure', 'Falha desconhecida.') }, 'Erro: ' + (msg.error || 'Falha desconhecida.'));
           statusEl.className = 'status error';
         }
         return;

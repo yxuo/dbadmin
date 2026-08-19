@@ -2,7 +2,7 @@
   "name": "dbadmin",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "publisher": "yxuo",
   "repository": {
     "type": "git",
@@ -16,6 +16,8 @@
     "Other"
   ],
   "activationEvents": [
+    "onWebviewPanel:dbadmin.tableData",
+    "onWebviewPanel:dbadmin.settings",
     "onStartupFinished"
   ],
   "main": "./out/extension.js",
@@ -107,10 +109,16 @@
             "order": 1,
             "description": "%dbadmin.config.sqlbookIntegratedTable%"
           },
+          "dbadmin.sqlbookSaveIntegratedTable": {
+            "type": "boolean",
+            "default": true,
+            "order": 2,
+            "description": "%dbadmin.config.sqlbookSaveIntegratedTable%"
+          },
           "dbadmin.sqlbookRunPerQuery": {
             "type": "boolean",
             "default": false,
-            "order": 2,
+            "order": 3,
             "description": "%dbadmin.config.sqlbookRunPerQuery%"
           }
         }
@@ -232,6 +240,21 @@
       {
         "command": "dbadmin.truncateTable",
         "title": "%dbadmin.command.truncateTable%",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "dbadmin.showTableDdl",
+        "title": "%dbadmin.command.showTableDdl%",
+        "icon": "$(file-code)"
+      },
+      {
+        "command": "dbadmin.createTable",
+        "title": "%dbadmin.command.createTable%",
+        "icon": "$(add)"
+      },
+      {
+        "command": "dbadmin.dropTable",
+        "title": "%dbadmin.command.dropTable%",
         "icon": "$(trash)"
       },
       {
@@ -391,6 +414,17 @@
         "icon": "$(check)"
       },
       {
+        "command": "dbadmin.toggleSqlBookSaveIntegratedTable",
+        "title": "%dbadmin.command.toggleSqlBookSaveIntegratedTable%",
+        "category": "DBAdmin"
+      },
+      {
+        "command": "dbadmin.toggleSqlBookSaveIntegratedTableChecked",
+        "title": "%dbadmin.command.toggleSqlBookSaveIntegratedTableChecked%",
+        "category": "DBAdmin",
+        "icon": "$(check)"
+      },
+      {
         "command": "dbadmin.toggleSqlBookRunPerQuery",
         "title": "%dbadmin.command.toggleSqlBookRunPerQuery%",
         "category": "DBAdmin"
@@ -404,6 +438,11 @@
       {
         "command": "dbadmin.executeSqlBookStatement",
         "title": "%dbadmin.command.executeSqlBookStatement%",
+        "category": "DBAdmin"
+      },
+      {
+        "command": "dbadmin.executeSqlRunnerStatement",
+        "title": "%dbadmin.command.executeSqlRunnerStatement%",
         "category": "DBAdmin"
       },
       {
@@ -503,14 +542,36 @@
           "group": "notebookLayout@35"
         },
         {
+          "command": "dbadmin.toggleSqlBookSaveIntegratedTable",
+          "when": "notebookType == 'sqlbook' && dbadmin.sqlbookSaveIntegratedTable != true",
+          "group": "notebookLayout@36"
+        },
+        {
+          "command": "dbadmin.toggleSqlBookSaveIntegratedTableChecked",
+          "when": "notebookType == 'sqlbook' && dbadmin.sqlbookSaveIntegratedTable == true",
+          "group": "notebookLayout@36"
+        },
+        {
           "command": "dbadmin.toggleSqlBookRunPerQuery",
           "when": "notebookType == 'sqlbook' && config.dbadmin.sqlbookRunPerQuery != true && dbadmin.sqlbookRunPerQuery != true",
-          "group": "notebookLayout@36"
+          "group": "notebookLayout@37"
         },
         {
           "command": "dbadmin.toggleSqlBookRunPerQueryChecked",
           "when": "notebookType == 'sqlbook' && (config.dbadmin.sqlbookRunPerQuery == true || dbadmin.sqlbookRunPerQuery == true)",
-          "group": "notebookLayout@36"
+          "group": "notebookLayout@37"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "dbadmin.toggleSqlBookRunPerQuery",
+          "when": "resourceLangId == sql && notebookType != 'sqlbook' && config.dbadmin.sqlbookRunPerQuery != true && dbadmin.sqlbookRunPerQuery != true",
+          "group": "1_dbadmin@1"
+        },
+        {
+          "command": "dbadmin.toggleSqlBookRunPerQueryChecked",
+          "when": "resourceLangId == sql && notebookType != 'sqlbook' && (config.dbadmin.sqlbookRunPerQuery == true || dbadmin.sqlbookRunPerQuery == true)",
+          "group": "1_dbadmin@1"
         }
       ],
       "commandPalette": [
@@ -519,11 +580,19 @@
           "when": "false"
         },
         {
+          "command": "dbadmin.toggleSqlBookSaveIntegratedTableChecked",
+          "when": "false"
+        },
+        {
           "command": "dbadmin.toggleSqlBookRunPerQueryChecked",
           "when": "false"
         },
         {
           "command": "dbadmin.executeSqlBookStatement",
+          "when": "false"
+        },
+        {
+          "command": "dbadmin.executeSqlRunnerStatement",
           "when": "false"
         }
       ],
@@ -598,7 +667,27 @@
         {
           "command": "dbadmin.truncateTable",
           "when": "view == databaseExplorer && viewItem == dbObject:table",
+          "group": "navigation@2"
+        },
+        {
+          "command": "dbadmin.showTableDdl",
+          "when": "view == databaseExplorer && viewItem == dbObject:table",
           "group": "navigation@1"
+        },
+        {
+          "command": "dbadmin.dropTable",
+          "when": "view == databaseExplorer && viewItem == dbObject:table",
+          "group": "navigation@3"
+        },
+        {
+          "command": "dbadmin.createTable",
+          "when": "view == databaseExplorer && viewItem == objectGroup:table",
+          "group": "inline"
+        },
+        {
+          "command": "dbadmin.createTable",
+          "when": "view == databaseExplorer && viewItem == objectGroup:table",
+          "group": "navigation"
         },
         {
           "command": "dbadmin.createDatabase",

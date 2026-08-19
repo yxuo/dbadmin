@@ -20,15 +20,12 @@ import {
   fetchAllRowsForExport,
 } from "./tableDataPanel/exportService";
 import {
-  buildOpenTabsSnapshot,
   buildTableLayoutStorageKey,
   cloneTableStateWithPageSize,
   createDefaultTableState,
-  getStoredOpenTabs,
   persistLayout as persistStoredLayout,
-  persistOpenTabs,
+  parseTableWebviewSession,
   readStoredLayout as readLayoutFromStore,
-  StoredOpenTab,
 } from "./tableDataPanel/stateStore";
 import {
   buildNativePreviewFilePrefix,
@@ -50,6 +47,7 @@ import {
   OpenTableInput,
   TableLayoutState,
   TableState,
+  TableWebviewSession,
   WebviewMessage,
 } from "./tableDataPanel/types";
 import {
@@ -134,6 +132,7 @@ export class TableDataPanelManager {
         await this.refreshPanel(reused, input.node, initialState, {
           retryTimeout: input.restoringOnStartup === true,
         });
+        this.persistWebviewSession(reused);
         return;
       }
     }
@@ -151,42 +150,99 @@ export class TableDataPanelManager {
       },
     );
 
-    panel.webview.html = this.buildHtml(panel.webview);
+    this.attachTablePanel(panel, {
+      node: input.node,
+      newTab: input.newTab,
+      initialState,
+      layout: initialLayout,
+      restoringOnStartup: input.restoringOnStartup,
+    });
+  }
+
+  public async deserializeTablePanel(
+    panel: vscode.WebviewPanel,
+    rawState: unknown,
+    store: ConnectionStore,
+  ): Promise<void> {
+    const session = parseTableWebviewSession(rawState);
+    if (!session) {
+      panel.webview.html = this.buildHtml(panel.webview);
+      return;
+    }
+
+    const connection = await store.getConnection(session.connectionId);
+    if (!connection) {
+      panel.dispose();
+      return;
+    }
+
+    const node: DbObjectNodeRef = {
+      type: "dbObject",
+      kind: "table",
+      connection,
+      databaseName: session.databaseName,
+      schemaName: session.schemaName,
+      objectName: session.objectName,
+    };
+
+    this.attachTablePanel(panel, {
+      node,
+      newTab: session.newTab,
+      initialState: session.state
+        ? this.cloneTableState(session.state)
+        : this.defaultState(),
+      layout: session.layout,
+      restoringOnStartup: true,
+    });
+  }
+
+  private attachTablePanel(
+    panel: vscode.WebviewPanel,
+    input: {
+      node: DbObjectNodeRef;
+      newTab: boolean;
+      initialState: TableState;
+      layout?: TableLayoutState;
+      restoringOnStartup?: boolean;
+    },
+  ): void {
     this.panelRegistry.setNode(panel, input.node);
     this.panelRegistry.setIsNewTab(panel, input.newTab);
-    this.panelRegistry.setState(panel, this.cloneTableState(initialState));
-    if (initialLayout) {
-      this.panelRegistry.setLayout(panel, initialLayout);
+    this.panelRegistry.setState(panel, this.cloneTableState(input.initialState));
+    if (input.layout) {
+      this.panelRegistry.setLayout(panel, input.layout);
     } else {
       this.panelRegistry.deleteLayout(panel);
     }
 
     if (input.newTab) {
-      panel.iconPath = vscode.Uri.file(
-        this.context.asAbsolutePath("resources/icons/table-colored.svg"),
-      );
-      this.panelRegistry.setReusedPanel(key, panel);
+      if (this.panelRegistry.getReusedPanel(GLOBAL_REUSED_KEY) === panel) {
+        this.panelRegistry.deleteReusedPanel(GLOBAL_REUSED_KEY);
+      }
     } else {
-      panel.iconPath = {
-        light: vscode.Uri.file(
-          this.context.asAbsolutePath("resources/icons/light/table.svg"),
-        ),
-        dark: vscode.Uri.file(
-          this.context.asAbsolutePath("resources/icons/dark/table.svg"),
-        ),
-      };
+      this.panelRegistry.setReusedPanel(GLOBAL_REUSED_KEY, panel);
     }
-
-    this.saveOpenTabs();
+    this.setPanelTabIcon(panel, input.newTab);
 
     const disposable = panel.webview.onDidReceiveMessage(
       async (message: WebviewMessage) => {
         const currentNode = this.panelRegistry.getNode(panel) ?? input.node;
 
         if (message.type === "ready") {
-          await this.refreshPanel(panel, currentNode, initialState, {
-            retryTimeout: input.restoringOnStartup === true,
-          });
+          try {
+            this.persistWebviewSession(panel);
+            await this.refreshPanel(panel, currentNode, input.initialState, {
+              retryTimeout: input.restoringOnStartup === true,
+            });
+            this.persistWebviewSession(panel);
+          } catch (error) {
+            console.error("[dbadmin] failed to load table data", error);
+            panel.webview.postMessage({
+              type: "status",
+              kind: "error",
+              message: this.errorMessage(error),
+            });
+          }
           return;
         }
 
@@ -195,7 +251,7 @@ export class TableDataPanelManager {
             panel,
             this.cloneTableState(message.state),
           );
-          this.saveOpenTabs();
+          this.persistWebviewSession(panel);
           if (message.clearSelectionAndPreview === true) {
             await this.clearNativePreviewContent(panel);
           }
@@ -208,7 +264,7 @@ export class TableDataPanelManager {
             panel,
             this.cloneTableState(message.state),
           );
-          this.saveOpenTabs();
+          this.persistWebviewSession(panel);
           return;
         }
 
@@ -218,7 +274,7 @@ export class TableDataPanelManager {
               panel,
               this.cloneTableState(message.state),
             );
-            this.saveOpenTabs();
+            this.persistWebviewSession(panel);
             await this.postgresService.saveTableData(
               currentNode.connection,
               currentNode.databaseName,
@@ -285,6 +341,14 @@ export class TableDataPanelManager {
           return;
         }
 
+        if (message.type === "togglePin") {
+          this.setPanelPinned(
+            panel,
+            !this.panelRegistry.isNewTab(panel),
+          );
+          return;
+        }
+
         if (message.type === "openSettings") {
           await vscode.commands.executeCommand("dbadmin.openSettings");
           return;
@@ -293,6 +357,14 @@ export class TableDataPanelManager {
         if (message.type === "showInExplorer") {
           await vscode.commands.executeCommand(
             "dbadmin.showInExplorer",
+            currentNode,
+          );
+          return;
+        }
+
+        if (message.type === "showTableDdl") {
+          await vscode.commands.executeCommand(
+            "dbadmin.showTableDdl",
             currentNode,
           );
           return;
@@ -322,7 +394,7 @@ export class TableDataPanelManager {
               type: "status",
               kind: "error",
               message:
-                "Incomplete foreign key metadata to open the related table.",
+                t("Incomplete foreign key metadata to open the related table."),
             });
             return;
           }
@@ -453,7 +525,7 @@ export class TableDataPanelManager {
           if (this.getPersistLayoutOutsideRestore()) {
             await this.persistLayout(currentNode, message.layout);
           }
-          this.saveOpenTabs();
+          this.persistWebviewSession(panel);
           return;
         }
 
@@ -465,7 +537,7 @@ export class TableDataPanelManager {
               type: "status",
               kind: "error",
               message:
-                "Nome de schema ou tabela invalido para abrir em nova aba.",
+                t("Invalid schema or table name to open in a new tab."),
             });
             return;
           }
@@ -485,12 +557,15 @@ export class TableDataPanelManager {
 
         if (message.type === "loadDiagram") {
           try {
+            const providedColumns = Array.isArray(message.mainColumns)
+              ? message.mainColumns
+              : [];
             const diagramData = await this.postgresService.getTableDiagramData(
               currentNode.connection,
               currentNode.databaseName,
               currentNode.schemaName,
               currentNode.objectName,
-              message.mainColumns,
+              providedColumns.length > 0 ? providedColumns : undefined,
             );
             panel.webview.postMessage({
               type: "diagramData",
@@ -568,12 +643,17 @@ export class TableDataPanelManager {
     panel.onDidDispose(() => {
       disposable.dispose();
       void this.closeAndClearNativePreviewState(panel);
+      const wasReusable = !this.panelRegistry.isNewTab(panel);
       this.panelRegistry.clearPanel(panel);
-      if (!input.newTab) {
-        this.panelRegistry.deleteReusedPanel(key);
+      if (wasReusable) {
+        this.panelRegistry.deleteReusedPanel(GLOBAL_REUSED_KEY);
       }
-      this.saveOpenTabs();
     });
+
+    panel.webview.html = this.buildHtml(
+      panel.webview,
+      this.buildWebviewSession(panel),
+    );
   }
 
   public async openQueryResult(input: OpenQueryResultInput): Promise<void> {
@@ -847,6 +927,7 @@ export class TableDataPanelManager {
           state,
           dynamicDefaultColumnWidth: this.getDynamicDefaultColumnWidth(),
           layout: this.panelRegistry.getLayout(panel),
+          pinned: this.panelRegistry.isNewTab(panel),
         });
         return;
       } catch (error) {
@@ -865,10 +946,12 @@ export class TableDataPanelManager {
       }
     }
 
+    const message = this.errorMessage(lastError);
+    console.error("[dbadmin] failed to load table data", lastError);
     panel.webview.postMessage({
       type: "status",
       kind: "error",
-      message: this.errorMessage(lastError),
+      message,
     });
   }
 
@@ -931,6 +1014,49 @@ export class TableDataPanelManager {
     return `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
   }
 
+  private setPanelTabIcon(
+    panel: vscode.WebviewPanel,
+    pinned: boolean,
+  ): void {
+    if (pinned) {
+      panel.iconPath = vscode.Uri.file(
+        this.context.asAbsolutePath("resources/icons/table-colored.svg"),
+      );
+      return;
+    }
+    panel.iconPath = {
+      light: vscode.Uri.file(
+        this.context.asAbsolutePath("resources/icons/light/table.svg"),
+      ),
+      dark: vscode.Uri.file(
+        this.context.asAbsolutePath("resources/icons/dark/table.svg"),
+      ),
+    };
+  }
+
+  private setPanelPinned(
+    panel: vscode.WebviewPanel,
+    pinned: boolean,
+  ): void {
+    if (!pinned) {
+      const existing = this.panelRegistry.getReusedPanel(GLOBAL_REUSED_KEY);
+      if (existing && existing !== panel) {
+        this.panelRegistry.setIsNewTab(existing, true);
+        this.setPanelTabIcon(existing, true);
+        this.persistWebviewSession(existing);
+        existing.webview.postMessage({ type: "tabPinned", pinned: true });
+      }
+      this.panelRegistry.setReusedPanel(GLOBAL_REUSED_KEY, panel);
+    } else if (this.panelRegistry.getReusedPanel(GLOBAL_REUSED_KEY) === panel) {
+      this.panelRegistry.deleteReusedPanel(GLOBAL_REUSED_KEY);
+    }
+
+    this.panelRegistry.setIsNewTab(panel, pinned);
+    this.setPanelTabIcon(panel, pinned);
+    this.persistWebviewSession(panel);
+    panel.webview.postMessage({ type: "tabPinned", pinned });
+  }
+
   private defaultState(): TableState {
     return createDefaultTableState(this.getDefaultPageSize());
   }
@@ -958,6 +1084,36 @@ export class TableDataPanelManager {
     layout: TableLayoutState,
   ): Promise<void> {
     await persistStoredLayout(this.context, node, layout);
+  }
+
+  private buildWebviewSession(
+    panel: vscode.WebviewPanel,
+  ): TableWebviewSession | undefined {
+    const node = this.panelRegistry.getNode(panel);
+    if (!node) {
+      return undefined;
+    }
+
+    return {
+      connectionId: node.connection.id,
+      databaseName: node.databaseName,
+      schemaName: node.schemaName,
+      objectName: node.objectName,
+      newTab: this.panelRegistry.isNewTab(panel),
+      layout: this.panelRegistry.getLayout(panel),
+      state: this.panelRegistry.getState(panel),
+    };
+  }
+
+  private persistWebviewSession(panel: vscode.WebviewPanel): void {
+    const session = this.buildWebviewSession(panel);
+    if (!session) {
+      return;
+    }
+    void panel.webview.postMessage({
+      type: "persistSession",
+      session,
+    });
   }
 
   private getPersistLayoutOutsideRestore(): boolean {
@@ -1222,71 +1378,14 @@ export class TableDataPanelManager {
     cleanupNativePreviewTempFilesByPrefix(state.tmpFilePrefix);
   }
 
-  private saveOpenTabs(): void {
-    const panelNodesMap = new Map(this.panelRegistry.getAllNodes());
-    const panelIsNewTabMap = new Map(this.panelRegistry.getAllIsNewTab());
-    const panelLayoutsMap = new Map(this.panelRegistry.getAllLayouts());
-    const panelStatesMap = new Map(this.panelRegistry.getAllStates());
-    const openTabs = buildOpenTabsSnapshot(
-      panelNodesMap,
-      panelIsNewTabMap,
-      panelLayoutsMap,
-      panelStatesMap,
-      (state) => this.cloneTableState(state),
-      this.defaultState(),
-    );
-    void persistOpenTabs(this.context, openTabs);
-  }
-
-  public async restoreOpenTabs(store: ConnectionStore): Promise<void> {
-    try {
-      const openTabs = getStoredOpenTabs(this.context) as StoredOpenTab[];
-
-      if (!openTabs || openTabs.length === 0) {
-        return;
-      }
-
-      for (const tab of openTabs) {
-        try {
-          const connection = await store.getConnection(tab.connectionId);
-          if (!connection) {
-            continue;
-          }
-
-          const node: DbObjectNodeRef = {
-            type: "dbObject",
-            kind: "table",
-            connection,
-            databaseName: tab.databaseName,
-            schemaName: tab.schemaName,
-            objectName: tab.objectName,
-          };
-
-          await this.openTable({
-            node,
-            newTab: tab.newTab,
-            restoringOnStartup: true,
-            layout: tab.layout,
-            initialState: this.cloneTableState(
-              tab.state ?? this.defaultState(),
-            ),
-          });
-        } catch (error) {
-          console.error(`Falha ao restaurar aba ${tab.objectName}:`, error);
-        }
-      }
-    } catch (error) {
-      console.error("Falha ao restaurar abas abertas:", error);
-    }
-  }
-
-  private buildHtml(webview: vscode.Webview): string {
+  private buildHtml(
+    webview: vscode.Webview,
+    session?: TableWebviewSession,
+  ): string {
     const nonce = String(Date.now());
     const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource}; script-src 'nonce-${nonce}'; connect-src ${webview.cspSource};`;
     const defaultPageSize = this.getDefaultPageSize();
     const codeEditorStyles = buildCodeEditorStyles();
-    const codeEditorMarkup = buildCodeEditorMarkup();
-    const queryCodeEditorMarkup = buildCodeEditorMarkup("queryCodeEditor");
     const codeEditorScript = buildCodeEditorScript();
     const extensionPath = this.context.extensionPath;
     const i18n = loadLocaleDict(extensionPath);
@@ -1298,6 +1397,8 @@ export class TableDataPanelManager {
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;");
+    const codeEditorMarkup = buildCodeEditorMarkup("codeEditor", L);
+    const queryCodeEditorMarkup = buildCodeEditorMarkup("queryCodeEditor", L);
     const codiconsCssUri = webview.asWebviewUri(
       vscode.Uri.joinPath(
         this.context.extensionUri,
@@ -1316,8 +1417,19 @@ export class TableDataPanelManager {
         "tableAdvancedFilter.js",
       ),
     );
+    const tableClipboardScriptUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(
+        this.context.extensionUri,
+        "out",
+        "webview",
+        "tableClipboard.js",
+      ),
+    );
     const initialDynamicDefaultColumnWidth =
       this.getDynamicDefaultColumnWidth();
+    const sessionScript = session
+      ? `vscode.setState(${JSON.stringify(session).replace(/</g, "\\u003c")});`
+      : "";
 
     return `<!DOCTYPE html>
 <html lang="${i18nLang}">
@@ -1383,10 +1495,12 @@ export class TableDataPanelManager {
     .overlay-submenu::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--vscode-descriptionForeground) 35%, transparent); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
     .overlay-scroll::-webkit-scrollbar-corner,
     .overlay-submenu::-webkit-scrollbar-corner { background: transparent; }
-    .overlay-surface button,
-    .overlay-submenu button { width: 100%; min-height: 28px; border: 0; border-radius: 0; text-align: left; background: transparent; color: var(--vscode-foreground); white-space: nowrap; display: flex; align-items: center; gap: 8px; padding: 0 10px; justify-content: flex-start; }
-    .overlay-surface button:hover,
-    .overlay-submenu button:hover { background: var(--vscode-list-hoverBackground); }
+    .overlay-surface button:not(.btn-icon),
+    .overlay-submenu button:not(.btn-icon) { width: 100%; min-height: 28px; border: 0; border-radius: 0; text-align: left; background: transparent; color: var(--vscode-foreground); white-space: nowrap; display: flex; align-items: center; gap: 8px; padding: 0 10px; justify-content: flex-start; }
+    .overlay-surface button.btn-icon,
+    .overlay-submenu button.btn-icon { border: 0; background: transparent; color: var(--vscode-foreground); }
+    .overlay-surface button:hover:not(:disabled),
+    .overlay-submenu button:hover:not(:disabled) { background: var(--vscode-list-hoverBackground); }
     .overlay-item-icon { width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
     .simple-menu { padding: 4px; }
     .simple-menu button,
@@ -1404,6 +1518,9 @@ export class TableDataPanelManager {
     .query-resizer svg { width: 14px; height: 14px; pointer-events: none; }
     .toolbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 0 4px; flex: 0 0 auto; }
     #toolbarMenuBtn { display: inline-flex; margin-left: auto; }
+    #pinTabBtn.is-pinned {
+      color: var(--vscode-button-background);
+    }
     .grow { flex: 1 1 150px; min-width: 150px; }
     .search-wrap { position: relative; border-radius: 6px; overflow: hidden; }
     .search-wrap .input {
@@ -1538,6 +1655,7 @@ export class TableDataPanelManager {
     .toolbar > button:focus-visible,
     .toolbar > div > button:focus-visible,
     .toolbar .mode-select > button:focus-visible,
+    .toolbar #pageInfoBtn:focus-visible,
     .diagram-toolbar > button:focus-visible {
       box-shadow: 0 0 0 1px var(--vscode-focusBorder) inset;
     }
@@ -1555,20 +1673,46 @@ export class TableDataPanelManager {
       padding: 0 6px;
     }
     .pagination-menu {
-      width: min(130px, calc(100vw - 24px));
+      width: min(220px, calc(100vw - 24px));
       padding: 8px;
       flex-direction: column;
       gap: 10px;
       z-index: 62;
     }
     #paginationMenu.open { display: flex; }
+    .pagination-menu-head {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--vscode-panel-border);
+    }
+    .pagination-menu-head > button {
+      flex: 0 0 28px;
+      width: 28px;
+      min-width: 28px;
+      height: 28px;
+      padding: 0;
+      justify-content: center;
+      border-radius: 6px;
+    }
+    .pagination-menu-head > button:disabled {
+      opacity: 1;
+      color: var(--vscode-disabledForeground, color-mix(in srgb, var(--vscode-foreground) 34%, transparent));
+      background: transparent;
+    }
+    .pagination-menu .pagination-menu-head > button:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--vscode-foreground) 10%, var(--vscode-editorWidget-background));
+    }
     .pagination-menu-info {
+      flex: 1 1 auto;
+      min-width: 0;
       font-size: 11px;
       color: var(--vscode-descriptionForeground);
       font-variant-numeric: tabular-nums;
       text-align: center;
-      padding-bottom: 8px;
-      border-bottom: 1px solid var(--vscode-panel-border);
+      line-height: 1.35;
+      white-space: normal;
     }
     .pagination-menu .row {
       display: grid;
@@ -1642,7 +1786,7 @@ export class TableDataPanelManager {
     #diagramSvg .diagram-fk-edge { fill: none; stroke: var(--vscode-textLink-foreground); stroke-width: 1.5; opacity: 0.85; }
     #diagramSvg .diagram-fk-edge.diagram-fk-edge--selected {
       stroke: var(--diagram-fk-accent);
-      stroke-width: 3;
+      stroke-width: 1.5;
       opacity: 1;
     }
     #diagramSvg .diagram-fk-edge-dot { fill: var(--vscode-textLink-foreground); }
@@ -1650,7 +1794,7 @@ export class TableDataPanelManager {
     #diagramSvg .diagram-fk-hit { fill: none; stroke: transparent; pointer-events: stroke; }
     #diagramSvg .diagram-card-bg.diagram-card-bg--selected {
       stroke: var(--vscode-focusBorder);
-      stroke-width: 3;
+      stroke-width: 2;
     }
     #diagramSvg .diagram-col-highlight {
       fill: color-mix(in srgb, var(--diagram-fk-accent) 38%, transparent);
@@ -1740,6 +1884,7 @@ export class TableDataPanelManager {
       min-width: 170px;
       box-sizing: border-box;
       border-bottom: 0;
+      padding-top: 1px;
     }
     th::after {
       content: '';
@@ -1776,34 +1921,32 @@ export class TableDataPanelManager {
       background: var(--vscode-panel-border);
       pointer-events: none;
     }
-    .th-title { display: flex; align-items: center; justify-content: space-between; gap: 0; padding: 0px 5px 0px 0px; cursor: grab; }
-    .th-name { font-weight: 600; font-size: 12px; cursor: inherit; flex: 1 1 auto; min-width: 0; text-align: left; border-radius: 4px; padding-left: 5px; }
+    .th-title { display: flex; align-items: center; justify-content: space-between; gap: 0; padding: 0 4px 0 0; cursor: grab; border-radius: 4px; }
+    .th-title:hover { background: color-mix(in srgb, var(--vscode-list-hoverBackground) 80%, var(--vscode-foreground) 10%); }
+    .th-name { font-weight: 600; font-size: 12px; cursor: inherit; flex: 1 1 auto; min-width: 0; text-align: left; border-radius: 4px; padding-left: 5px; background: transparent; transform: translateY(-1px); }
     th.col-drag-over { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
     .th-resizer { position: absolute; top: 0; right: 0; width: 8px; height: 100%; cursor: col-resize; user-select: none; border-radius: 2px; transition: background 120ms ease; }
-    .th-resizer::before { content: ''; position: absolute; top: 2px; bottom: 2px; right: 0px; width: 1px; background: color-mix(in srgb, var(--vscode-descriptionForeground) 15%, transparent); }
-    .th-name:hover:not(:active) { background: color-mix(in srgb, var(--vscode-list-hoverBackground) 80%, var(--vscode-foreground) 10%); }
+    .th-resizer::before { content: ''; position: absolute; top: 1px; bottom: 1px; right: 0px; width: 1px; background: color-mix(in srgb, var(--vscode-descriptionForeground) 15%, transparent); }
     body.col-resizing, body.col-resizing * { cursor: col-resize !important; }
-    .th-icons { cursor: pointer; user-select: none; border-radius: 4px; padding: 0 2px; display: inline-flex; align-items: center; justify-content: center; color: var(--vscode-descriptionForeground); }
-    .th-icons .codicon { font-size: 14px; line-height: 1; width: 14px; height: 14px; }
+    .th-icons { cursor: pointer; user-select: none; border-radius: 4px; padding: 0; display: inline-flex; align-items: center; justify-content: center; color: var(--vscode-descriptionForeground); height: 16px; box-sizing: border-box; background: transparent; }
+    .th-icons .codicon { font-size: 16px; line-height: 1; width: 16px; height: 16px; }
     .th-icons .sort-icon-pair {
       display: inline-flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      width: 14px;
-      height: 14px;
+      width: 16px;
+      height: 16px;
       line-height: 1;
       gap: 0;
       transform: translateY(-2px);
     }
     .th-icons .sort-icon-pair .codicon {
-      font-size: 11px;
+      font-size: 12.5px;
       width: 12px;
       height: 7px;
-      -webkit-text-stroke: 0.35px currentColor;
-      paint-order: stroke fill;
     }
-    .th-icons:hover { background: color-mix(in srgb, var(--vscode-list-hoverBackground) 80%, var(--vscode-foreground) 10%); color: var(--vscode-foreground); }
+    .th-icons:hover { color: var(--vscode-button-background); background: transparent; }
     .sort-menu { z-index: 55; min-width: 180px; }
     .sort-menu button {
       display: flex;
@@ -1828,9 +1971,39 @@ export class TableDataPanelManager {
     .sort-menu .menu-item-check.is-checked::before {
       content: "✓";
     }
-    .th-filter-wrap { width: 100%; border-radius: 4px; overflow: hidden; }
-    .th-filter { width: 100%; box-sizing: border-box; border: 1px solid transparent; background: transparent; color: var(--vscode-descriptionForeground); border-radius: 4px; padding: 4px; font-size: 11px; outline: none; overflow: hidden; background-clip: padding-box; }
-    .th-filter:focus { border-color: var(--dbadmin-input-focus); background: var(--vscode-input-background); color: var(--vscode-input-foreground); outline: none; box-shadow: none; }
+    .th-filter-wrap { position: relative; width: 100%; border-radius: 4px; }
+    .th-filter { width: 100%; box-sizing: border-box; border: 1px solid transparent; background: transparent; color: var(--vscode-descriptionForeground); border-radius: 4px; padding: 3px 20px 3px 5px; margin-bottom: 1px; font-size: 11px; outline: none; overflow: hidden; background-clip: padding-box; }
+    .th-filter-wrap:hover .th-filter:placeholder-shown:not(:focus) {
+      border-color: color-mix(in srgb, var(--vscode-foreground) 16%, var(--vscode-panel-border));
+    }
+    .th-filter:not(:placeholder-shown),
+    .th-filter:focus {
+      background: var(--vscode-input-background);
+      color: var(--vscode-input-foreground);
+    }
+    .th-filter:not(:placeholder-shown):not(:focus) {
+      border-color: color-mix(in srgb, var(--vscode-foreground) 22%, var(--vscode-panel-border));
+    }
+    .th-filter:focus {
+      border-color: var(--dbadmin-input-focus);
+      outline: none;
+      box-shadow: none;
+    }
+    .th-filter-icon {
+      position: absolute;
+      right: 5px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 12px;
+      height: 12px;
+      color: var(--vscode-descriptionForeground);
+      opacity: 0.72;
+      pointer-events: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .th-filter-icon .codicon { font-size: 12px; line-height: 1; width: 12px; height: 12px; }
     .cell-input { width: 100%; box-sizing: border-box; border: 1px solid transparent; background: transparent; color: var(--vscode-foreground); border-radius: 4px; padding: 4px; outline: none; overflow: hidden; background-clip: padding-box; }
     .cell-input:focus { border-color: var(--dbadmin-input-focus); background: var(--vscode-input-background); }
     .cell-input.dirty { background: rgba(70, 130, 255, 0.18); border-color: rgba(70, 130, 255, 0.62); }
@@ -2041,7 +2214,15 @@ export class TableDataPanelManager {
     .btn-icon svg { width: 16px; height: 16px; display: block; flex: 0 0 auto; }
     .btn-icon .codicon { font-size: 16px; line-height: 1; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; }
     .mode-dropdown .codicon { font-size: 16px; line-height: 1; width: 16px; height: 16px; flex: 0 0 auto; }
-    button:disabled { opacity: 0.45; cursor: default; }
+    button:disabled {
+      opacity: 1;
+      color: var(--vscode-disabledForeground, color-mix(in srgb, var(--vscode-foreground) 38%, transparent));
+      background: transparent;
+      cursor: default;
+    }
+    button:disabled .codicon {
+      color: inherit;
+    }
     .menu-submenu-wrap { position: relative; }
     .menu-submenu { position: absolute; top: -1px; left: calc(100% + 4px); display: none; min-width: 180px; max-height: 60vh; }
     .menu-submenu-wrap.submenu-left .menu-submenu { left: auto; right: calc(100% + 4px); }
@@ -2132,7 +2313,6 @@ export class TableDataPanelManager {
     }
     tr.row-marked-delete td { background: rgba(220, 53, 69, 0.16); border-bottom-color: color-mix(in srgb, var(--vscode-foreground) 15%, rgba(220, 53, 69, 0.16)) !important; }
     td:has(.cell-input.dirty) { background: rgba(70, 130, 255, 0.16); border-bottom-color: color-mix(in srgb, var(--vscode-foreground) 15%, rgba(70, 130, 255, 0.16)) !important; }
-    .th-name:hover:not(:active) { background: color-mix(in srgb, var(--vscode-list-hoverBackground) 80%, var(--vscode-foreground) 10%); }
     @media (max-height: 500px) {
       .header { display: none; }
       .query-container { display: none; }
@@ -2176,17 +2356,12 @@ export class TableDataPanelManager {
       <button id="newRow" class="secondary btn-icon" title="${L('webview.table.newRow', 'Nova linha')}" aria-label="${L('webview.table.newRow', 'Nova linha')}">
         <i class="codicon codicon-add" aria-hidden="true"></i>
       </button>
-      <div style="display: flex; align-items: center; gap: 4px;">
-        <button id="prevPage" class="secondary btn-icon" title="${L('webview.table.prevPage', 'Página anterior')}" aria-label="${L('webview.table.prevPage', 'Página anterior')}">
-          <i class="codicon codicon-chevron-left" aria-hidden="true"></i>
-        </button>
-        <button id="pageInfoBtn" class="secondary" title="${L('webview.table.pagination', 'Paginação')}">
-          <span id="pageInfo">1/1 (0)</span>
-        </button>
-        <button id="nextPage" class="secondary btn-icon" title="${L('webview.table.nextPage', 'Próxima página')}" aria-label="${L('webview.table.nextPage', 'Próxima página')}">
-          <i class="codicon codicon-chevron-right" aria-hidden="true"></i>
-        </button>
-      </div>
+      <button id="pageInfoBtn" class="secondary" title="${L('webview.table.pagination', 'Paginação')}">
+        <span id="pageInfo">1/1 (0)</span>
+      </button>
+      <button id="pinTabBtn" class="secondary btn-icon" title="${L('webview.table.pinTab', 'Fixar aba')}" aria-label="${L('webview.table.pinTab', 'Fixar aba')}">
+        <i class="codicon codicon-pin" aria-hidden="true"></i>
+      </button>
       <button id="toolbarMenuBtn" class="secondary btn-icon" title="${L('webview.common.menu', 'Menu')}" aria-label="${L('webview.common.menu', 'Menu')}">
         <i class="codicon codicon-ellipsis" aria-hidden="true"></i>
       </button>
@@ -2195,8 +2370,8 @@ export class TableDataPanelManager {
     <div class="diagram-toolbar" style="display:none;">
       <button id="diagramExportBtn" class="secondary" title="${L('webview.table.exportDiagram', 'Exportar diagrama')}">${L('webview.common.export', 'Exportar')}</button>
       <button id="diagramResetLayoutBtn" class="secondary" title="${L('webview.table.resetPositions', 'Redefinir posição das tabelas')}">${L('webview.table.reset', 'Redefinir')}</button>
-      <div class="diagram-zoom-group" title="Ctrl+rodar: zoom. Rodar: deslocar vertical. Shift+rodar: deslocar horizontal.">
-        <label for="diagramZoomPct" class="diagram-toolbar-label">Zoom</label>
+      <div class="diagram-zoom-group" title="${L('webview.table.zoomHint', 'Ctrl+scroll: zoom. Scroll: pan vertically. Shift+scroll: pan horizontally.')}">
+        <label for="diagramZoomPct" class="diagram-toolbar-label">${L('webview.table.zoom', 'Zoom')}</label>
         <input type="number" id="diagramZoomPct" class="input" min="20" max="400" step="5" value="100" />
         <span class="diagram-toolbar-label" style="margin-right:0">%</span>
       </div>
@@ -2256,6 +2431,10 @@ export class TableDataPanelManager {
       <span class="menu-item-check" aria-hidden="true"></span>
       <span>${L('webview.table.showInExplorer', 'Mostrar no explorador')}</span>
     </button>
+    <button id="showTableDdl" class="header-menu-hide-in-result" title="${L('webview.table.showDdl', 'Mostrar DDL')}">
+      <span class="menu-item-check" aria-hidden="true"></span>
+      <span>${L('webview.table.showDdl', 'Mostrar DDL')}</span>
+    </button>
     <button id="openNewTab" title="${L('webview.table.openNewTab', 'Abrir em nova aba')}">
       <span class="menu-item-check" aria-hidden="true"></span>
       <span>${L('webview.table.openNewTab', 'Abrir em nova aba')}</span>
@@ -2283,7 +2462,15 @@ export class TableDataPanelManager {
     </button>
   </div>
   <div id="paginationMenu" class="pagination-menu overlay-surface overlay-scroll" role="dialog" aria-label="${L('webview.table.configurePagination', 'Configurar paginação')}">
-    <div class="pagination-menu-info" id="paginationMenuInfo"></div>
+    <div class="pagination-menu-head">
+      <button id="prevPage" class="secondary btn-icon" title="${L('webview.table.prevPage', 'Página anterior')}" aria-label="${L('webview.table.prevPage', 'Página anterior')}">
+        <i class="codicon codicon-chevron-left" aria-hidden="true"></i>
+      </button>
+      <div class="pagination-menu-info" id="paginationMenuInfo"></div>
+      <button id="nextPage" class="secondary btn-icon" title="${L('webview.table.nextPage', 'Próxima página')}" aria-label="${L('webview.table.nextPage', 'Próxima página')}">
+        <i class="codicon codicon-chevron-right" aria-hidden="true"></i>
+      </button>
+    </div>
     <div class="row">
     <label class="label" for="paginationPageInput">${L('webview.table.page', 'Página')}</label>
     <input id="paginationPageInput" class="input" type="number" step="1" />
@@ -2324,79 +2511,79 @@ export class TableDataPanelManager {
     </button>
     <button data-action="pasteRaw">
       <span class="menu-item-icon" aria-hidden="true"></span>
-      <span class="menu-item-label">Colar como texto</span>
+      <span class="menu-item-label">${L('webview.table.pasteAsText', 'Colar como texto')}</span>
     </button>
     <hr class="menu-separator" />
     <div class="menu-submenu-wrap">
       <button type="button">
         <span class="menu-item-icon" aria-hidden="true"><i class="codicon codicon-edit"></i></span>
-        <span class="menu-item-label">Editar</span>
+        <span class="menu-item-label">${L('webview.common.edit', 'Editar')}</span>
         <svg class="submenu-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 3.5L10.5 8L6 12.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
       <div class="menu-submenu simple-menu overlay-surface overlay-submenu">
         <button data-action="null">
           <span class="menu-item-icon" aria-hidden="true"></span>
-          <span class="menu-item-label">Definir NULL</span>
+          <span class="menu-item-label">${L('webview.table.setNull', 'Definir NULL')}</span>
         </button>
         <button data-action="empty">
           <span class="menu-item-icon" aria-hidden="true"></span>
-          <span class="menu-item-label">Definir texto vazio</span>
+          <span class="menu-item-label">${L('webview.table.setEmpty', 'Definir texto vazio')}</span>
         </button>
         <button data-action="default">
           <span class="menu-item-icon" aria-hidden="true"></span>
-          <span class="menu-item-label">Definir DEFAULT</span>
+          <span class="menu-item-label">${L('webview.table.setDefault', 'Definir DEFAULT')}</span>
         </button>
       </div>
     </div>
     <button data-action="openNativePreview">
       <span class="menu-item-icon" aria-hidden="true"><i class="codicon codicon-split-horizontal"></i></span>
-      <span class="menu-item-label">Editar em tela dividida</span>
+      <span class="menu-item-label">${L('webview.table.editSplitView', 'Editar em tela dividida')}</span>
     </button>
     <button data-action="searchMentions" id="searchMentionsActionBtn" style="display:none;">
       <span class="menu-item-icon" aria-hidden="true"><i class="codicon codicon-search"></i></span>
-      <span class="menu-item-label">Consultar menções</span>
+      <span class="menu-item-label">${L('webview.table.searchMentions', 'Consultar menções')}</span>
     </button>
     <hr class="menu-separator" />
     <button data-action="duplicate">
       <span class="menu-item-icon" aria-hidden="true"><i class="codicon codicon-files"></i></span>
-      <span class="menu-item-label">Duplicar linha</span>
+      <span class="menu-item-label">${L('webview.table.duplicateRow', 'Duplicar linha')}</span>
     </button>
     <button data-action="new">
       <span class="menu-item-icon" aria-hidden="true"><i class="codicon codicon-add"></i></span>
-      <span class="menu-item-label">Criar linha</span>
+      <span class="menu-item-label">${L('webview.table.createRow', 'Criar linha')}</span>
     </button>
     <hr class="menu-separator" />
     <button data-action="remove">
       <span class="menu-item-icon" aria-hidden="true"><i class="codicon codicon-trash"></i></span>
-      <span class="menu-item-label">Remover linha</span>
+      <span class="menu-item-label">${L('webview.table.removeRow', 'Remover linha')}</span>
     </button>
   </div>
 
   <div id="sortMenu" class="sort-menu simple-menu overlay-surface overlay-scroll">
     <button data-sort="asc" type="button">
       <span class="menu-item-check" aria-hidden="true"></span>
-      <span>Ordenar crescente</span>
+      <span>${L('webview.table.sortAsc', 'Ordenar crescente')}</span>
     </button>
     <button data-sort="desc" type="button">
       <span class="menu-item-check" aria-hidden="true"></span>
-      <span>Ordenar decrescente</span>
+      <span>${L('webview.table.sortDesc', 'Ordenar decrescente')}</span>
     </button>
     <button data-sort="none" type="button">
       <span class="menu-item-check" aria-hidden="true"></span>
-      <span>Sem ordenamento</span>
+      <span>${L('webview.table.sortNone', 'Sem ordenamento')}</span>
     </button>
   </div>
 
 
   <div class="overlay-backdrop json-modal-backdrop" id="queryModalBackdrop"></div>
-  <div class="json-modal" id="queryModal" role="dialog" aria-label="Mostrar query">
+  <div class="json-modal" id="queryModal" role="dialog" aria-label="${L('webview.table.showQuery', 'Mostrar query')}">
     <div class="json-modal-head">
       <div class="json-modal-head-main">
-        <span class="json-modal-title">Query</span>
+        <span class="json-modal-title">${L('webview.common.query', 'Query')}</span>
       </div>
       <div class="json-modal-actions">
-        <button id="queryModalCopy" class="secondary" title="${L('webview.common.copy', 'Copy')}">${L('webview.common.copy', 'Copy')}</button>
-        <button id="queryModalClose" class="primary" title="Fechar">Fechar</button>
+        <button id="queryModalCopy" class="secondary" title="${L('webview.common.copy', 'Copiar')}">${L('webview.common.copy', 'Copiar')}</button>
+        <button id="queryModalClose" class="primary" title="${L('webview.common.close', 'Fechar')}">${L('webview.common.close', 'Fechar')}</button>
       </div>
     </div>
     ${queryCodeEditorMarkup}
@@ -2407,17 +2594,17 @@ export class TableDataPanelManager {
     <div class="export-modal-head">${L('webview.table.exportData', 'Exportar dados')}</div>
     <div class="export-modal-body">
       <div>
-        <div class="export-group-title">Formato</div>
+        <div class="export-group-title">${L('webview.backup.format', 'Formato')}</div>
         <div class="export-group">
           <label class="export-option"><input type="radio" name="exportFormat" id="exportFormatJson" value="json" checked /><span>JSON</span></label>
           <label class="export-option"><input type="radio" name="exportFormat" id="exportFormatCsv" value="csv" /><span>CSV</span></label>
         </div>
       </div>
       <div>
-        <div class="export-group-title">Dados</div>
+        <div class="export-group-title">${L('webview.common.data', 'Dados')}</div>
         <div class="export-group">
-          <label class="export-option"><input type="radio" name="exportDataScope" id="exportDataResult" value="result" checked /><span>Resultado</span></label>
-          <label class="export-option"><input type="radio" name="exportDataScope" id="exportDataAll" value="all" /><span>Tudo (sem paginação)</span></label>
+          <label class="export-option"><input type="radio" name="exportDataScope" id="exportDataResult" value="result" checked /><span>${L('webview.table.exportResult', 'Resultado')}</span></label>
+          <label class="export-option"><input type="radio" name="exportDataScope" id="exportDataAll" value="all" /><span>${L('webview.table.exportAll', 'Tudo (sem paginação)')}</span></label>
           <label class="export-option" id="exportSelectedOption"><input type="radio" name="exportDataScope" id="exportDataSelected" value="selected" /><span>${L('webview.table.selectedCells', 'Selected cells')}</span></label>
         </div>
       </div>
@@ -2435,12 +2622,12 @@ export class TableDataPanelManager {
       <div>
         <div class="export-group-title">${L('webview.backup.format', 'Formato')}</div>
         <div class="export-group">
-          <label class="export-option"><input type="radio" name="diagramExportFormat" id="diagramExportFormatPng" value="png" checked /><span>PNG (imagem)</span></label>
+          <label class="export-option"><input type="radio" name="diagramExportFormat" id="diagramExportFormatPng" value="png" checked /><span>${L('webview.table.pngImage', 'PNG (imagem)')}</span></label>
           <label class="export-option"><input type="radio" name="diagramExportFormat" id="diagramExportFormatDrawio" value="drawio" /><span>Draw.io (.drawio / XML)</span></label>
         </div>
       </div>
       <div>
-        <div class="export-group-title">Destino</div>
+        <div class="export-group-title">${L('webview.table.destination', 'Destino')}</div>
         <div class="export-group">
           <label class="export-option"><input type="radio" name="diagramExportTarget" id="diagramExportTargetFile" value="file" checked /><span>${L('webview.table.saveAsFile', 'Salvar como arquivo')}</span></label>
           <label class="export-option"><input type="radio" name="diagramExportTarget" id="diagramExportTargetClipboard" value="clipboard" /><span>${L('webview.table.copyToClipboard', 'Copy to clipboard')}</span></label>
@@ -2454,15 +2641,15 @@ export class TableDataPanelManager {
   </div>
 
   <div class="overlay-backdrop json-modal-backdrop" id="jsonModalBackdrop"></div>
-  <div class="json-modal" id="jsonModal" role="dialog" aria-label="Conteúdo JSON">
+  <div class="json-modal" id="jsonModal" role="dialog" aria-label="${L('webview.table.jsonContent', 'Conteúdo JSON')}">
     <div class="json-modal-head">
       <div class="json-modal-head-main">
-        <span class="json-modal-title" id="jsonModalTitle">Conteúdo JSON</span>
+        <span class="json-modal-title" id="jsonModalTitle">${L('webview.table.jsonContent', 'Conteúdo JSON')}</span>
       </div>
       <div class="json-modal-actions">
         <button id="jsonModalApply" class="primary" title="${L('webview.table.applyChanges', 'Aplicar alterações')}">${L('webview.common.apply', 'Aplicar')}</button>
-        <button id="jsonModalOpenNative" class="secondary" title="Editar em tela dividida">Tela dividida</button>
-        <button id="jsonModalClose" class="secondary">Fechar</button>
+        <button id="jsonModalOpenNative" class="secondary" title="${L('webview.table.editSplitView', 'Editar em tela dividida')}">${L('webview.table.splitView', 'Tela dividida')}</button>
+        <button id="jsonModalClose" class="secondary">${L('webview.common.close', 'Fechar')}</button>
       </div>
     </div>
     ${codeEditorMarkup}
@@ -2470,8 +2657,10 @@ export class TableDataPanelManager {
 
   <script nonce="${nonce}">${codeEditorScript}</script>
   <script nonce="${nonce}" src="${tableAdvancedFilterScriptUri}"></script>
+  <script nonce="${nonce}" src="${tableClipboardScriptUri}"></script>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
+    ${sessionScript}
     const queryContainer = document.getElementById('queryContainer');
     const queryEl = document.getElementById('query');
     const loadingBar = document.getElementById('loadingBar');
@@ -2491,6 +2680,7 @@ export class TableDataPanelManager {
     const errorMsgEl = document.getElementById('errorMsg');
     const tableWrapEl = document.querySelector('.table-wrap');
     const advancedFilterApi = window.DBAdminAdvancedFilter || null;
+    const tableClipboardApi = window.DBAdminTableClipboard || null;
 
     const rangeSelectionOverlay = document.createElement('div');
     rangeSelectionOverlay.className = 'range-selection-overlay';
@@ -2584,6 +2774,7 @@ export class TableDataPanelManager {
     const clearFiltersBtn = document.getElementById('clearFiltersBtn');
     const saveBtn = document.getElementById('save');
     const newRowBtn = document.getElementById('newRow');
+    const pinTabBtn = document.getElementById('pinTabBtn');
     const openNativePreviewActionBtn = cellMenu.querySelector('button[data-action="openNativePreview"]');
     const searchMentionsActionBtn = cellMenu.querySelector('button[data-action="searchMentions"]');
 
@@ -2597,6 +2788,7 @@ export class TableDataPanelManager {
     const ICON_SORT_DESC = '<i class="codicon codicon-chevron-down" aria-hidden="true"></i>';
     const ICON_ZOOM_IN = '<i class="codicon codicon-zoom-in" aria-hidden="true"></i>';
     const ICON_CLEAR_ALL = '<i class="codicon codicon-clear-all" aria-hidden="true"></i>';
+    const ICON_SEARCH = '<i class="codicon codicon-search" aria-hidden="true"></i>';
     const ICON_GO_TO_FILE = '<i class="codicon codicon-go-to-file" aria-hidden="true"></i>';
 
     if (clearFiltersBtn) {
@@ -2608,12 +2800,14 @@ export class TableDataPanelManager {
     }
 
     function showError(msg) {
-      errorMsgEl.textContent = msg;
+      loadErrorMessage = String(msg || '');
+      errorMsgEl.textContent = loadErrorMessage;
       errorMsgEl.style.display = 'block';
       tableWrapEl.style.display = 'none';
     }
 
     function hideError() {
+      loadErrorMessage = '';
       errorMsgEl.style.display = 'none';
       tableWrapEl.style.display = '';
     }
@@ -2631,6 +2825,10 @@ export class TableDataPanelManager {
         this.onAfterOpen = options.onAfterOpen;
         this.onAfterClose = options.onAfterClose;
         this.lastOpenOptions = {};
+
+        if (!this.surfaceEl || !this.backdropEl) {
+          return;
+        }
 
         this.backdropEl.addEventListener('mousedown', (event) => {
           event.preventDefault();
@@ -2656,7 +2854,7 @@ export class TableDataPanelManager {
       }
 
       isOpen() {
-        return this.surfaceEl.classList.contains('open');
+        return Boolean(this.surfaceEl && this.surfaceEl.classList.contains('open'));
       }
 
       toggle(options = {}) {
@@ -2670,6 +2868,9 @@ export class TableDataPanelManager {
       }
 
       open(options = {}) {
+        if (!this.surfaceEl || !this.backdropEl) {
+          return;
+        }
         closeAllOverlays(this);
         this.lastOpenOptions = options;
         this.surfaceEl.classList.add('open');
@@ -2782,8 +2983,10 @@ export class TableDataPanelManager {
     let pendingFocus = null;
     let layoutColumnOrderSnapshot = null;
     let isLoading = false;
+    let loadErrorMessage = '';
     let dynamicDefaultColumnWidth = ${initialDynamicDefaultColumnWidth ? "true" : "false"};
     let readOnlyResultMode = false;
+    let tabPinned = false;
     let hideDiagramMode = false;
     let integratedTableMode = false;
     let currentDatabaseName = '';
@@ -2878,10 +3081,65 @@ export class TableDataPanelManager {
       return isTextEditingElement(active) && active !== editingCellInput;
     }
 
+    function setInteractionOwner(owner) {
+      if (tableClipboardApi && typeof tableClipboardApi.setOwner === 'function') {
+        tableClipboardApi.setOwner(owner);
+      }
+      if (owner === 'grid' || owner === 'cellEdit' || owner === 'other') {
+        pendingFocus = null;
+        if (tableClipboardApi && typeof tableClipboardApi.clearPendingFilterRestore === 'function') {
+          tableClipboardApi.clearPendingFilterRestore();
+        }
+      }
+    }
+
+    function getInteractionOwner() {
+      if (tableClipboardApi && typeof tableClipboardApi.getOwner === 'function') {
+        return tableClipboardApi.getOwner();
+      }
+      return 'other';
+    }
+
+    function isGridShortcutTarget() {
+      if (tableClipboardApi && typeof tableClipboardApi.isGridShortcutTarget === 'function') {
+        return tableClipboardApi.isGridShortcutTarget();
+      }
+      return !isTextInputFocusedOutsideGridEditing();
+    }
+
+    function isStickyFocusForbiddenForGrid(target) {
+      if (!(target instanceof HTMLElement)) {
+        return false;
+      }
+      if (target.classList.contains('th-filter') || target.closest('.th-filter')) {
+        return true;
+      }
+      if (target === searchInputEl || (searchInputEl && searchInputEl.contains(target))) {
+        return true;
+      }
+      if (target.classList.contains('cell-input') && target !== editingCellInput) {
+        return true;
+      }
+      return false;
+    }
+
     function focusGridSurface() {
       clearStickyFocus();
-      if (isSearchInputFocused()) {
-        searchInputEl.blur();
+      pendingFocus = null;
+      setInteractionOwner('grid');
+
+      const active = document.activeElement;
+      if (
+        active instanceof HTMLElement &&
+        active !== tableWrapEl &&
+        active !== editingCellInput &&
+        (
+          active.classList.contains('th-filter') ||
+          active === searchInputEl ||
+          active.classList.contains('cell-input')
+        )
+      ) {
+        active.blur();
       }
       if (tableWrapEl instanceof HTMLElement) {
         tableWrapEl.focus({ preventScroll: true });
@@ -2900,6 +3158,10 @@ export class TableDataPanelManager {
     function shouldHandleGridSelectAllShortcut(event) {
       if (editingCellInput) {
         return false;
+      }
+
+      if (isGridShortcutTarget()) {
+        return true;
       }
 
       const active = document.activeElement;
@@ -2934,11 +3196,16 @@ export class TableDataPanelManager {
     }
 
     function beginStickyFocus(target) {
-      if (!isFocusableElement(target)) {
+      let nextTarget = target;
+      if (getInteractionOwner() === 'grid' && isStickyFocusForbiddenForGrid(nextTarget)) {
+        nextTarget = tableWrapEl;
+      }
+
+      if (!isFocusableElement(nextTarget)) {
         return;
       }
 
-      stickyFocusTarget = target;
+      stickyFocusTarget = nextTarget;
       stickyFocusUntil = Date.now() + STICKY_FOCUS_MS;
       scheduleStickyFocusTick();
     }
@@ -2989,7 +3256,12 @@ export class TableDataPanelManager {
         return;
       }
 
-      const target = lastPointerTarget instanceof HTMLElement ? lastPointerTarget : stickyFocusTarget;
+      let target = lastPointerTarget instanceof HTMLElement ? lastPointerTarget : stickyFocusTarget;
+      if (getInteractionOwner() === 'grid') {
+        if (!(target instanceof HTMLElement) || isStickyFocusForbiddenForGrid(target)) {
+          target = tableWrapEl;
+        }
+      }
       if (!(target instanceof HTMLElement)) {
         return;
       }
@@ -3019,6 +3291,31 @@ export class TableDataPanelManager {
       }
     }, true);
 
+    document.addEventListener('focusin', (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+      if (target.classList.contains('th-filter')) {
+        setInteractionOwner('columnFilter');
+        return;
+      }
+      if (target === searchInputEl) {
+        setInteractionOwner('search');
+        return;
+      }
+      if (target.classList.contains('cell-input') && target.classList.contains('editing')) {
+        setInteractionOwner('cellEdit');
+        return;
+      }
+      if (target === tableWrapEl) {
+        return;
+      }
+      if (isTextEditingElement(target)) {
+        setInteractionOwner('other');
+      }
+    });
+
     window.addEventListener('focus', () => {
       focusGuardUntil = Date.now() + FOCUS_GUARD_MS;
       runStickyFocus();
@@ -3042,6 +3339,7 @@ export class TableDataPanelManager {
         type: 'updateLayout',
         layout: serializeLayoutState(),
       });
+      persistWebviewSessionFromUi();
     }
 
     function applyLayoutState(layout) {
@@ -3103,6 +3401,17 @@ export class TableDataPanelManager {
       }
     }
 
+    function syncPinButton() {
+      if (!pinTabBtn) {
+        return;
+      }
+      pinTabBtn.style.display = readOnlyResultMode || tabPinned ? 'none' : '';
+      pinTabBtn.classList.toggle('is-pinned', tabPinned);
+      const label = t('webview.table.pinTab', 'Fixar aba');
+      pinTabBtn.title = label;
+      pinTabBtn.setAttribute('aria-label', label);
+    }
+
     function applyResultModeRestrictions() {
       if (saveBtn) {
         saveBtn.disabled = readOnlyResultMode || !hasChanges();
@@ -3111,6 +3420,8 @@ export class TableDataPanelManager {
       if (newRowBtn) {
         newRowBtn.style.display = readOnlyResultMode ? 'none' : '';
       }
+
+      syncPinButton();
 
       if (modeBtn) {
         modeBtn.style.display = readOnlyResultMode ? 'none' : '';
@@ -3157,6 +3468,17 @@ export class TableDataPanelManager {
       searchWrapEl.classList.toggle('is-active', isActive);
     }
 
+    function syncColumnFilterWrapState(filterInput, filterWrap) {
+      if (!filterInput || !filterWrap) {
+        return;
+      }
+      const hasValue = String(filterInput.value || '').length > 0;
+      const isActive = document.activeElement === filterInput;
+      filterInput.classList.toggle('has-value', hasValue);
+      filterWrap.classList.toggle('has-value', hasValue);
+      filterWrap.classList.toggle('is-active', isActive);
+    }
+
     function updateSearchContextPlaceholder() {
       if (!searchInputEl || !searchContextPlaceholderEl) {
         return;
@@ -3165,7 +3487,7 @@ export class TableDataPanelManager {
       const hasSearchText = String(searchInputEl.value || '').length > 0;
       const canShowContext = !hasSearchText;
 
-      searchInputEl.placeholder = canShowContext ? '' : 'Pesquisar tudo';
+      searchInputEl.placeholder = canShowContext ? '' : t('webview.table.searchAll', 'Pesquisar tudo');
       syncSearchWrapState();
 
       if (!canShowContext) {
@@ -3174,9 +3496,9 @@ export class TableDataPanelManager {
         return;
       }
 
-      const dbLabel = currentDatabaseName || 'Banco';
-      const schemaLabel = currentSchemaName || 'Schema';
-      const connectionLabel = currentConnectionName || 'Conexão';
+      const dbLabel = currentDatabaseName || t('webview.table.databaseFallback', 'Banco');
+      const schemaLabel = currentSchemaName || t('webview.table.schemaFallback', 'Schema');
+      const connectionLabel = currentConnectionName || t('webview.table.connectionFallback', 'Conexão');
       searchContextPlaceholderEl.innerHTML =
         '<span class="info-item info-fixed">' + ICON_SCHEMA + '<span>' + schemaLabel + '</span></span>' +
         '<span class="info-item info-fixed"><span style="margin: 4px 2px 0 0;">' + ICON_DB + '</span><span>' + dbLabel + '</span></span>' +
@@ -3189,6 +3511,7 @@ export class TableDataPanelManager {
       if (!searchInput) {
         return;
       }
+      setInteractionOwner('search');
       pendingFocus = {
         type: 'search',
         selectionStart: searchInput.selectionStart,
@@ -3197,6 +3520,7 @@ export class TableDataPanelManager {
     }
 
     function rememberColumnFocus(columnName, element) {
+      setInteractionOwner('columnFilter');
       pendingFocus = {
         type: 'column',
         columnName,
@@ -3208,6 +3532,22 @@ export class TableDataPanelManager {
     function restorePendingFocus() {
       if (!pendingFocus) {
         return;
+      }
+
+      const owner = getInteractionOwner();
+      if (pendingFocus.type === 'column' && owner !== 'columnFilter') {
+        pendingFocus = null;
+        return;
+      }
+      if (pendingFocus.type === 'search' && owner !== 'search') {
+        pendingFocus = null;
+        return;
+      }
+      if (tableClipboardApi && typeof tableClipboardApi.shouldRestoreFilterFocus === 'function') {
+        if (pendingFocus.type === 'column' && !tableClipboardApi.shouldRestoreFilterFocus()) {
+          pendingFocus = null;
+          return;
+        }
       }
 
       const snapshot = pendingFocus;
@@ -3329,7 +3669,9 @@ export class TableDataPanelManager {
     function syncBooleanToggleButton(button, value) {
       const isTrue = parseBooleanCellValue(value);
       button.classList.toggle('is-checked', isTrue);
-      button.title = isTrue ? 'Alternar para false' : 'Alternar para true';
+      button.title = isTrue
+        ? t('webview.table.toggleToFalse', 'Alternar para false')
+        : t('webview.table.toggleToTrue', 'Alternar para true');
       button.setAttribute('aria-pressed', isTrue ? 'true' : 'false');
     }
 
@@ -3682,10 +4024,10 @@ export class TableDataPanelManager {
 
     function getCellPlaceholderText(value) {
       if (value === null || value === undefined) {
-        return 'Nulo';
+        return t('webview.table.nullPlaceholder', 'Nulo');
       }
       if (typeof value === 'string' && value.length === 0) {
-        return 'Vazio';
+        return t('webview.table.emptyPlaceholder', 'Vazio');
       }
       return '';
     }
@@ -4007,6 +4349,9 @@ export class TableDataPanelManager {
           visibleColumns.add(name);
         }
       });
+      if (names.length > 0 && visibleColumns.size === 0) {
+        visibleColumns = new Set(names);
+      }
     }
 
     function resetColumnLayoutToDefault() {
@@ -4265,11 +4610,32 @@ export class TableDataPanelManager {
       };
     }
 
+    function persistWebviewSession(session) {
+      if (!session || typeof session !== 'object') {
+        return;
+      }
+      vscode.setState(session);
+    }
+
+    function persistWebviewSessionFromUi() {
+      const prev = vscode.getState();
+      if (!prev || typeof prev !== 'object' || !prev.connectionId) {
+        return;
+      }
+      vscode.setState({
+        ...prev,
+        newTab: tabPinned,
+        state: currentState(),
+        layout: serializeLayoutState(),
+      });
+    }
+
     function persistCurrentState() {
       vscode.postMessage({
         type: 'updateState',
         state: currentState(),
       });
+      persistWebviewSessionFromUi();
     }
 
     function closeExportModal() {
@@ -4360,7 +4726,7 @@ export class TableDataPanelManager {
       if (pageInfoBtn) {
         pageInfoBtn.setAttribute(
           'title',
-          'Paginação - Página ' + state.page + ' de ' + totalPages,
+          tf('webview.table.pageTooltip', { page: state.page, total: totalPages }, 'Paginação - Página ' + state.page + ' de ' + totalPages),
         );
       }
       document.getElementById('prevPage').disabled = state.page <= 1;
@@ -4424,6 +4790,7 @@ export class TableDataPanelManager {
       input.classList.add('editing');
       input.setAttribute('data-edit-initial-value', input.value);
       input.setSelectionRange(0, input.value.length);
+      setInteractionOwner('cellEdit');
       input.focus();
     }
 
@@ -4446,6 +4813,12 @@ export class TableDataPanelManager {
       const selection = window.getSelection ? window.getSelection() : null;
       if (selection && typeof selection.removeAllRanges === 'function') {
         selection.removeAllRanges();
+      }
+      if (getInteractionOwner() === 'cellEdit') {
+        const active = document.activeElement;
+        if (!isTextEditingElement(active) || active === tableWrapEl) {
+          setInteractionOwner('grid');
+        }
       }
     }
 
@@ -4590,6 +4963,7 @@ export class TableDataPanelManager {
     function selectCellForContextMenuIfNeeded(rowKey, colName, rowIndex, colIndex) {
       const currentCellSet = selectedCells.get(rowKey);
       if (currentCellSet && currentCellSet.has(colName)) {
+        focusGridSurface();
         return;
       }
 
@@ -4608,6 +4982,7 @@ export class TableDataPanelManager {
       cellDragBaseCounts = new Map();
       dragAnchor = null;
       isDragging = false;
+      focusGridSurface();
       renderSelectionState();
     }
 
@@ -5048,8 +5423,8 @@ export class TableDataPanelManager {
       lastSelectedCell = { rowKey, colName };
       renderSelectionState();
       ensureCellSelectionVisible(rowKey, colName);
-
       if (!enterEditMode) {
+        focusGridSurface();
         return;
       }
 
@@ -5341,18 +5716,16 @@ export class TableDataPanelManager {
       return toCellInputText(getEffectiveCellValue(row, col.name, row.__dbadmin_ctid), col);
     }
 
-    function copyDefaultSelectionToClipboard() {
+    function captureGridCopyText() {
       let value = '';
       if (editingCellInput) {
         value = editingCellInput.value;
-        // If editing a cell, just copy its value
         clipboardData = [];
         clipboardRows = 0;
         clipboardCols = 0;
         clipboardColumnNames = [];
       } else {
         value = getSelectedCellsText();
-        // Extract structured data for smart paste
         if (value) {
           const extracted = extractSelectedCellsData();
           clipboardData = extracted.data;
@@ -5362,7 +5735,6 @@ export class TableDataPanelManager {
         } else {
           const fallbackValue = getFocusedCellFallbackText();
           value = fallbackValue;
-          // Single cell fallback
           clipboardData = [[fallbackValue]];
           clipboardRows = 1;
           clipboardCols = 1;
@@ -5370,7 +5742,16 @@ export class TableDataPanelManager {
         }
       }
 
-      navigator.clipboard.writeText(value || '').catch(() => {});
+      return value || '';
+    }
+
+    function copyDefaultSelectionToClipboard() {
+      const value = captureGridCopyText();
+      if (tableClipboardApi && typeof tableClipboardApi.writeText === 'function') {
+        tableClipboardApi.writeText(value);
+        return;
+      }
+      navigator.clipboard.writeText(value).catch(() => {});
     }
 
     function copyAdvancedToClipboard(format) {
@@ -5418,12 +5799,15 @@ export class TableDataPanelManager {
       return true;
     }
 
-    function pasteIntoSelectedCells(isRaw) {
+    function pasteIntoSelectedCells(isRaw, text) {
       // Smart paste: if raw mode or no clipboard data, paste as text
       if (isRaw || clipboardData.length === 0) {
-        // Raw paste into single focused cell
-        navigator.clipboard.readText().then((text) => {
+        if (typeof text === 'string') {
           pasteIntoEditingOrSelectedCell(text);
+          return true;
+        }
+        navigator.clipboard.readText().then((value) => {
+          pasteIntoEditingOrSelectedCell(value);
         }).catch(() => {});
         return true;
       }
@@ -5561,6 +5945,33 @@ export class TableDataPanelManager {
       }
 
       return false;
+    }
+
+    function pasteGridFromClipboardText(text, raw) {
+      if (editingCellInput) {
+        return false;
+      }
+
+      if (raw) {
+        return pasteIntoEditingOrSelectedCell(text);
+      }
+
+      if (selectedCells.size === 1 && lastSelectedCell) {
+        return pasteIntoEditingOrSelectedCell(text);
+      }
+
+      if (clipboardData.length === 0) {
+        return pasteIntoEditingOrSelectedCell(text);
+      }
+
+      return pasteIntoSelectedCells(false, text);
+    }
+
+    if (tableClipboardApi && typeof tableClipboardApi.bind === 'function') {
+      tableClipboardApi.bind({
+        getCopyText: captureGridCopyText,
+        pasteText: pasteGridFromClipboardText,
+      });
     }
 
     function render() {
@@ -5744,7 +6155,7 @@ export class TableDataPanelManager {
 
         const right = document.createElement('span');
         right.className = 'th-icons';
-        right.title = 'Ordenar';
+        right.title = t('webview.table.sort', 'Ordenar');
         right.innerHTML = state.sortColumn === col.name
           ? (state.sortDirection === 'desc' ? ICON_SORT_DESC : ICON_SORT_ASC)
           : ICON_SORT_NONE;
@@ -5763,20 +6174,29 @@ export class TableDataPanelManager {
           persistCurrentState();
           reloadTableViewClearingSelection();
         });
-        right.addEventListener('contextmenu', (event) => {
+
+        title.appendChild(left);
+        title.appendChild(right);
+        title.addEventListener('contextmenu', (event) => {
           event.preventDefault();
           event.stopPropagation();
           showSortMenu(event.clientX, event.clientY, col.name);
         });
-
-        title.appendChild(left);
-        title.appendChild(right);
 
         const filterInput = document.createElement('input');
         filterInput.className = 'th-filter';
         filterInput.setAttribute('data-col-name', col.name);
         filterInput.placeholder = col.dataType;
         filterInput.value = state.columnFilters[col.name] || '';
+        const filterWrap = document.createElement('div');
+        filterWrap.className = 'th-filter-wrap';
+        filterInput.addEventListener('focus', () => {
+          setInteractionOwner('columnFilter');
+          syncColumnFilterWrapState(filterInput, filterWrap);
+        });
+        filterInput.addEventListener('blur', () => {
+          syncColumnFilterWrapState(filterInput, filterWrap);
+        });
         filterInput.addEventListener('input', () => {
           const value = filterInput.value;
           if (value.length > 0) {
@@ -5784,6 +6204,7 @@ export class TableDataPanelManager {
           } else {
             delete state.columnFilters[col.name];
           }
+          syncColumnFilterWrapState(filterInput, filterWrap);
           syncClearFiltersButton();
           persistCurrentState();
 
@@ -5816,16 +6237,20 @@ export class TableDataPanelManager {
           }
         });
 
-        const filterWrap = document.createElement('div');
-        filterWrap.className = 'th-filter-wrap';
+        const filterIcon = document.createElement('span');
+        filterIcon.className = 'th-filter-icon';
+        filterIcon.setAttribute('aria-hidden', 'true');
+        filterIcon.innerHTML = ICON_SEARCH;
         filterWrap.appendChild(filterInput);
+        filterWrap.appendChild(filterIcon);
+        syncColumnFilterWrapState(filterInput, filterWrap);
 
         th.appendChild(title);
         th.appendChild(filterWrap);
 
         const resizer = document.createElement('div');
         resizer.className = 'th-resizer';
-        resizer.title = 'Redimensionar coluna';
+        resizer.title = t('webview.table.resizeColumn', 'Redimensionar coluna');
         resizer.addEventListener('mousedown', (event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -6025,6 +6450,7 @@ export class TableDataPanelManager {
               // Let dblclick handle it; don't interfere
               return;
             }
+            event.preventDefault();
             event.stopPropagation();
             isDragging = true;
             focusGridSurface();
@@ -6139,7 +6565,9 @@ export class TableDataPanelManager {
             if (input.classList.contains('editing')) {
               // Keep text-selection interactions inside the input without triggering td drag-selection.
               event.stopPropagation();
+              return;
             }
+            event.preventDefault();
           });
 
           input.addEventListener('click', (event) => {
@@ -6188,7 +6616,7 @@ export class TableDataPanelManager {
             const boolToggleBtn = document.createElement('button');
             boolToggleBtn.type = 'button';
             boolToggleBtn.className = 'cell-bool-toggle-btn cell-action-btn';
-            boolToggleBtn.setAttribute('aria-label', 'Alternar valor booleano');
+            boolToggleBtn.setAttribute('aria-label', t('webview.table.toggleBoolean', 'Alternar valor booleano'));
             boolToggleBtn.innerHTML = '<span class="bool-toggle-box"><i class="codicon codicon-check" aria-hidden="true"></i></span>';
             syncBooleanToggleButton(boolToggleBtn, effectiveCurrent);
             boolToggleBtn.addEventListener('mousedown', (event) => {
@@ -6214,8 +6642,8 @@ export class TableDataPanelManager {
             const openFkBtn = document.createElement('button');
             openFkBtn.type = 'button';
             openFkBtn.className = 'json-open-btn cell-action-btn';
-            openFkBtn.title = 'Abrir tabela relacionada';
-            openFkBtn.setAttribute('aria-label', 'Abrir tabela relacionada');
+            openFkBtn.title = t('webview.table.openRelatedTable', 'Abrir tabela relacionada');
+            openFkBtn.setAttribute('aria-label', t('webview.table.openRelatedTable', 'Abrir tabela relacionada'));
             openFkBtn.innerHTML = ICON_GO_TO_FILE;
             openFkBtn.addEventListener('mousedown', (event) => {
               event.preventDefault();
@@ -6231,8 +6659,8 @@ export class TableDataPanelManager {
             const openJsonBtn = document.createElement('button');
             openJsonBtn.type = 'button';
             openJsonBtn.className = 'json-open-btn cell-action-btn';
-            openJsonBtn.title = 'Abrir conteúdo';
-            openJsonBtn.setAttribute('aria-label', 'Abrir conteúdo');
+            openJsonBtn.title = t('webview.table.openContent', 'Abrir conteúdo');
+            openJsonBtn.setAttribute('aria-label', t('webview.table.openContent', 'Abrir conteúdo'));
             openJsonBtn.innerHTML = ICON_ZOOM_IN;
             openJsonBtn.addEventListener('mousedown', (event) => {
               event.preventDefault();
@@ -6401,6 +6829,7 @@ export class TableDataPanelManager {
     });
 
     searchInputEl.addEventListener('focus', () => {
+      setInteractionOwner('search');
       syncSearchWrapState();
     });
 
@@ -6424,29 +6853,6 @@ export class TableDataPanelManager {
       } else {
         rerenderTableViewClearingSelection();
       }
-    });
-
-    // Prevent duplicate paste in global search when grid selection should receive Ctrl+V.
-    searchInputEl.addEventListener('paste', (event) => {
-      if (currentView !== 'data') {
-        return;
-      }
-
-      if (!isSearchInputFocused()) {
-        return;
-      }
-
-      if (!(editingCellInput || lastSelectedCell)) {
-        return;
-      }
-
-      const text = event.clipboardData ? event.clipboardData.getData('text/plain') : '';
-      if (!pasteIntoEditingOrSelectedCell(text)) {
-        return;
-      }
-
-      event.preventDefault();
-      event.stopPropagation();
     });
 
     modeDropdown.querySelectorAll('button[data-mode]').forEach((btn) => {
@@ -6666,7 +7072,8 @@ export class TableDataPanelManager {
       updateSaveButtonState();
     });
 
-    document.getElementById('prevPage').addEventListener('click', () => {
+    document.getElementById('prevPage').addEventListener('click', (event) => {
+      event.stopPropagation();
       if (state.page <= 1) {
         return;
       }
@@ -6675,7 +7082,8 @@ export class TableDataPanelManager {
       reloadTableViewClearingSelection();
     });
 
-    document.getElementById('nextPage').addEventListener('click', () => {
+    document.getElementById('nextPage').addEventListener('click', (event) => {
+      event.stopPropagation();
       const pageSize = Math.max(1, Number(state.limit || ${defaultPageSize}));
       const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
       if (state.page >= totalPages) {
@@ -6736,6 +7144,10 @@ export class TableDataPanelManager {
       vscode.postMessage({ type: 'openInNewTab' });
     });
 
+    pinTabBtn?.addEventListener('click', () => {
+      vscode.postMessage({ type: 'togglePin' });
+    });
+
     document.getElementById('openSettings').addEventListener('click', () => {
       closeHeaderMenu();
       vscode.postMessage({ type: 'openSettings' });
@@ -6749,6 +7161,11 @@ export class TableDataPanelManager {
     document.getElementById('showInExplorer').addEventListener('click', () => {
       closeHeaderMenu();
       vscode.postMessage({ type: 'showInExplorer' });
+    });
+
+    document.getElementById('showTableDdl').addEventListener('click', () => {
+      closeHeaderMenu();
+      vscode.postMessage({ type: 'showTableDdl' });
     });
 
     showQueryModalBtn?.addEventListener('click', () => {
@@ -6909,7 +7326,6 @@ export class TableDataPanelManager {
 
       const isCtrlOrMeta = event.ctrlKey || event.metaKey;
       const key = String(event.key || '').toLowerCase();
-      const textInputFocusedOutsideGridEditing = isTextInputFocusedOutsideGridEditing();
 
       if (isCtrlOrMeta && !event.altKey && !event.shiftKey && key === 's') {
         event.preventDefault();
@@ -6930,11 +7346,9 @@ export class TableDataPanelManager {
         return;
       }
 
-      // Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y: prevent browser native undo/redo from leaking into
-      // the search input when a grid cell is selected but not actively being edited.
-      // Handled before the input-target early return for the same reason as Ctrl+C/V.
+      // Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y follow the interaction owner, not DOM focus.
       if (isCtrlOrMeta && !event.altKey && (key === 'z' || key === 'y')) {
-        if (textInputFocusedOutsideGridEditing) {
+        if (!isGridShortcutTarget()) {
           return;
         }
 
@@ -6950,74 +7364,22 @@ export class TableDataPanelManager {
         }
       }
 
-      // Ctrl+C: copy active editing value or last selected cell value.
-      // Handle before input-target early return so grid shortcuts still work
-      // after selecting a cell, even if another input kept focus.
-      if (isCtrlOrMeta && !event.altKey && !event.shiftKey && key === 'c') {
-        if (textInputFocusedOutsideGridEditing) {
-          return;
-        }
-
-        if (editingCellInput || lastSelectedCell) {
-          copyDefaultSelectionToClipboard();
-          event.preventDefault();
-          return;
-        }
-      }
-
-      // Ctrl+Shift+V: paste raw text into current editing cell or last selected cell.
-      if (isCtrlOrMeta && event.shiftKey && !event.altKey && key === 'v') {
-        if (textInputFocusedOutsideGridEditing) {
-          return;
-        }
-
-        // When a cell input is actively editing, let native paste run to avoid duplicate insertion.
-        if (editingCellInput) {
-          return;
-        }
-
-        if (!lastSelectedCell) {
-          return;
-        }
-
-        event.preventDefault();
-        pasteIntoSelectedCells(true); // true = raw mode
+      // Ctrl+C / Ctrl+V / Ctrl+X: clipboard events on document handle grid copy/paste
+      // via clipboardData when the owner is grid. Do not preventDefault here or the
+      // ClipboardEvent will not fire.
+      if (isCtrlOrMeta && !event.altKey && !event.shiftKey && (key === 'c' || key === 'x')) {
         return;
       }
 
-      // Ctrl+V: smart paste into selected cells or current editing cell.
-      // Handle before input-target early return for consistent grid behavior.
+      // Ctrl+Shift+V: mark the next paste event as raw text.
+      if (isCtrlOrMeta && event.shiftKey && !event.altKey && key === 'v') {
+        if (isGridShortcutTarget() && tableClipboardApi && typeof tableClipboardApi.markRawPaste === 'function') {
+          tableClipboardApi.markRawPaste();
+        }
+        return;
+      }
+
       if (isCtrlOrMeta && !event.altKey && !event.shiftKey && key === 'v') {
-        if (textInputFocusedOutsideGridEditing) {
-          return;
-        }
-
-        // When a cell input is actively editing, let native paste run to avoid duplicate insertion.
-        if (editingCellInput) {
-          return;
-        }
-
-        if (!(lastSelectedCell || selectedCells.size > 0)) {
-          return;
-        }
-
-        event.preventDefault();
-        
-        // If only one cell is selected, use raw paste.
-        if (selectedCells.size === 1 && lastSelectedCell) {
-          navigator.clipboard.readText().then((value) => {
-            pasteIntoEditingOrSelectedCell(value);
-          }).catch(() => {});
-        } else {
-          // Try smart paste first, fall back to clipboard if no structured data
-          if (clipboardData.length === 0) {
-            navigator.clipboard.readText().then((value) => {
-              pasteIntoEditingOrSelectedCell(value);
-            }).catch(() => {});
-          } else {
-            pasteIntoSelectedCells(false); // false = smart mode
-          }
-        }
         return;
       }
 
@@ -7293,15 +7655,30 @@ export class TableDataPanelManager {
           }
         } else {
           if (action === 'copy') {
-            copyDefaultSelectionToClipboard();
+            setInteractionOwner('grid');
+            if (tableClipboardApi && typeof tableClipboardApi.handleCopy === 'function') {
+              tableClipboardApi.handleCopy();
+            } else {
+              copyDefaultSelectionToClipboard();
+            }
           }
 
           if (action === 'paste') {
-            pasteIntoSelectedCells(false); // false = smart mode
+            setInteractionOwner('grid');
+            if (tableClipboardApi && typeof tableClipboardApi.handlePaste === 'function') {
+              tableClipboardApi.handlePaste(undefined, false);
+            } else {
+              pasteIntoSelectedCells(false);
+            }
           }
 
           if (action === 'pasteRaw') {
-            pasteIntoSelectedCells(true); // true = raw mode
+            setInteractionOwner('grid');
+            if (tableClipboardApi && typeof tableClipboardApi.handlePaste === 'function') {
+              tableClipboardApi.handlePaste(undefined, true);
+            } else {
+              pasteIntoSelectedCells(true);
+            }
           }
 
           if (action === 'copyAdvancedCsv') {
@@ -7414,43 +7791,57 @@ export class TableDataPanelManager {
     window.addEventListener('message', (event) => {
       const message = event.data;
 
+      if (message.type === 'persistSession') {
+        persistWebviewSession(message.session);
+      }
+
       if (message.type === 'data') {
-        endLoading();
-        currentConnectionName = String(message.connectionName || '');
-        currentDatabaseName = String(message.databaseName || '');
-        currentSchemaName = String(message.schemaName || '');
-        currentTableName = String(message.tableName || '');
-        if (queryEl) {
-          queryEl.value = message.result.query;
+        try {
+          endLoading();
+          const result = message.result || {};
+          const nextState = message.state || {};
+          currentConnectionName = String(message.connectionName || '');
+          currentDatabaseName = String(message.databaseName || '');
+          currentSchemaName = String(message.schemaName || '');
+          currentTableName = String(message.tableName || '');
+          if (queryEl) {
+            queryEl.value = result.query || '';
+          }
+          columns = result.columns || [];
+          applyLayoutState(message.layout);
+          syncColumnState();
+          rows = result.rows || [];
+          totalRows = Number(result.totalRows || 0);
+          state.searchText = nextState.searchText || '';
+          state.searchMode = nextState.searchMode || 'local';
+          state.sortColumn = nextState.sortColumn;
+          state.sortDirection = nextState.sortDirection;
+          state.columnFilters = nextState.columnFilters || {};
+          state.limit = nextState.limit || ${defaultPageSize};
+          state.page = nextState.page || 1;
+          dynamicDefaultColumnWidth = message.dynamicDefaultColumnWidth !== false;
+          readOnlyResultMode = message.readOnlyResultMode === true;
+          hideDiagramMode = message.hideDiagramMode === true;
+          integratedTableMode = message.integratedTableMode === true;
+          tabPinned = message.pinned === true;
+          editedRows = new Map();
+          cellUndoStack = [];
+          cellRedoStack = [];
+          pendingCellHistoryChanges = null;
+          insertedRows = [];
+          removedCtids = new Set();
+          clearSelectionForViewChange();
+          syncControls();
+          applyResultModeRestrictions();
+          render();
+          hideError();
+          restorePendingFocus();
+          persistWebviewSessionFromUi();
+        } catch (error) {
+          endLoading();
+          console.error('[dbadmin] failed to render table data', error);
+          showError(error && error.message ? error.message : String(error));
         }
-        columns = message.result.columns || [];
-        applyLayoutState(message.layout);
-        syncColumnState();
-        rows = message.result.rows || [];
-        totalRows = Number(message.result.totalRows || 0);
-        state.searchText = message.state.searchText || '';
-        state.searchMode = message.state.searchMode || 'local';
-        state.sortColumn = message.state.sortColumn;
-        state.sortDirection = message.state.sortDirection;
-        state.columnFilters = message.state.columnFilters || {};
-        state.limit = message.state.limit || ${defaultPageSize};
-        state.page = message.state.page || 1;
-        dynamicDefaultColumnWidth = message.dynamicDefaultColumnWidth !== false;
-        readOnlyResultMode = message.readOnlyResultMode === true;
-        hideDiagramMode = message.hideDiagramMode === true;
-        integratedTableMode = message.integratedTableMode === true;
-        editedRows = new Map();
-        cellUndoStack = [];
-        cellRedoStack = [];
-        pendingCellHistoryChanges = null;
-        insertedRows = [];
-        removedCtids = new Set();
-        clearSelectionForViewChange();
-        syncControls();
-        applyResultModeRestrictions();
-        render();
-        hideError();
-        restorePendingFocus();
       }
 
       if (message.type === 'status') {
@@ -7458,6 +7849,11 @@ export class TableDataPanelManager {
           endLoading();
           showError(message.message);
         }
+      }
+
+      if (message.type === 'tabPinned') {
+        tabPinned = message.pinned === true;
+        syncPinButton();
       }
 
       if (message.type === 'integratedTableMode') {
@@ -7478,7 +7874,7 @@ export class TableDataPanelManager {
         document.getElementById('diagramLoading').style.display = 'none';
         diagramData = message.data;
         diagramLayout = null;
-        diagramSelectedFkIndex = null;
+        diagramSelectedFkIndices = null;
         const mainT = message.data.tables.find((t) => t.isMain);
         diagramSelectedKey = mainT ? mainT.schemaName + '.' + mainT.tableName : null;
         renderDiagram();
@@ -7505,7 +7901,7 @@ export class TableDataPanelManager {
     let diagramLayout = null;
     let diagramLoading = false;
     let diagramSelectedKey = null;
-    let diagramSelectedFkIndex = null;
+    let diagramSelectedFkIndices = null;
     let diagramSuppressCardClick = false;
     // SVG pan state
     let diagramPanX = 0;
@@ -7586,8 +7982,18 @@ export class TableDataPanelManager {
 
       currentView = view;
       const isData = view === 'data';
-      tableWrapDataEl.style.display = isData ? '' : 'none';
-      document.getElementById('errorMsg').style.display = isData ? '' : 'none';
+      if (isData) {
+        if (loadErrorMessage) {
+          errorMsgEl.style.display = 'block';
+          tableWrapDataEl.style.display = 'none';
+        } else {
+          errorMsgEl.style.display = 'none';
+          tableWrapDataEl.style.display = '';
+        }
+      } else {
+        tableWrapDataEl.style.display = 'none';
+        errorMsgEl.style.display = 'none';
+      }
       diagramViewEl.style.display = isData ? 'none' : '';
       mainToolbarEl.style.display = isData ? '' : 'none';
       diagramToolbarEl.style.display = isData ? 'none' : '';
@@ -7747,6 +8153,51 @@ export class TableDataPanelManager {
       }
     }
 
+    function getDiagramFkIndicesForColumn(schemaName, tableName, columnName) {
+      if (!diagramData) {
+        return [];
+      }
+      const indices = [];
+      diagramData.foreignKeys.forEach((fk, fkIdx) => {
+        if (
+          (fk.fromSchema === schemaName && fk.fromTable === tableName && fk.fromColumn === columnName) ||
+          (fk.toSchema === schemaName && fk.toTable === tableName && fk.toColumn === columnName)
+        ) {
+          indices.push(fkIdx);
+        }
+      });
+      return indices;
+    }
+
+    function isDiagramRelationshipColumn(table, col) {
+      if (col.isForeignKey) {
+        return true;
+      }
+      if (!col.isPrimaryKey) {
+        return false;
+      }
+      return getDiagramFkIndicesForColumn(table.schemaName, table.tableName, col.name).length > 0;
+    }
+
+    function isDiagramColumnHighlighted(table, col, selectedFkIndices) {
+      if (!selectedFkIndices || selectedFkIndices.length === 0) {
+        return false;
+      }
+      for (const fkIdx of selectedFkIndices) {
+        const fk = diagramData.foreignKeys[fkIdx];
+        if (!fk) {
+          continue;
+        }
+        if (
+          (table.schemaName === fk.fromSchema && table.tableName === fk.fromTable && col.name === fk.fromColumn) ||
+          (table.schemaName === fk.toSchema && table.tableName === fk.toTable && col.name === fk.toColumn)
+        ) {
+          return true;
+        }
+      }
+      return false;
+    }
+
     function renderDiagram() {
       if (!diagramData) return;
 
@@ -7805,8 +8256,10 @@ export class TableDataPanelManager {
         fkGeoms.push({ fkIdx, pathD, x1, fromY });
       });
 
-      fkGeoms.forEach((geo) => {
-        const edgeSelected = diagramSelectedFkIndex === geo.fkIdx;
+      const selectedFkIndices = Array.isArray(diagramSelectedFkIndices) ? diagramSelectedFkIndices : [];
+      const selectedFkSet = new Set(selectedFkIndices);
+
+      function appendFkEdgeVisual(geo, edgeSelected) {
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         path.setAttribute('class', 'diagram-fk-edge' + (edgeSelected ? ' diagram-fk-edge--selected' : ''));
         path.setAttribute('data-diagram-themed', '1');
@@ -7821,11 +8274,24 @@ export class TableDataPanelManager {
         dot.setAttribute('cy', String(geo.fromY));
         dot.setAttribute('r', '3');
         linesG.appendChild(dot);
+      }
+
+      fkGeoms.forEach((geo) => {
+        if (selectedFkSet.has(geo.fkIdx)) {
+          return;
+        }
+        appendFkEdgeVisual(geo, false);
+      });
+      fkGeoms.forEach((geo) => {
+        if (!selectedFkSet.has(geo.fkIdx)) {
+          return;
+        }
+        appendFkEdgeVisual(geo, true);
       });
 
       const hitsG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
       g.appendChild(hitsG);
-      fkGeoms.forEach((geo) => {
+      function appendFkEdgeHit(geo) {
         const hit = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         hit.setAttribute('class', 'diagram-fk-hit');
         hit.setAttribute('d', geo.pathD);
@@ -7838,13 +8304,23 @@ export class TableDataPanelManager {
         });
         hit.addEventListener('click', (e) => {
           e.stopPropagation();
-          diagramSelectedFkIndex = geo.fkIdx;
+          diagramSelectedFkIndices = [geo.fkIdx];
           renderDiagram();
         });
         hitsG.appendChild(hit);
+      }
+      fkGeoms.forEach((geo) => {
+        if (selectedFkSet.has(geo.fkIdx)) {
+          return;
+        }
+        appendFkEdgeHit(geo);
       });
-
-      const selFk = diagramSelectedFkIndex !== null ? diagramData.foreignKeys[diagramSelectedFkIndex] : null;
+      fkGeoms.forEach((geo) => {
+        if (!selectedFkSet.has(geo.fkIdx)) {
+          return;
+        }
+        appendFkEdgeHit(geo);
+      });
 
       // Draw table cards
       for (const table of diagramData.tables) {
@@ -7941,17 +8417,7 @@ export class TableDataPanelManager {
           const rowG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
           rowG.setAttribute('transform', 'translate(0,' + rowY + ')');
 
-          let rowFkHighlight = false;
-          if (selFk) {
-            if (
-              (table.schemaName === selFk.fromSchema &&
-                table.tableName === selFk.fromTable &&
-                col.name === selFk.fromColumn) ||
-              (table.schemaName === selFk.toSchema && table.tableName === selFk.toTable && col.name === selFk.toColumn)
-            ) {
-              rowFkHighlight = true;
-            }
-          }
+          let rowFkHighlight = isDiagramColumnHighlighted(table, col, selectedFkIndices);
           if (rowFkHighlight) {
             const hl = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
             hl.setAttribute('class', 'diagram-col-highlight');
@@ -8024,6 +8490,31 @@ export class TableDataPanelManager {
           colType.textContent = typeText;
           rowG.appendChild(colType);
 
+          if (isDiagramRelationshipColumn(table, col)) {
+            const rowHit = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            rowHit.setAttribute('x', '0');
+            rowHit.setAttribute('y', '0');
+            rowHit.setAttribute('width', String(CARD_WIDTH));
+            rowHit.setAttribute('height', String(CARD_ROW_H));
+            rowHit.setAttribute('fill', 'transparent');
+            rowHit.style.cursor = 'pointer';
+            rowHit.addEventListener('mousedown', (e) => {
+              e.stopPropagation();
+            });
+            rowHit.addEventListener('click', (e) => {
+              e.stopPropagation();
+              diagramSuppressCardClick = false;
+              diagramSelectedKey = key;
+              diagramSelectedFkIndices = getDiagramFkIndicesForColumn(
+                table.schemaName,
+                table.tableName,
+                col.name
+              );
+              renderDiagram();
+            });
+            rowG.appendChild(rowHit);
+          }
+
           cardG.appendChild(rowG);
         });
 
@@ -8063,6 +8554,17 @@ export class TableDataPanelManager {
           window.addEventListener('mouseup', onUp);
         });
 
+        headerDrag.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (diagramSuppressCardClick) {
+            diagramSuppressCardClick = false;
+            return;
+          }
+          diagramSelectedKey = key;
+          diagramSelectedFkIndices = null;
+          renderDiagram();
+        });
+
         headerDrag.addEventListener('dblclick', (e) => {
           e.stopPropagation();
           if (!table.isMain) {
@@ -8079,8 +8581,11 @@ export class TableDataPanelManager {
             diagramSuppressCardClick = false;
             return;
           }
+          if (e.target === headerDrag) {
+            return;
+          }
           diagramSelectedKey = key;
-          diagramSelectedFkIndex = null;
+          diagramSelectedFkIndices = null;
           renderDiagram();
         });
       }
@@ -8089,12 +8594,12 @@ export class TableDataPanelManager {
     }
 
     // Pan diagram canvas
-    diagramCanvasEl.addEventListener('mousedown', (e) => {
+    diagramCanvasEl?.addEventListener('mousedown', (e) => {
       if (e.button !== 0) return;
       if (e.target.closest('.diagram-fk-hit')) return;
       if (e.target.closest('.diagram-card')) return;
-      if (diagramSelectedFkIndex !== null) {
-        diagramSelectedFkIndex = null;
+      if (diagramSelectedFkIndices && diagramSelectedFkIndices.length > 0) {
+        diagramSelectedFkIndices = null;
         renderDiagram();
       }
       diagramIsPanning = true;
@@ -8116,7 +8621,7 @@ export class TableDataPanelManager {
     });
 
     // Diagram canvas: Ctrl+wheel = zoom; wheel = pan vertical; Shift+wheel = pan horizontal
-    diagramCanvasEl.addEventListener('wheel', (e) => {
+    diagramCanvasEl?.addEventListener('wheel', (e) => {
       e.preventDefault();
       const rect = diagramCanvasEl.getBoundingClientRect();
       const zoomMod = e.ctrlKey || e.metaKey;
@@ -8292,10 +8797,19 @@ export class TableDataPanelManager {
 
     // ─── End diagram view ───────────────────────────────────────────────────────
 
-    updateModeIcon();
-    applyQueryVisibility();
-    updateSaveButtonState();
-    beginLoading();
+    try {
+      updateModeIcon();
+      applyQueryVisibility();
+      updateSaveButtonState();
+      beginLoading();
+    } catch (error) {
+      console.error('[dbadmin] failed to initialize table webview', error);
+      try {
+        showError(error && error.message ? error.message : String(error));
+      } catch {
+        // The error panel may be unavailable if the DOM failed to mount.
+      }
+    }
     vscode.postMessage({ type: 'ready' });
   </script>
 </body>

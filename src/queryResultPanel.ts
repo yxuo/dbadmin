@@ -111,7 +111,7 @@ export class QueryResultPanelManager {
       : effective.rows.length;
 
     return {
-      title: model.title || "Resultado da consulta",
+      title: model.title || t("Query result"),
       subtitle: `${model.connection.nickname} • ${model.databaseName}${model.schemaName ? ` • ${model.schemaName}` : ""}`,
       source: model.source === "sqlBook" ? "SQL Book" : "SQL Runner",
       sql: model.sql,
@@ -138,7 +138,7 @@ export class QueryResultPanelManager {
   }
 
   private getPanelTitle(model: QueryResultViewModel): string {
-    return model.title || "Resultado SQL";
+    return model.title || t("SQL result");
   }
 
   private getHtml(webview: vscode.Webview): string {
@@ -483,7 +483,7 @@ export class QueryResultPanelManager {
 
         const sa = String(va ?? '');
         const sb = String(vb ?? '');
-        const cmp = sa.localeCompare(sb, 'pt-BR', { numeric: true, sensitivity: 'base' });
+        const cmp = sa.localeCompare(sb, document.documentElement.lang || undefined, { numeric: true, sensitivity: 'base' });
         return cmp * dir;
       });
 
@@ -506,14 +506,14 @@ export class QueryResultPanelManager {
       if (!payload) {
         gridEl.style.display = 'none';
         emptyEl.style.display = 'block';
-        emptyEl.textContent = 'Execute uma consulta para ver resultados.';
+        emptyEl.textContent = t('webview.queryResult.empty', 'Execute uma consulta para ver resultados.');
         return;
       }
 
       const filtered = getFilteredRows(payload);
       const rows = getSortedRows(filtered);
 
-      countEl.textContent = String(rows.length) + ' linha(s) exibida(s) de ' + String(payload.rowCount);
+      countEl.textContent = tf('webview.queryResult.rowCountFiltered', { shown: rows.length, total: payload.rowCount }, String(rows.length) + ' linha(s) exibida(s) de ' + String(payload.rowCount));
 
       if (payload.columns.length === 0) {
         gridEl.style.display = 'none';
@@ -538,7 +538,7 @@ export class QueryResultPanelManager {
             '<span>' + esc(colName) + '</span>' +
             '<span class="sort">' + headSort(colName) + '</span>' +
           '</div>' +
-          '<div class="filter-wrap"><input class="filter" data-filter-col="' + esc(colName) + '" value="' + currentFilter + '" placeholder="Filtro" /></div>' +
+          '<div class="filter-wrap"><input class="filter" data-filter-col="' + esc(colName) + '" value="' + currentFilter + '" placeholder="' + esc(t('webview.queryResult.filter', 'Filtro')) + '" /></div>' +
         '</th>';
       }).join('');
 
@@ -555,7 +555,7 @@ export class QueryResultPanelManager {
       gridEl.style.display = 'table';
       emptyEl.style.display = rows.length === 0 ? 'block' : 'none';
       if (rows.length === 0) {
-        emptyEl.textContent = 'Nenhuma linha atende aos filtros atuais.';
+        emptyEl.textContent = t('webview.queryResult.noFilterMatches', 'Nenhuma linha atende aos filtros atuais.');
       }
 
       gridEl.querySelectorAll('[data-sort-col]').forEach((node) => {
@@ -598,11 +598,13 @@ export class QueryResultPanelManager {
       state.sortDirection = undefined;
       state.columnFilters = {};
 
-      titleEl.textContent = payload.title || 'Resultado da consulta';
+      titleEl.textContent = payload.title || t('webview.queryResult.title', 'Resultado da consulta');
       subtitleEl.textContent = payload.subtitle || '';
       sourceEl.textContent = payload.source || '';
-      commandEl.textContent = payload.command ? 'Comando: ' + String(payload.command) : '';
-      countEl.textContent = String(payload.rowCount) + ' linha(s)';
+      commandEl.textContent = payload.command
+        ? tf('webview.queryResult.command', { command: String(payload.command) }, 'Comando: ' + String(payload.command))
+        : '';
+      countEl.textContent = tf('webview.queryResult.rowCount', { count: payload.rowCount }, String(payload.rowCount) + ' linha(s)');
       sqlEl.textContent = payload.sql || '';
       sqlEl.title = payload.sql || '';
       searchEl.value = '';

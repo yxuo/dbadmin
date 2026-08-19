@@ -23,7 +23,7 @@ import { BackupPanelManager } from "./backupPanel";
 import { ConnectionActivityLog } from "./connectionActivityLog";
 import { ConnectionManagerPanelManager } from "./connectionManagerPanel";
 import { RestorePanelManager } from "./restorePanel";
-import { clearSchema } from "./backupRestoreService";
+import { buildTableDdlScript, clearSchema } from "./backupRestoreService";
 import { TableMetadataPanelManager } from "./tableMetadataPanel";
 import { SqlBookSerializer, SqlBookController } from "./sqlBookNotebook";
 import { ensureSqlbookFileIconAssociations } from "./fileIconAssociations";
@@ -34,12 +34,17 @@ import {
   toggleSqlBookIntegratedTableEnabled,
 } from "./sqlBookIntegratedTable";
 import {
+  syncSqlBookSaveIntegratedTableContext,
+  toggleSqlBookSaveIntegratedTableEnabled,
+} from "./sqlBookSaveIntegratedTable";
+import {
   createSqlBookRunPerQueryCodeLensProvider,
   executeSqlBookStatement,
   syncSqlBookRunPerQueryContext,
   toggleSqlBookRunPerQueryEnabled,
 } from "./sqlBookRunPerQuery";
 import { copyDbAdminMcpConfig, openDbAdminMcpJson, setupDbAdminMcp } from "./mcp/register";
+import { SqlDiagnostics, getSqlBodyLocation } from "./sqlDiagnostics";
 
 const EXPAND_FILTER_RESULTS_SETTING = "dbadmin.expandFilterResults";
 const FILTER_INPUT_DEBOUNCE_MS = 180;
@@ -66,13 +71,33 @@ interface SqlSchemaRelation {
 }
 
 export function activate(context: vscode.ExtensionContext): void {
+  const store = new ConnectionStore(context.globalStorageUri.fsPath);
+  const postgresService = new PostgresService();
+  const tablePanels = new TableDataPanelManager(context, postgresService);
+  const sqlDiagnostics = new SqlDiagnostics(context);
+  context.subscriptions.push(sqlDiagnostics);
+  const settingsPanel = new SettingsPanelManager(context, () =>
+    store.getStorageFilePath(),
+  );
+  context.subscriptions.push(
+    vscode.window.registerWebviewPanelSerializer("dbadmin.tableData", {
+      deserializeWebviewPanel: (panel, state) =>
+        tablePanels.deserializeTablePanel(panel, state, store),
+    }),
+    vscode.window.registerWebviewPanelSerializer("dbadmin.settings", {
+      deserializeWebviewPanel: async (panel, state) => {
+        settingsPanel.deserialize(panel, state);
+      },
+    }),
+  );
+  void context.globalState.update("dbadmin.openTabs", undefined);
+
   void ensureSqlbookFileIconAssociations();
   void syncSqlBookIntegratedTableContext();
+  void syncSqlBookSaveIntegratedTableContext();
   void syncSqlBookRunPerQueryContext();
 
-  const store = new ConnectionStore(context.globalStorageUri.fsPath);
   const activityLog = new ConnectionActivityLog();
-  const postgresService = new PostgresService();
   const mcpRegistration = setupDbAdminMcp(context);
   context.subscriptions.push(mcpRegistration);
   postgresService.setActivityLog(activityLog);
@@ -81,13 +106,17 @@ export function activate(context: vscode.ExtensionContext): void {
     postgresService,
     context.extensionPath,
   );
-  const tablePanels = new TableDataPanelManager(context, postgresService);
   const sqlBookRunPerQueryLenses = createSqlBookRunPerQueryCodeLensProvider();
 
   const toggleSqlBookIntegratedTable = async (): Promise<void> => {
     await toggleSqlBookIntegratedTableEnabled();
     await syncSqlBookIntegratedTableContext();
     tablePanels.notifyIntegratedTableModeChanged();
+  };
+
+  const toggleSqlBookSaveIntegratedTable = async (): Promise<void> => {
+    await toggleSqlBookSaveIntegratedTableEnabled();
+    await syncSqlBookSaveIntegratedTableContext();
   };
 
   const toggleSqlBookRunPerQuery = async (): Promise<void> => {
@@ -106,6 +135,14 @@ export function activate(context: vscode.ExtensionContext): void {
       toggleSqlBookIntegratedTable,
     ),
     vscode.commands.registerCommand(
+      "dbadmin.toggleSqlBookSaveIntegratedTable",
+      toggleSqlBookSaveIntegratedTable,
+    ),
+    vscode.commands.registerCommand(
+      "dbadmin.toggleSqlBookSaveIntegratedTableChecked",
+      toggleSqlBookSaveIntegratedTable,
+    ),
+    vscode.commands.registerCommand(
       "dbadmin.toggleSqlBookRunPerQuery",
       toggleSqlBookRunPerQuery,
     ),
@@ -114,18 +151,12 @@ export function activate(context: vscode.ExtensionContext): void {
       toggleSqlBookRunPerQuery,
     ),
     vscode.languages.registerCodeLensProvider(
-      [
-        { language: "sql", notebookType: "sqlbook" },
-        { language: "sql", scheme: "vscode-notebook-cell" },
-      ],
+      { language: "sql" },
       sqlBookRunPerQueryLenses.provider,
     ),
     { dispose: () => sqlBookRunPerQueryLenses.dispose() },
   );
 
-  const settingsPanel = new SettingsPanelManager(context, () =>
-    store.getStorageFilePath(),
-  );
   const backupPanels = new BackupPanelManager(context);
   const connectionManagerPanels = new ConnectionManagerPanelManager(
     context,
@@ -180,9 +211,6 @@ export function activate(context: vscode.ExtensionContext): void {
         return JSON.stringify(item);
     }
   };
-
-  // Restaura abas abertas anteriormente
-  void tablePanels.restoreOpenTabs(store);
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
@@ -614,13 +642,51 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
           }
 
-          await executeSqlFromEditorDocument(
+          const ran = await executeSqlFromEditorDocument(
             activeEditor.document,
             store,
             postgresService,
             tablePanels,
+            sqlDiagnostics,
           );
-          await treeProvider.reloadAllMetadata();
+          if (ran) {
+            await treeProvider.reloadAllMetadata();
+          }
+        } catch (error) {
+          showError(error);
+        }
+      },
+    ),
+    vscode.commands.registerCommand(
+      "dbadmin.executeSqlRunnerStatement",
+      async (
+        uri?: vscode.Uri | string,
+        sql?: string,
+        sourceOffset?: number,
+      ) => {
+        try {
+          const document = await resolveSqlRunnerDocument(uri);
+          if (!document) {
+            vscode.window.showInformationMessage(
+              t("No active SQL editor to run."),
+            );
+            return;
+          }
+
+          const ran = await executeSqlFromEditorDocument(
+            document,
+            store,
+            postgresService,
+            tablePanels,
+            sqlDiagnostics,
+            {
+              sql,
+              documentOffset: sourceOffset,
+            },
+          );
+          if (ran) {
+            await treeProvider.reloadAllMetadata();
+          }
         } catch (error) {
           showError(error);
         }
@@ -1002,6 +1068,91 @@ export function activate(context: vscode.ExtensionContext): void {
           await treeProvider.reloadAllMetadata();
           vscode.window.showInformationMessage(
             t('Table "{0}.{1}" truncated successfully.', node.schemaName, node.objectName),
+          );
+        } catch (error) {
+          showError(error);
+        }
+      },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "dbadmin.showTableDdl",
+      async (node?: DbObjectNodeRef) => {
+        try {
+          if (!node || node.type !== "dbObject" || node.kind !== "table") {
+            return;
+          }
+
+          await showTableDdlForNode(node);
+        } catch (error) {
+          showError(error);
+        }
+      },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "dbadmin.createTable",
+      async (node?: ObjectGroupNodeRef) => {
+        try {
+          if (!node || node.type !== "objectGroup" || node.kind !== "table") {
+            return;
+          }
+
+          const initialSql = buildCreateTableTemplate(node.schemaName);
+          await openSqlRunnerEditor(
+            t("Create table in {0}", node.schemaName),
+            initialSql,
+            t("Edit the table SQL and run with Ctrl+Enter or CodeLens."),
+            {
+              connectionId: node.connection.id,
+              connectionName: node.connection.nickname,
+              connectionHost: node.connection.host,
+              connectionPort: node.connection.port,
+              databaseName: node.databaseName,
+              schemaName: node.schemaName,
+            },
+          );
+        } catch (error) {
+          showError(error);
+        }
+      },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "dbadmin.dropTable",
+      async (node?: DbObjectNodeRef) => {
+        try {
+          if (!node || node.type !== "dbObject" || node.kind !== "table") {
+            return;
+          }
+
+          const deleteLabel = t("Delete");
+          const confirmation = await vscode.window.showWarningMessage(
+            t('Permanently delete table "{0}.{1}" and all of its data? This cannot be undone.', node.schemaName, node.objectName),
+            { modal: true },
+            deleteLabel,
+          );
+
+          if (confirmation !== deleteLabel) {
+            return;
+          }
+
+          await postgresService.dropTable(
+            node.connection,
+            node.databaseName,
+            node.schemaName,
+            node.objectName,
+          );
+
+          await treeProvider.reloadAllMetadata();
+          vscode.window.showInformationMessage(
+            t('Table "{0}.{1}" deleted successfully.', node.schemaName, node.objectName),
           );
         } catch (error) {
           showError(error);
@@ -1747,7 +1898,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.workspace.registerNotebookSerializer(
       "sqlbook",
-      new SqlBookSerializer(),
+      new SqlBookSerializer(context.extensionPath),
     ),
   );
 
@@ -1780,14 +1931,20 @@ export function activate(context: vscode.ExtensionContext): void {
       });
     },
     context.extensionPath,
+    sqlDiagnostics,
   );
 
   context.subscriptions.push(sqlBookController);
   context.subscriptions.push(
     vscode.commands.registerCommand(
       "dbadmin.executeSqlBookStatement",
-      async (uri: vscode.Uri | string, sql: string) => {
-        await executeSqlBookStatement(sqlBookController, uri, sql);
+      async (uri: vscode.Uri | string, sql: string, sourceOffset?: number) => {
+        await executeSqlBookStatement(
+          sqlBookController,
+          uri,
+          sql,
+          sourceOffset,
+        );
       },
     ),
   );
@@ -1805,6 +1962,9 @@ export function activate(context: vscode.ExtensionContext): void {
         void syncSqlBookRunPerQueryContext();
         sqlBookRunPerQueryLenses.refresh();
       }
+      if (event.affectsConfiguration("dbadmin.sqlbookSaveIntegratedTable")) {
+        void syncSqlBookSaveIntegratedTableContext();
+      }
     }),
   );
 
@@ -1815,7 +1975,7 @@ export function activate(context: vscode.ExtensionContext): void {
     context.subscriptions.push(
       sqlBookTableMessaging.onDidReceiveMessage((event) => {
         if (event.message?.type === "openLastResult") {
-          void sqlBookController.openLastResultInPanel();
+          void sqlBookController.openTableResult(event.message.payload);
         }
         if (event.message?.type === "exportData") {
           void exportSqlBookIntegratedTable(event.message);
@@ -1906,6 +2066,29 @@ async function resolveConnectionFromNodeOrPicker(
 
 function showError(error: unknown): void {
   vscode.window.showErrorMessage(formatErrorForUi(error));
+}
+
+async function showTableDdlForNode(node: DbObjectNodeRef): Promise<void> {
+  const ddl = await buildTableDdlScript(
+    node.connection,
+    node.databaseName,
+    node.schemaName,
+    node.objectName,
+  );
+
+  await openSqlRunnerEditor(
+    t("DDL: {0}.{1}", node.schemaName, node.objectName),
+    ddl,
+    t("Review or copy the DDL. Run with Ctrl+Enter to execute changes."),
+    {
+      connectionId: node.connection.id,
+      connectionName: node.connection.nickname,
+      connectionHost: node.connection.host,
+      connectionPort: node.connection.port,
+      databaseName: node.databaseName,
+      schemaName: node.schemaName,
+    },
+  );
 }
 
 async function openSqlRunnerEditor(
@@ -2525,14 +2708,38 @@ function formatHostPort(host?: string, port?: number): string {
   return `${h}:${p}`;
 }
 
+async function resolveSqlRunnerDocument(
+  uri?: vscode.Uri | string,
+): Promise<vscode.TextDocument | undefined> {
+  if (uri) {
+    const target =
+      typeof uri === "string" ? vscode.Uri.parse(uri) : uri;
+    const open = vscode.workspace.textDocuments.find(
+      (document) => document.uri.toString() === target.toString(),
+    );
+    if (open) {
+      return open;
+    }
+    try {
+      return await vscode.workspace.openTextDocument(target);
+    } catch {
+      return undefined;
+    }
+  }
+  return vscode.window.activeTextEditor?.document;
+}
+
 async function executeSqlFromEditorDocument(
   document: vscode.TextDocument,
   store: ConnectionStore,
   postgresService: PostgresService,
   tablePanels: TableDataPanelManager,
-): Promise<void> {
+  sqlDiagnostics: SqlDiagnostics,
+  options?: { sql?: string; documentOffset?: number },
+): Promise<boolean> {
   const parsed = parseSqlRunnerHeader(document.getText());
-  const sql = parsed.sql;
+  const body = getSqlBodyLocation(document.getText());
+  const sql = options?.sql?.trim() || body.sql || parsed.sql;
 
   if (!sql) {
     throw new Error(t("Empty SQL to run."));
@@ -2552,7 +2759,7 @@ async function executeSqlFromEditorDocument(
   }
 
   if (!connection) {
-    return;
+    return false;
   }
 
   const databaseName =
@@ -2563,11 +2770,26 @@ async function executeSqlFromEditorDocument(
     : "";
 
   const executableSql = `${schemaPrefix}${sql}`;
-  const result = await postgresService.querySql(
-    connection,
-    databaseName,
-    executableSql,
-  );
+  sqlDiagnostics.clear(document.uri);
+  let result;
+  try {
+    result = await postgresService.querySql(
+      connection,
+      databaseName,
+      executableSql,
+    );
+  } catch (error) {
+    sqlDiagnostics.show(
+      {
+        document,
+        executedSql: executableSql,
+        executedSqlDocumentStart: schemaPrefix.length,
+        documentOffset: options?.documentOffset ?? body.start,
+      },
+      error,
+    );
+    return false;
+  }
 
   await tablePanels.openQueryResult({
     connection,
@@ -2586,7 +2808,7 @@ async function executeSqlFromEditorDocument(
     },
   });
 
-  vscode.window.showInformationMessage(t("SQL executed successfully."));
+  return true;
 }
 
 function resolveConnectionFromHeaderContext(
@@ -2625,6 +2847,15 @@ function ensureSqlEndsWithSemicolon(sql: string): string {
 
 function quoteIdentifier(identifier: string): string {
   return `"${String(identifier || "").replace(/"/g, '""')}"`;
+}
+
+function buildCreateTableTemplate(schemaName: string): string {
+  const schema = quoteIdentifier(schemaName);
+  return [
+    `CREATE TABLE ${schema}.new_table (`,
+    "  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY",
+    ");",
+  ].join("\n");
 }
 
 function buildCreateFunctionTemplate(schemaName: string): string {
