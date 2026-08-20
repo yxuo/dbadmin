@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.1] - 2026-08-20
+
+### Fixed
+
+- Marketplace README screenshots for the table editor (`edit-modal.png`, `edit-split.png`)
+
 ## [1.0.0] - 2026-08-18
 
 First stable release — **PostgreSQL foundation** for VS Code / Cursor.

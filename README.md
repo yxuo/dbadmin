@@ -35,8 +35,9 @@ Open the DBAdmin view, expand a connection, and jump straight into a table. Righ
 
 Browse rows, filter by column, paginate, and edit in place.
 
-![DBAdmin table filters](images/edit-modal.png)
-![DBAdmin table filters](images/edit-split.png)
+![DBAdmin table editor (modal)](images/edit-modal.png)
+
+![DBAdmin table editor (split view)](images/edit-split.png)
 
 ### ER diagram
 
