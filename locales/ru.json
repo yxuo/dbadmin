@@ -4,14 +4,12 @@
   "error.connectionFailed": "Не удалось подключиться: {detail}",
   "error.queryFailed": "Ошибка запроса: {detail}",
   "error.unknown": "Неизвестная ошибка",
-
   "mcp.param.connectionId": "ID подключения, сохранённого в DBAdmin",
   "mcp.param.nickname": "Псевдоним подключения, сохранённого в DBAdmin",
   "mcp.param.database": "Целевая база данных. Если не указана, используется база данных по умолчанию для подключения",
   "mcp.param.schema": "Имя схемы",
   "mcp.param.table": "Имя таблицы",
   "mcp.param.sql": "SQL-оператор",
-
   "mcp.error.connectionNotFound": "Подключение не найдено.",
   "mcp.error.multipleNicknames": "Несколько подключений соответствуют этому псевдониму. Используйте connectionId.",
   "mcp.error.needConnectionRef": "Укажите connectionId или nickname.",
@@ -21,7 +19,6 @@
   "mcp.error.emptySql": "SQL пуст.",
   "mcp.error.multiStatementReadonly": "Несколько операторов не допускаются в режиме только чтения.",
   "mcp.error.readonlyOnly": "Разрешены только операторы чтения (SELECT, WITH, EXPLAIN, SHOW, VALUES, TABLE). Включите dbadmin.mcpAllowWrites для SQL на запись.",
-
   "mcp.tools.list_connections.title": "Список подключений",
   "mcp.tools.list_connections.description": "Выводит сохранённые в DBAdmin подключения PostgreSQL (без паролей). Используйте id или nickname с другими инструментами.",
   "mcp.tools.list_databases.title": "Список баз данных",
@@ -35,12 +32,10 @@
   "mcp.tools.query.title": "Выполнить SQL",
   "mcp.tools.query.descriptionReadonly": "Выполняет SQL только для чтения (SELECT, WITH, EXPLAIN, SHOW, VALUES, TABLE) на выбранном подключении.",
   "mcp.tools.query.descriptionWrites": "Выполняет SQL на выбранном подключении. Запись включена.",
-
   "mcp.config.storageMissing": "DBADMIN_STORAGE_ROOT не задан, и connections.json не найден. Укажите путь globalStorage DBAdmin.",
   "mcp.config.copied": "Конфиг MCP DBAdmin скопирован. Вставьте в mcp.json, claude_desktop_config.json или используйте claude mcp add.",
   "mcp.config.invalidJson": "Недопустимый mcp.json в {path}; исправьте JSON перед синхронизацией DBAdmin ({message}).",
   "mcp.config.invalidRoot": "Недопустимый mcp.json в {path}: ожидается корневой объект.",
-
   "webview.common.save": "Сохранить",
   "webview.common.cancel": "Отмена",
   "webview.common.close": "Закрыть",
@@ -73,7 +68,6 @@
   "webview.common.other": "Прочее",
   "webview.common.default": "(По умолчанию)",
   "webview.common.query": "Query",
-
   "webview.settings.title": "DBAdmin: Настройки",
   "webview.settings.pageTitle": "Настройки расширения",
   "webview.settings.sidebar.title": "Боковая панель",
@@ -112,7 +106,6 @@
   "webview.settings.other.vscodeSettingsDesc": "Открыть редактор настроек расширения.",
   "webview.settings.other.openSettings": "Открыть настройки",
   "webview.settings.saved": "Настройки сохранены",
-
   "webview.connection.nickname": "Псевдоним",
   "webview.connection.host": "Хост",
   "webview.connection.port": "Порт",
@@ -128,7 +121,6 @@
   "webview.connection.visibleDatabasesPlaceholder": "По одному имени на строку или через запятую",
   "webview.connection.enableSsl": "Включить SSL",
   "webview.connection.testing": "Проверка подключения...",
-
   "webview.manager.section": "Раздел",
   "webview.manager.sections": "Разделы",
   "webview.manager.dashboard": "Панель мониторинга",
@@ -173,7 +165,6 @@
   "webview.manager.commits": "commits",
   "webview.manager.rollbacks": "rollbacks",
   "webview.manager.title": "Управление — {name}",
-
   "webview.backup.title": "Резервная копия",
   "webview.backup.sqlDest": "Целевой SQL-файл",
   "webview.backup.sqlPlaceholder": "Путь к файлу .sql...",
@@ -204,7 +195,6 @@
   "webview.backup.saveDialogTitle": "Сохранить файл резервной копии",
   "webview.backup.filterPostgres": "Резервная копия PostgreSQL",
   "webview.backup.filterAll": "Все файлы",
-
   "webview.restore.title": "Восстановление",
   "webview.restore.backupFile": "Файл резервной копии",
   "webview.restore.backupPlaceholder": "Путь к файлу резервной копии...",
@@ -245,7 +235,6 @@
   "webview.restore.schemaCleared": "Schema успешно очищена.",
   "webview.restore.selectDialogTitle": "Выбрать файл резервной копии",
   "webview.restore.abortLog": "[DbAdmin] Получен запрос на прерывание. Остановка восстановления...",
-
   "webview.queryResult.title": "Результат запроса",
   "webview.queryResult.searchPlaceholder": "Поиск по результатам",
   "webview.queryResult.resetLayout": "Сбросить расположение",
@@ -257,7 +246,6 @@
   "webview.queryResult.command": "Команда: {command}",
   "webview.queryResult.rowCount": "{count} строк(а)",
   "webview.queryResult.rowCountFiltered": "Показано {shown} строк(и) из {total}",
-
   "webview.metadata.column": "Столбец",
   "webview.metadata.table": "Таблица",
   "webview.metadata.type": "Тип",
@@ -265,13 +253,11 @@
   "webview.metadata.default": "Default (SQL-выражение)",
   "webview.metadata.constraint": "Ограничение",
   "webview.metadata.definition": "Определение",
-
   "webview.filter.placeholder": "Фильтровать таблицы...",
   "webview.filter.expandItems": "Развернуть элементы",
   "webview.filter.expandItemsTitle": "Разворачивать только подключения и базы данных с подходящими таблицами",
   "webview.filter.searchOnType": "Поиск при вводе",
   "webview.filter.searchOnTypeTitle": "Если выключено, фильтр применяется только при нажатии Enter",
-
   "webview.table.filterPlaceholder": "Фильтр...",
   "webview.table.rows": "строк(а)",
   "webview.table.page": "Страница",
@@ -351,7 +337,6 @@
   "webview.table.databaseFallback": "База данных",
   "webview.table.schemaFallback": "Schema",
   "webview.table.connectionFallback": "Подключение",
-
   "webview.editor.find": "Найти",
   "webview.editor.replace": "Заменить",
   "webview.editor.showReplace": "Показать замену",
@@ -361,7 +346,6 @@
   "webview.editor.replaceAll": "Заменить всё",
   "webview.editor.replaceAllShort": "Всё",
   "webview.editor.findOf": "{current} из {total}",
-
   "webview.renderer.rows": "строк(а)",
   "webview.renderer.open": "Открыть",
   "webview.renderer.filter": "Фильтр",
@@ -373,5 +357,9 @@
   "webview.renderer.widthEqual": "Столбцы одинаковой ширины",
   "webview.renderer.clear": "Очистить",
   "webview.renderer.filterColumn": "Фильтр {column}",
-  "webview.common.unknownFailure": "Неизвестная ошибка."
+  "webview.common.unknownFailure": "Неизвестная ошибка.",
+  "webview.settings.backup.title": "Экспорт / импорт",
+  "webview.settings.backup.desc": "Экспорт или импорт всех настроек DBAdmin, подключений (включая пароли) и макетов таблиц.",
+  "webview.settings.backup.export": "Экспорт",
+  "webview.settings.backup.import": "Импорт"
 }

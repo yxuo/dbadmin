@@ -179,5 +179,14 @@
   "Enter the SQL file before clearing tables.": "清空表之前请先输入 SQL 文件。",
   "Tables cleared successfully.": "表清空成功。",
   "Schema cleared successfully.": "Schema 清空成功。",
-  "[DbAdmin] Abort requested. Stopping restore...": "[DbAdmin] 已请求中止。正在停止还原..."
+  "[DbAdmin] Abort requested. Stopping restore...": "[DbAdmin] 已请求中止。正在停止还原...",
+  "Export": "导出",
+  "Import": "导入",
+  "Export DBAdmin settings": "导出 DBAdmin 设置",
+  "Import DBAdmin settings": "导入 DBAdmin 设置",
+  "The file will include saved connections and passwords. Store it securely.": "文件将包含已保存的连接和密码。请妥善保管。",
+  "Import replaces DBAdmin settings, connections, and table layouts. Continue?": "导入将替换 DBAdmin 的设置、连接和表布局。是否继续？",
+  "Settings exported successfully.": "设置已成功导出。",
+  "Settings imported successfully.": "设置已成功导入。",
+  "Invalid DBAdmin settings file.": "无效的 DBAdmin 设置文件。"
 }

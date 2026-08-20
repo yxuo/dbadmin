@@ -4,14 +4,12 @@
   "error.connectionFailed": "Connection failed: {detail}",
   "error.queryFailed": "Query failed: {detail}",
   "error.unknown": "Unknown error",
-
   "mcp.param.connectionId": "Id of the connection saved in DBAdmin",
   "mcp.param.nickname": "Nickname of the connection saved in DBAdmin",
   "mcp.param.database": "Target database. If omitted, uses the connection default database",
   "mcp.param.schema": "Schema name",
   "mcp.param.table": "Table name",
   "mcp.param.sql": "SQL statement",
-
   "mcp.error.connectionNotFound": "Connection not found.",
   "mcp.error.multipleNicknames": "Multiple connections match that nickname. Use connectionId.",
   "mcp.error.needConnectionRef": "Provide connectionId or nickname.",
@@ -21,7 +19,6 @@
   "mcp.error.emptySql": "SQL is empty.",
   "mcp.error.multiStatementReadonly": "Multiple statements are not allowed in read-only mode.",
   "mcp.error.readonlyOnly": "Only read-only statements are allowed (SELECT, WITH, EXPLAIN, SHOW, VALUES, TABLE). Enable dbadmin.mcpAllowWrites for write SQL.",
-
   "mcp.tools.list_connections.title": "List connections",
   "mcp.tools.list_connections.description": "Lists PostgreSQL connections saved in DBAdmin (no passwords). Use the id or nickname with the other tools.",
   "mcp.tools.list_databases.title": "List databases",
@@ -35,12 +32,10 @@
   "mcp.tools.query.title": "Run SQL",
   "mcp.tools.query.descriptionReadonly": "Runs read-only SQL (SELECT, WITH, EXPLAIN, SHOW, VALUES, TABLE) on the selected connection.",
   "mcp.tools.query.descriptionWrites": "Runs SQL on the selected connection. Writes are enabled.",
-
   "mcp.config.storageMissing": "DBADMIN_STORAGE_ROOT is not set and connections.json was not found. Set the DBAdmin globalStorage path.",
   "mcp.config.copied": "DBAdmin MCP config copied. Paste into mcp.json, claude_desktop_config.json, or use claude mcp add.",
   "mcp.config.invalidJson": "Invalid mcp.json at {path}; fix the JSON before syncing DBAdmin ({message}).",
   "mcp.config.invalidRoot": "Invalid mcp.json at {path}: expected a root object.",
-
   "webview.common.save": "Save",
   "webview.common.cancel": "Cancel",
   "webview.common.close": "Close",
@@ -73,7 +68,6 @@
   "webview.common.other": "Other",
   "webview.common.default": "(Default)",
   "webview.common.query": "Query",
-
   "webview.settings.title": "DBAdmin: Settings",
   "webview.settings.pageTitle": "Extension settings",
   "webview.settings.sidebar.title": "Sidebar",
@@ -112,7 +106,6 @@
   "webview.settings.other.vscodeSettingsDesc": "Open the extension settings editor.",
   "webview.settings.other.openSettings": "Open settings",
   "webview.settings.saved": "Settings saved",
-
   "webview.connection.nickname": "Nickname",
   "webview.connection.host": "Host",
   "webview.connection.port": "Port",
@@ -128,7 +121,6 @@
   "webview.connection.visibleDatabasesPlaceholder": "One name per line or comma-separated",
   "webview.connection.enableSsl": "Enable SSL",
   "webview.connection.testing": "Testing connection...",
-
   "webview.manager.section": "Section",
   "webview.manager.sections": "Sections",
   "webview.manager.dashboard": "Dashboard",
@@ -173,7 +165,6 @@
   "webview.manager.commits": "commits",
   "webview.manager.rollbacks": "rollbacks",
   "webview.manager.title": "Manage — {name}",
-
   "webview.backup.title": "Backup",
   "webview.backup.sqlDest": "Destination SQL file",
   "webview.backup.sqlPlaceholder": "Path to .sql file...",
@@ -204,7 +195,6 @@
   "webview.backup.saveDialogTitle": "Save backup file",
   "webview.backup.filterPostgres": "PostgreSQL backup",
   "webview.backup.filterAll": "All files",
-
   "webview.restore.title": "Restore",
   "webview.restore.backupFile": "Backup file",
   "webview.restore.backupPlaceholder": "Backup file path...",
@@ -245,7 +235,6 @@
   "webview.restore.schemaCleared": "Schema cleared successfully.",
   "webview.restore.selectDialogTitle": "Select backup file",
   "webview.restore.abortLog": "[DbAdmin] Abort requested. Stopping restore...",
-
   "webview.queryResult.title": "Query result",
   "webview.queryResult.searchPlaceholder": "Search results",
   "webview.queryResult.resetLayout": "Reset layout",
@@ -257,7 +246,6 @@
   "webview.queryResult.command": "Command: {command}",
   "webview.queryResult.rowCount": "{count} row(s)",
   "webview.queryResult.rowCountFiltered": "{shown} row(s) shown of {total}",
-
   "webview.metadata.column": "Column",
   "webview.metadata.table": "Table",
   "webview.metadata.type": "Type",
@@ -265,13 +253,11 @@
   "webview.metadata.default": "Default (SQL expression)",
   "webview.metadata.constraint": "Constraint",
   "webview.metadata.definition": "Definition",
-
   "webview.filter.placeholder": "Filter tables...",
   "webview.filter.expandItems": "Expand items",
   "webview.filter.expandItemsTitle": "Expand only connections and databases with matching tables",
   "webview.filter.searchOnType": "Search while typing",
   "webview.filter.searchOnTypeTitle": "When disabled, applies the filter only when Enter is pressed",
-
   "webview.table.filterPlaceholder": "Filter...",
   "webview.table.rows": "row(s)",
   "webview.table.page": "Page",
@@ -351,7 +337,6 @@
   "webview.table.databaseFallback": "Database",
   "webview.table.schemaFallback": "Schema",
   "webview.table.connectionFallback": "Connection",
-
   "webview.editor.find": "Find",
   "webview.editor.replace": "Replace",
   "webview.editor.showReplace": "Show replace",
@@ -361,7 +346,6 @@
   "webview.editor.replaceAll": "Replace all",
   "webview.editor.replaceAllShort": "All",
   "webview.editor.findOf": "{current} of {total}",
-
   "webview.renderer.rows": "row(s)",
   "webview.renderer.open": "Open",
   "webview.renderer.filter": "Filter",
@@ -373,5 +357,9 @@
   "webview.renderer.widthEqual": "Equal column widths",
   "webview.renderer.clear": "Clear",
   "webview.renderer.filterColumn": "Filter {column}",
-  "webview.common.unknownFailure": "Unknown failure."
+  "webview.common.unknownFailure": "Unknown failure.",
+  "webview.settings.backup.title": "Export / import",
+  "webview.settings.backup.desc": "Export or import all DBAdmin settings, connections (including passwords), and table layouts.",
+  "webview.settings.backup.export": "Export",
+  "webview.settings.backup.import": "Import"
 }

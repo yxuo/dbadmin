@@ -4,14 +4,12 @@
   "error.connectionFailed": "连接失败：{detail}",
   "error.queryFailed": "查询失败：{detail}",
   "error.unknown": "未知错误",
-
   "mcp.param.connectionId": "DBAdmin 中保存的连接 ID",
   "mcp.param.nickname": "DBAdmin 中保存的连接昵称",
   "mcp.param.database": "目标数据库。若省略，则使用连接的默认数据库",
   "mcp.param.schema": "Schema 名称",
   "mcp.param.table": "表名称",
   "mcp.param.sql": "SQL 语句",
-
   "mcp.error.connectionNotFound": "未找到连接。",
   "mcp.error.multipleNicknames": "多个连接匹配该昵称。请使用 connectionId。",
   "mcp.error.needConnectionRef": "请提供 connectionId 或 nickname。",
@@ -21,7 +19,6 @@
   "mcp.error.emptySql": "SQL 为空。",
   "mcp.error.multiStatementReadonly": "只读模式下不允许执行多条语句。",
   "mcp.error.readonlyOnly": "仅允许只读语句（SELECT、WITH、EXPLAIN、SHOW、VALUES、TABLE）。启用 dbadmin.mcpAllowWrites 以执行写入 SQL。",
-
   "mcp.tools.list_connections.title": "列出连接",
   "mcp.tools.list_connections.description": "列出 DBAdmin 中保存的 PostgreSQL 连接（不含密码）。在其他工具中使用 id 或 nickname。",
   "mcp.tools.list_databases.title": "列出数据库",
@@ -35,12 +32,10 @@
   "mcp.tools.query.title": "运行 SQL",
   "mcp.tools.query.descriptionReadonly": "在所选连接上运行只读 SQL（SELECT、WITH、EXPLAIN、SHOW、VALUES、TABLE）。",
   "mcp.tools.query.descriptionWrites": "在所选连接上运行 SQL。已启用写入。",
-
   "mcp.config.storageMissing": "未设置 DBADMIN_STORAGE_ROOT，且未找到 connections.json。请设置 DBAdmin 的 globalStorage 路径。",
   "mcp.config.copied": "DBAdmin MCP 配置已复制。请粘贴到 mcp.json、claude_desktop_config.json，或使用 claude mcp add。",
   "mcp.config.invalidJson": "{path} 处的 mcp.json 无效；在同步 DBAdmin 之前请修复 JSON（{message}）。",
   "mcp.config.invalidRoot": "{path} 处的 mcp.json 无效：根对象应为对象类型。",
-
   "webview.common.save": "保存",
   "webview.common.cancel": "取消",
   "webview.common.close": "关闭",
@@ -73,7 +68,6 @@
   "webview.common.other": "其他",
   "webview.common.default": "（默认）",
   "webview.common.query": "查询",
-
   "webview.settings.title": "DBAdmin：设置",
   "webview.settings.pageTitle": "扩展设置",
   "webview.settings.sidebar.title": "侧边栏",
@@ -112,7 +106,6 @@
   "webview.settings.other.vscodeSettingsDesc": "打开扩展设置编辑器。",
   "webview.settings.other.openSettings": "打开设置",
   "webview.settings.saved": "设置已保存",
-
   "webview.connection.nickname": "昵称",
   "webview.connection.host": "主机",
   "webview.connection.port": "端口",
@@ -128,7 +121,6 @@
   "webview.connection.visibleDatabasesPlaceholder": "每行一个名称，或用逗号分隔",
   "webview.connection.enableSsl": "启用 SSL",
   "webview.connection.testing": "正在测试连接...",
-
   "webview.manager.section": "部分",
   "webview.manager.sections": "部分",
   "webview.manager.dashboard": "仪表板",
@@ -173,7 +165,6 @@
   "webview.manager.commits": "提交",
   "webview.manager.rollbacks": "回滚",
   "webview.manager.title": "管理 — {name}",
-
   "webview.backup.title": "备份",
   "webview.backup.sqlDest": "目标 SQL 文件",
   "webview.backup.sqlPlaceholder": ".sql 文件路径...",
@@ -204,7 +195,6 @@
   "webview.backup.saveDialogTitle": "保存备份文件",
   "webview.backup.filterPostgres": "PostgreSQL 备份",
   "webview.backup.filterAll": "所有文件",
-
   "webview.restore.title": "还原",
   "webview.restore.backupFile": "备份文件",
   "webview.restore.backupPlaceholder": "备份文件路径...",
@@ -245,7 +235,6 @@
   "webview.restore.schemaCleared": "Schema 清空成功。",
   "webview.restore.selectDialogTitle": "选择备份文件",
   "webview.restore.abortLog": "[DbAdmin] 已请求中止。正在停止还原...",
-
   "webview.queryResult.title": "查询结果",
   "webview.queryResult.searchPlaceholder": "搜索结果",
   "webview.queryResult.resetLayout": "重置布局",
@@ -257,7 +246,6 @@
   "webview.queryResult.command": "命令：{command}",
   "webview.queryResult.rowCount": "{count} 行",
   "webview.queryResult.rowCountFiltered": "显示 {shown} 行，共 {total} 行",
-
   "webview.metadata.column": "列",
   "webview.metadata.table": "表",
   "webview.metadata.type": "类型",
@@ -265,13 +253,11 @@
   "webview.metadata.default": "默认值（SQL 表达式）",
   "webview.metadata.constraint": "约束",
   "webview.metadata.definition": "定义",
-
   "webview.filter.placeholder": "筛选表...",
   "webview.filter.expandItems": "展开项目",
   "webview.filter.expandItemsTitle": "仅展开包含匹配表的连接和数据库",
   "webview.filter.searchOnType": "输入时搜索",
   "webview.filter.searchOnTypeTitle": "禁用后，仅在按 Enter 时应用筛选",
-
   "webview.table.filterPlaceholder": "筛选...",
   "webview.table.rows": "行",
   "webview.table.page": "页",
@@ -351,7 +337,6 @@
   "webview.table.databaseFallback": "数据库",
   "webview.table.schemaFallback": "Schema",
   "webview.table.connectionFallback": "连接",
-
   "webview.editor.find": "查找",
   "webview.editor.replace": "替换",
   "webview.editor.showReplace": "显示替换",
@@ -361,7 +346,6 @@
   "webview.editor.replaceAll": "全部替换",
   "webview.editor.replaceAllShort": "全部",
   "webview.editor.findOf": "{current} / {total}",
-
   "webview.renderer.rows": "行",
   "webview.renderer.open": "打开",
   "webview.renderer.filter": "筛选",
@@ -373,5 +357,9 @@
   "webview.renderer.widthEqual": "等宽列",
   "webview.renderer.clear": "清除",
   "webview.renderer.filterColumn": "筛选 {column}",
-  "webview.common.unknownFailure": "未知失败。"
+  "webview.common.unknownFailure": "未知失败。",
+  "webview.settings.backup.title": "导出 / 导入",
+  "webview.settings.backup.desc": "导出或导入全部 DBAdmin 设置、连接（含密码）和表布局。",
+  "webview.settings.backup.export": "导出",
+  "webview.settings.backup.import": "导入"
 }

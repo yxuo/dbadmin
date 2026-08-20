@@ -4,14 +4,12 @@
   "error.connectionFailed": "接続に失敗しました：{detail}",
   "error.queryFailed": "クエリに失敗しました：{detail}",
   "error.unknown": "不明なエラー",
-
   "mcp.param.connectionId": "DBAdmin に保存された接続の ID",
   "mcp.param.nickname": "DBAdmin に保存された接続のニックネーム",
   "mcp.param.database": "対象データベース。省略すると接続のデフォルトデータベースを使用します",
   "mcp.param.schema": "スキーマ名",
   "mcp.param.table": "テーブル名",
   "mcp.param.sql": "SQL ステートメント",
-
   "mcp.error.connectionNotFound": "接続が見つかりません。",
   "mcp.error.multipleNicknames": "そのニックネームに一致する接続が複数あります。connectionId を指定してください。",
   "mcp.error.needConnectionRef": "connectionId または nickname を指定してください。",
@@ -21,7 +19,6 @@
   "mcp.error.emptySql": "SQL が空です。",
   "mcp.error.multiStatementReadonly": "読み取り専用モードでは複数ステートメントは許可されていません。",
   "mcp.error.readonlyOnly": "読み取り専用ステートメント (SELECT、WITH、EXPLAIN、SHOW、VALUES、TABLE) のみ許可されています。書き込み SQL には dbadmin.mcpAllowWrites を有効にしてください。",
-
   "mcp.tools.list_connections.title": "接続一覧",
   "mcp.tools.list_connections.description": "DBAdmin に保存された PostgreSQL 接続を一覧表示します（パスワードは除外）。他のツールでは ID またはニックネームを指定します。",
   "mcp.tools.list_databases.title": "データベース一覧",
@@ -35,12 +32,10 @@
   "mcp.tools.query.title": "SQL を実行",
   "mcp.tools.query.descriptionReadonly": "選択した接続で読み取り専用 SQL (SELECT、WITH、EXPLAIN、SHOW、VALUES、TABLE) を実行します。",
   "mcp.tools.query.descriptionWrites": "選択した接続で SQL を実行します。書き込みが有効です。",
-
   "mcp.config.storageMissing": "DBADMIN_STORAGE_ROOT が設定されておらず、connections.json が見つかりませんでした。DBAdmin globalStorage パスを設定してください。",
   "mcp.config.copied": "DBAdmin MCP 設定をコピーしました。mcp.json、claude_desktop_config.json に貼り付けるか、claude mcp add を使用してください。",
   "mcp.config.invalidJson": "{path} の mcp.json が無効です。DBAdmin を同期する前に JSON を修正してください ({message})。",
   "mcp.config.invalidRoot": "{path} の mcp.json が無効です：ルートオブジェクトが必要です。",
-
   "webview.common.save": "保存",
   "webview.common.cancel": "キャンセル",
   "webview.common.close": "閉じる",
@@ -73,7 +68,6 @@
   "webview.common.other": "その他",
   "webview.common.default": "（デフォルト）",
   "webview.common.query": "クエリ",
-
   "webview.settings.title": "DBAdmin: 設定",
   "webview.settings.pageTitle": "拡張機能の設定",
   "webview.settings.sidebar.title": "サイドバー",
@@ -112,7 +106,6 @@
   "webview.settings.other.vscodeSettingsDesc": "拡張機能の設定エディターを開きます。",
   "webview.settings.other.openSettings": "設定を開く",
   "webview.settings.saved": "設定を保存しました",
-
   "webview.connection.nickname": "ニックネーム",
   "webview.connection.host": "ホスト",
   "webview.connection.port": "ポート",
@@ -128,7 +121,6 @@
   "webview.connection.visibleDatabasesPlaceholder": "1 行に 1 名前、またはカンマ区切り",
   "webview.connection.enableSsl": "SSL を有効にする",
   "webview.connection.testing": "接続をテストしています...",
-
   "webview.manager.section": "セクション",
   "webview.manager.sections": "セクション",
   "webview.manager.dashboard": "ダッシュボード",
@@ -173,7 +165,6 @@
   "webview.manager.commits": "コミット",
   "webview.manager.rollbacks": "ロールバック",
   "webview.manager.title": "接続管理 — {name}",
-
   "webview.backup.title": "バックアップ",
   "webview.backup.sqlDest": "出力先 SQL ファイル",
   "webview.backup.sqlPlaceholder": ".sql ファイルへのパス...",
@@ -204,7 +195,6 @@
   "webview.backup.saveDialogTitle": "バックアップファイルを保存",
   "webview.backup.filterPostgres": "PostgreSQL バックアップ",
   "webview.backup.filterAll": "すべてのファイル",
-
   "webview.restore.title": "復元",
   "webview.restore.backupFile": "バックアップファイル",
   "webview.restore.backupPlaceholder": "バックアップファイルパス...",
@@ -245,7 +235,6 @@
   "webview.restore.schemaCleared": "スキーマを空にしました。",
   "webview.restore.selectDialogTitle": "バックアップファイルを選択",
   "webview.restore.abortLog": "[DbAdmin] 中止要求を受信しました。復元を停止しています...",
-
   "webview.queryResult.title": "クエリ結果",
   "webview.queryResult.searchPlaceholder": "結果を検索",
   "webview.queryResult.resetLayout": "レイアウトをリセット",
@@ -257,7 +246,6 @@
   "webview.queryResult.command": "コマンド: {command}",
   "webview.queryResult.rowCount": "{count} 行",
   "webview.queryResult.rowCountFiltered": "{total} 行中 {shown} 行を表示",
-
   "webview.metadata.column": "列",
   "webview.metadata.table": "テーブル",
   "webview.metadata.type": "型",
@@ -265,13 +253,11 @@
   "webview.metadata.default": "デフォルト（SQL 式）",
   "webview.metadata.constraint": "制約",
   "webview.metadata.definition": "定義",
-
   "webview.filter.placeholder": "テーブルを絞り込み...",
   "webview.filter.expandItems": "項目を展開",
   "webview.filter.expandItemsTitle": "一致するテーブルがある接続とデータベースのみ展開",
   "webview.filter.searchOnType": "入力中に検索",
   "webview.filter.searchOnTypeTitle": "無効にすると、Enter キーを押したときのみフィルターを適用します",
-
   "webview.table.filterPlaceholder": "絞り込み...",
   "webview.table.rows": "行",
   "webview.table.page": "ページ",
@@ -351,7 +337,6 @@
   "webview.table.databaseFallback": "データベース",
   "webview.table.schemaFallback": "スキーマ",
   "webview.table.connectionFallback": "接続",
-
   "webview.editor.find": "検索",
   "webview.editor.replace": "置換",
   "webview.editor.showReplace": "置換を表示",
@@ -361,7 +346,6 @@
   "webview.editor.replaceAll": "すべて置換",
   "webview.editor.replaceAllShort": "すべて",
   "webview.editor.findOf": "{current} / {total}",
-
   "webview.renderer.rows": "行",
   "webview.renderer.open": "開く",
   "webview.renderer.filter": "フィルター",
@@ -373,5 +357,9 @@
   "webview.renderer.widthEqual": "列幅を均等に",
   "webview.renderer.clear": "クリア",
   "webview.renderer.filterColumn": "{column} をフィルター",
-  "webview.common.unknownFailure": "不明なエラー。"
+  "webview.common.unknownFailure": "不明なエラー。",
+  "webview.settings.backup.title": "エクスポート / インポート",
+  "webview.settings.backup.desc": "DBAdmin の設定、接続（パスワードを含む）、テーブルレイアウトをすべてエクスポートまたはインポートします。",
+  "webview.settings.backup.export": "エクスポート",
+  "webview.settings.backup.import": "インポート"
 }

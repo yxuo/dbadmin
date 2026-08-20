@@ -31,13 +31,12 @@ Connect, explore, filter, query, and operate PostgreSQL without leaving the edit
 
 Open the DBAdmin view, expand a connection, and jump straight into a table. Right-click for DDL, truncate, delete, and more.
 
-![DBAdmin explorer](images/treeview.gif)
-
 ### Table editor
 
 Browse rows, filter by column, paginate, and edit in place.
 
-![DBAdmin table filters](images/edit.gif)
+![DBAdmin table filters](images/edit-modal.png)
+![DBAdmin table filters](images/edit-split.png)
 
 ### ER diagram
 

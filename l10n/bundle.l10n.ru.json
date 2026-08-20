@@ -179,5 +179,14 @@
   "Enter the SQL file before clearing tables.": "Укажите SQL-файл перед очисткой таблиц.",
   "Tables cleared successfully.": "Таблицы успешно очищены.",
   "Schema cleared successfully.": "Схема успешно очищена.",
-  "[DbAdmin] Abort requested. Stopping restore...": "[DbAdmin] Получен запрос на прерывание. Остановка восстановления..."
+  "[DbAdmin] Abort requested. Stopping restore...": "[DbAdmin] Получен запрос на прерывание. Остановка восстановления...",
+  "Export": "Экспорт",
+  "Import": "Импорт",
+  "Export DBAdmin settings": "Экспортировать настройки DBAdmin",
+  "Import DBAdmin settings": "Импортировать настройки DBAdmin",
+  "The file will include saved connections and passwords. Store it securely.": "Файл будет содержать сохранённые подключения и пароли. Храните его в безопасном месте.",
+  "Import replaces DBAdmin settings, connections, and table layouts. Continue?": "Импорт заменит настройки, подключения и макеты таблиц DBAdmin. Продолжить?",
+  "Settings exported successfully.": "Настройки успешно экспортированы.",
+  "Settings imported successfully.": "Настройки успешно импортированы.",
+  "Invalid DBAdmin settings file.": "Недействительный файл настроек DBAdmin."
 }

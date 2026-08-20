@@ -211,6 +211,18 @@
         "icon": "$(settings-gear)"
       },
       {
+        "command": "dbadmin.exportConfig",
+        "title": "%dbadmin.command.exportConfig%",
+        "category": "DBAdmin",
+        "icon": "$(export)"
+      },
+      {
+        "command": "dbadmin.importConfig",
+        "title": "%dbadmin.command.importConfig%",
+        "category": "DBAdmin",
+        "icon": "$(import)"
+      },
+      {
         "command": "dbadmin.copyMcpConfig",
         "title": "%dbadmin.command.copyMcpConfig%",
         "category": "DBAdmin",

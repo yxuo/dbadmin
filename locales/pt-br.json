@@ -4,14 +4,12 @@
   "error.connectionFailed": "Falha ao conectar: {detail}",
   "error.queryFailed": "Falha na consulta: {detail}",
   "error.unknown": "Erro desconhecido",
-
   "mcp.param.connectionId": "Id da conexao salva no DBAdmin",
   "mcp.param.nickname": "Apelido da conexao salva no DBAdmin",
   "mcp.param.database": "Banco alvo. Se omitido, usa o database padrao da conexao",
   "mcp.param.schema": "Nome do schema",
   "mcp.param.table": "Nome da tabela",
   "mcp.param.sql": "Instrucao SQL",
-
   "mcp.error.connectionNotFound": "Conexao nao encontrada.",
   "mcp.error.multipleNicknames": "Ha varias conexoes com esse apelido. Use connectionId.",
   "mcp.error.needConnectionRef": "Informe connectionId ou nickname.",
@@ -21,7 +19,6 @@
   "mcp.error.emptySql": "SQL vazio.",
   "mcp.error.multiStatementReadonly": "Multiplas instrucoes nao sao permitidas no modo somente leitura.",
   "mcp.error.readonlyOnly": "Apenas consultas de leitura sao permitidas (SELECT, WITH, EXPLAIN, SHOW, VALUES, TABLE). Ative dbadmin.mcpAllowWrites para SQL de escrita.",
-
   "mcp.tools.list_connections.title": "Listar conexoes",
   "mcp.tools.list_connections.description": "Lista as conexoes PostgreSQL salvas no DBAdmin (sem senha). Use o id ou o nickname nas demais tools.",
   "mcp.tools.list_databases.title": "Listar databases",
@@ -35,12 +32,10 @@
   "mcp.tools.query.title": "Executar SQL",
   "mcp.tools.query.descriptionReadonly": "Executa SQL de leitura (SELECT, WITH, EXPLAIN, SHOW, VALUES, TABLE) na conexao escolhida.",
   "mcp.tools.query.descriptionWrites": "Executa SQL na conexao escolhida. Escritas estao habilitadas.",
-
   "mcp.config.storageMissing": "DBADMIN_STORAGE_ROOT nao definido e connections.json nao encontrado. Defina o caminho do globalStorage do DBAdmin.",
   "mcp.config.copied": "Config MCP do DBAdmin copiada. Cole em mcp.json, claude_desktop_config.json ou use claude mcp add.",
   "mcp.config.invalidJson": "mcp.json inválido em {path}; corrija o JSON antes de sincronizar o DBAdmin ({message}).",
   "mcp.config.invalidRoot": "mcp.json inválido em {path}: esperado um objeto na raiz.",
-
   "webview.common.save": "Salvar",
   "webview.common.cancel": "Cancelar",
   "webview.common.close": "Fechar",
@@ -73,7 +68,6 @@
   "webview.common.other": "Outros",
   "webview.common.default": "(Padrão)",
   "webview.common.query": "Query",
-
   "webview.settings.title": "DBAdmin: Configurações",
   "webview.settings.pageTitle": "Configurações da extensão",
   "webview.settings.sidebar.title": "Barra lateral",
@@ -112,7 +106,6 @@
   "webview.settings.other.vscodeSettingsDesc": "Abrir o editor de settings da extensão.",
   "webview.settings.other.openSettings": "Abrir settings",
   "webview.settings.saved": "Configurações salvas",
-
   "webview.connection.nickname": "Apelido",
   "webview.connection.host": "Host",
   "webview.connection.port": "Porta",
@@ -128,7 +121,6 @@
   "webview.connection.visibleDatabasesPlaceholder": "Um nome por linha ou separado por vírgula",
   "webview.connection.enableSsl": "Ativar SSL",
   "webview.connection.testing": "Testando conexão...",
-
   "webview.manager.section": "Seção",
   "webview.manager.sections": "Seções",
   "webview.manager.dashboard": "Painel",
@@ -173,7 +165,6 @@
   "webview.manager.commits": "commits",
   "webview.manager.rollbacks": "rollbacks",
   "webview.manager.title": "Gerenciar — {name}",
-
   "webview.backup.title": "Backup",
   "webview.backup.sqlDest": "Arquivo SQL de destino",
   "webview.backup.sqlPlaceholder": "Caminho do arquivo .sql...",
@@ -204,7 +195,6 @@
   "webview.backup.saveDialogTitle": "Salvar arquivo de backup",
   "webview.backup.filterPostgres": "Backup PostgreSQL",
   "webview.backup.filterAll": "Todos os arquivos",
-
   "webview.restore.title": "Restaurar",
   "webview.restore.backupFile": "Arquivo de backup",
   "webview.restore.backupPlaceholder": "Caminho do arquivo de backup...",
@@ -245,7 +235,6 @@
   "webview.restore.schemaCleared": "Schema limpo com sucesso.",
   "webview.restore.selectDialogTitle": "Selecionar arquivo de backup",
   "webview.restore.abortLog": "[DbAdmin] Solicitação de abort recebida. Encerrando restore...",
-
   "webview.queryResult.title": "Resultado da consulta",
   "webview.queryResult.searchPlaceholder": "Buscar nos resultados",
   "webview.queryResult.resetLayout": "Resetar layout",
@@ -257,7 +246,6 @@
   "webview.queryResult.command": "Comando: {command}",
   "webview.queryResult.rowCount": "{count} linha(s)",
   "webview.queryResult.rowCountFiltered": "{shown} linha(s) exibida(s) de {total}",
-
   "webview.metadata.column": "Coluna",
   "webview.metadata.table": "Tabela",
   "webview.metadata.type": "Tipo",
@@ -265,13 +253,11 @@
   "webview.metadata.default": "Default (expressão SQL)",
   "webview.metadata.constraint": "Restrição",
   "webview.metadata.definition": "Definição",
-
   "webview.filter.placeholder": "Filtrar tabelas...",
   "webview.filter.expandItems": "Expandir itens",
   "webview.filter.expandItemsTitle": "Expandir apenas conexões e bancos com tabelas encontradas",
   "webview.filter.searchOnType": "Pesquisar ao digitar",
   "webview.filter.searchOnTypeTitle": "Quando desativado, aplica o filtro somente ao pressionar Enter",
-
   "webview.table.filterPlaceholder": "Filtrar...",
   "webview.table.rows": "linha(s)",
   "webview.table.page": "Página",
@@ -351,7 +337,6 @@
   "webview.table.databaseFallback": "Banco",
   "webview.table.schemaFallback": "Schema",
   "webview.table.connectionFallback": "Conexão",
-
   "webview.editor.find": "Buscar",
   "webview.editor.replace": "Substituir",
   "webview.editor.showReplace": "Mostrar substituir",
@@ -361,7 +346,6 @@
   "webview.editor.replaceAll": "Substituir tudo",
   "webview.editor.replaceAllShort": "Tudo",
   "webview.editor.findOf": "{current} de {total}",
-
   "webview.renderer.rows": "linha(s)",
   "webview.renderer.open": "Abrir",
   "webview.renderer.filter": "Filtrar",
@@ -373,5 +357,9 @@
   "webview.renderer.widthEqual": "Colunas com largura igual",
   "webview.renderer.clear": "Limpar",
   "webview.renderer.filterColumn": "Filtrar {column}",
-  "webview.common.unknownFailure": "Falha desconhecida."
+  "webview.common.unknownFailure": "Falha desconhecida.",
+  "webview.settings.backup.title": "Exportar / importar",
+  "webview.settings.backup.desc": "Exporta ou importa todas as configurações do DBAdmin, conexões (incluindo senhas) e layouts de tabela.",
+  "webview.settings.backup.export": "Exportar",
+  "webview.settings.backup.import": "Importar"
 }

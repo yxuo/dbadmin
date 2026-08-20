@@ -179,5 +179,14 @@
   "Enter the SQL file before clearing tables.": "テーブルを空にする前に SQL ファイルを指定してください。",
   "Tables cleared successfully.": "テーブルを空にしました。",
   "Schema cleared successfully.": "スキーマを空にしました。",
-  "[DbAdmin] Abort requested. Stopping restore...": "[DbAdmin] 中止要求を受信しました。復元を停止しています..."
+  "[DbAdmin] Abort requested. Stopping restore...": "[DbAdmin] 中止要求を受信しました。復元を停止しています...",
+  "Export": "エクスポート",
+  "Import": "インポート",
+  "Export DBAdmin settings": "DBAdmin の設定をエクスポート",
+  "Import DBAdmin settings": "DBAdmin の設定をインポート",
+  "The file will include saved connections and passwords. Store it securely.": "ファイルには保存済みの接続とパスワードが含まれます。安全に保管してください。",
+  "Import replaces DBAdmin settings, connections, and table layouts. Continue?": "インポートすると DBAdmin の設定、接続、テーブルレイアウトが置き換えられます。続行しますか？",
+  "Settings exported successfully.": "設定をエクスポートしました。",
+  "Settings imported successfully.": "設定をインポートしました。",
+  "Invalid DBAdmin settings file.": "無効な DBAdmin 設定ファイルです。"
 }

@@ -179,5 +179,14 @@
   "Enter the SQL file before clearing tables.": "Geben Sie die SQL-Datei ein, bevor Sie Tabellen leeren.",
   "Tables cleared successfully.": "Tabellen erfolgreich geleert.",
   "Schema cleared successfully.": "Schema erfolgreich geleert.",
-  "[DbAdmin] Abort requested. Stopping restore...": "[DbAdmin] Abbruch angefordert. Wiederherstellung wird gestoppt..."
+  "[DbAdmin] Abort requested. Stopping restore...": "[DbAdmin] Abbruch angefordert. Wiederherstellung wird gestoppt...",
+  "Export": "Exportieren",
+  "Import": "Importieren",
+  "Export DBAdmin settings": "DBAdmin-Einstellungen exportieren",
+  "Import DBAdmin settings": "DBAdmin-Einstellungen importieren",
+  "The file will include saved connections and passwords. Store it securely.": "Die Datei enthält gespeicherte Verbindungen und Passwörter. Bewahren Sie sie sicher auf.",
+  "Import replaces DBAdmin settings, connections, and table layouts. Continue?": "Der Import ersetzt DBAdmin-Einstellungen, Verbindungen und Tabellenlayouts. Fortfahren?",
+  "Settings exported successfully.": "Einstellungen erfolgreich exportiert.",
+  "Settings imported successfully.": "Einstellungen erfolgreich importiert.",
+  "Invalid DBAdmin settings file.": "Ungültige DBAdmin-Einstellungsdatei."
 }

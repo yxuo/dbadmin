@@ -76,5 +76,7 @@
   "dbadmin.command.openLastSqlBookResult": "Abrir último resultado do SQL Book",
   "dbadmin.notebook.sqlbook": "DBAdmin SQL Book",
   "dbadmin.notebookRenderer.sqlbookTable": "DBAdmin SQL Book Table",
-  "dbadmin.mcpProvider.label": "DBAdmin"
+  "dbadmin.mcpProvider.label": "DBAdmin",
+  "dbadmin.command.exportConfig": "Exportar configurações",
+  "dbadmin.command.importConfig": "Importar configurações"
 }

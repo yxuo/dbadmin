@@ -19,6 +19,7 @@ import { PostgresService } from "./postgresService";
 import { TableDataPanelManager } from "./tableDataPanel";
 import { buildExportContent } from "./tableDataPanel/exportService";
 import { SettingsPanelManager } from "./settingsPanel";
+import { exportDbAdminConfig, importDbAdminConfig } from "./configBackup";
 import { BackupPanelManager } from "./backupPanel";
 import { ConnectionActivityLog } from "./connectionActivityLog";
 import { ConnectionManagerPanelManager } from "./connectionManagerPanel";
@@ -1000,6 +1001,22 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("dbadmin.copyMcpConfig", async () => {
       try {
         await copyDbAdminMcpConfig(context);
+      } catch (error) {
+        showError(error);
+      }
+    }),
+    vscode.commands.registerCommand("dbadmin.exportConfig", async () => {
+      try {
+        await exportDbAdminConfig(context, store);
+      } catch (error) {
+        showError(error);
+      }
+    }),
+    vscode.commands.registerCommand("dbadmin.importConfig", async () => {
+      try {
+        await importDbAdminConfig(context, store, () => {
+          treeProvider.refresh();
+        });
       } catch (error) {
         showError(error);
       }

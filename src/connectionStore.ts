@@ -89,6 +89,18 @@ export class ConnectionStore {
     return updated;
   }
 
+  public async replaceAllConnections(
+    connections: PostgresConnection[],
+  ): Promise<void> {
+    const sanitized = connections.map((connection) =>
+      this.sanitizeConnection(connection),
+    );
+    for (const connection of sanitized) {
+      this.validateInput(connection);
+    }
+    await this.writeFile({ version: 1, connections: sanitized });
+  }
+
   public async deleteConnection(id: string): Promise<void> {
     const data = await this.readFile();
     const next = data.connections.filter((connection) => connection.id !== id);

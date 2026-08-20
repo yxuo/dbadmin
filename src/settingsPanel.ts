@@ -38,7 +38,9 @@ type SettingsWebviewMessage =
   | { type: 'openConnectionsFile' }
   | { type: 'openExtensionSettings' }
   | { type: 'openMcpJson' }
-  | { type: 'copyMcpConfig' };
+  | { type: 'copyMcpConfig' }
+  | { type: 'exportConfig' }
+  | { type: 'importConfig' };
 
 export class SettingsPanelManager {
   private panel: vscode.WebviewPanel | undefined;
@@ -214,6 +216,16 @@ export class SettingsPanelManager {
 
       if (message.type === 'copyMcpConfig') {
         await vscode.commands.executeCommand('dbadmin.copyMcpConfig');
+        return;
+      }
+
+      if (message.type === 'exportConfig') {
+        await vscode.commands.executeCommand('dbadmin.exportConfig');
+        return;
+      }
+
+      if (message.type === 'importConfig') {
+        await vscode.commands.executeCommand('dbadmin.importConfig');
       }
     });
 
@@ -527,6 +539,17 @@ export class SettingsPanelManager {
 
       <div class="item">
         <div class="meta">
+          <span class="title">${L('webview.settings.backup.title', 'Exportar / importar')}</span>
+          <span class="desc">${L('webview.settings.backup.desc', 'Exporta ou importa todas as configurações do DBAdmin, conexões (incluindo senhas) e layouts de tabela.')}</span>
+        </div>
+        <div style="display:flex;gap:6px;">
+          <button id="exportConfig" class="secondary">${L('webview.settings.backup.export', 'Exportar')}</button>
+          <button id="importConfig" class="secondary">${L('webview.settings.backup.import', 'Importar')}</button>
+        </div>
+      </div>
+
+      <div class="item">
+        <div class="meta">
           <span class="title">${L('webview.settings.other.connectionsFile', 'Arquivo global de conexões')}</span>
           <span class="desc">${L('webview.settings.other.connectionsFileDesc', 'Compartilhado entre todos os workspaces deste usuário no VS Code.')}</span>
           <span class="desc path" id="storagePath"></span>
@@ -775,6 +798,14 @@ export class SettingsPanelManager {
 
     document.getElementById('openConnectionsFile').addEventListener('click', () => {
       vscode.postMessage({ type: 'openConnectionsFile' });
+    });
+
+    document.getElementById('exportConfig').addEventListener('click', () => {
+      vscode.postMessage({ type: 'exportConfig' });
+    });
+
+    document.getElementById('importConfig').addEventListener('click', () => {
+      vscode.postMessage({ type: 'importConfig' });
     });
 
     document.getElementById('openExtensionSettings').addEventListener('click', () => {

@@ -76,5 +76,7 @@
   "dbadmin.command.openLastSqlBookResult": "最後の SQL Book 結果を開く",
   "dbadmin.notebook.sqlbook": "DBAdmin SQL Book",
   "dbadmin.notebookRenderer.sqlbookTable": "DBAdmin SQL Book テーブル",
-  "dbadmin.mcpProvider.label": "DBAdmin"
+  "dbadmin.mcpProvider.label": "DBAdmin",
+  "dbadmin.command.exportConfig": "設定をエクスポート",
+  "dbadmin.command.importConfig": "設定をインポート"
 }

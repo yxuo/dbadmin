@@ -22,7 +22,7 @@ Watch mode: `npm run watch`.
 ## 3 Package a VSIX
 
 ```bash
-npx @vscode/vsce package --no-dependencies --out dbadmin-1.0.0.vsix
+npx @vscode/vsce package --out dbadmin-1.0.0.vsix
 ```
 
 Match the filename to `package.json` `version`. Inspect what goes into the package:
@@ -37,7 +37,7 @@ The Marketplace does not allow publishing a package larger than 10 MB.
 If `vsce` prompts on manifest warnings, you can pipe a confirmation (local automation only):
 
 ```bash
-"y" | npx @vscode/vsce package --no-dependencies --out dbadmin-1.0.0.vsix
+"y" | npx @vscode/vsce package --out dbadmin-1.0.0.vsix
 ```
 
 ## 4 Install the VSIX locally
