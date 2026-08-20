@@ -1,24 +1,75 @@
 import * as vscode from "vscode";
 
-export type DbAdminLocale = "en" | "pt-br";
+export type DbAdminLocale =
+  | "en"
+  | "pt-br"
+  | "es"
+  | "de"
+  | "fr"
+  | "ru"
+  | "ja"
+  | "zh-cn";
 
-/**
- * Resolve UI locale from the editor. Only en and pt-br are shipped;
- * everything else falls back to English.
- */
-export function getLocale(): DbAdminLocale {
-  const raw = String(vscode.env.language || "en")
+function resolveLocale(rawLocale: string | undefined): DbAdminLocale {
+  const raw = String(rawLocale || "en")
     .trim()
     .toLowerCase()
     .replace(/_/g, "-");
-  if (raw === "pt-br" || raw === "pt") {
+
+  // Any Portuguese UI (pt, pt-pt, pt-br, …) uses the pt-br pack.
+  if (raw === "pt" || raw.startsWith("pt-")) {
     return "pt-br";
+  }
+  if (raw === "es" || raw.startsWith("es-")) {
+    return "es";
+  }
+  if (raw === "de" || raw.startsWith("de-")) {
+    return "de";
+  }
+  if (raw === "fr" || raw.startsWith("fr-")) {
+    return "fr";
+  }
+  if (raw === "ru" || raw.startsWith("ru-")) {
+    return "ru";
+  }
+  if (raw === "ja" || raw.startsWith("ja-")) {
+    return "ja";
+  }
+  if (
+    raw === "zh-cn" ||
+    raw === "zh-hans" ||
+    raw === "zh-sg" ||
+    raw.startsWith("zh-cn-") ||
+    raw.startsWith("zh-hans-") ||
+    raw.startsWith("zh-sg-")
+  ) {
+    return "zh-cn";
   }
   return "en";
 }
 
+/**
+ * Resolve UI locale from the editor. Supported locales are en, pt-br,
+ * es, de, fr, ru, ja and zh-cn;
+ * everything else falls back to English.
+ */
+export function getLocale(): DbAdminLocale {
+  return resolveLocale(vscode.env.language);
+}
+
 export function getBcp47Locale(): string {
-  return getLocale() === "pt-br" ? "pt-BR" : "en";
+  const locale = getLocale();
+  const map: Record<DbAdminLocale, string> = {
+    en: "en",
+    "pt-br": "pt-BR",
+    es: "es",
+    de: "de",
+    fr: "fr",
+    ru: "ru",
+    ja: "ja",
+    "zh-cn": "zh-CN",
+  };
+  return map[locale] || "en";
 }
 
 /**

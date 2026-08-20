@@ -6,6 +6,20 @@ export type LocaleDict = Record<string, string>;
 
 let cached: { locale: DbAdminLocale; dict: LocaleDict } | undefined;
 
+function localeToBcp47(locale: DbAdminLocale): string {
+  const map: Record<DbAdminLocale, string> = {
+    en: "en",
+    "pt-br": "pt-BR",
+    es: "es",
+    de: "de",
+    fr: "fr",
+    ru: "ru",
+    ja: "ja",
+    "zh-cn": "zh-CN",
+  };
+  return map[locale] || "en";
+}
+
 function localesDirFromExtensionPath(extensionPath: string): string {
   return path.join(extensionPath, "locales");
 }
@@ -23,14 +37,17 @@ export function loadLocaleDict(
   const fallbackPath = path.join(dir, "en.json");
 
   let dict: LocaleDict = {};
+  let fallback: LocaleDict = {};
   try {
-    dict = JSON.parse(fs.readFileSync(filePath, "utf8")) as LocaleDict;
+    fallback = JSON.parse(fs.readFileSync(fallbackPath, "utf8")) as LocaleDict;
   } catch {
-    try {
-      dict = JSON.parse(fs.readFileSync(fallbackPath, "utf8")) as LocaleDict;
-    } catch {
-      dict = {};
-    }
+    fallback = {};
+  }
+  try {
+    const localized = JSON.parse(fs.readFileSync(filePath, "utf8")) as LocaleDict;
+    dict = { ...fallback, ...localized };
+  } catch {
+    dict = fallback;
   }
 
   cached = { locale, dict };
@@ -46,7 +63,7 @@ export function webviewI18nBootstrap(
   locale: DbAdminLocale = getLocale(),
 ): string {
   const dict = loadLocaleDict(extensionPath, locale);
-  const lang = locale === "pt-br" ? "pt-BR" : "en";
+  const lang = localeToBcp47(locale);
   return `window.__DBADMIN_I18N__=${JSON.stringify(dict)};window.__DBADMIN_LANG__=${JSON.stringify(lang)};document.documentElement.lang=${JSON.stringify(lang)};function t(key,fallback){var d=window.__DBADMIN_I18N__||{};return (d[key]!=null&&d[key]!=="")?d[key]:(fallback!=null?fallback:key);}function tf(key,vars,fallback){var s=t(key,fallback);if(!vars)return s;return String(s).replace(/\\{(\\w+)\\}/g,function(_,k){return vars[k]!=null?String(vars[k]):"{"+k+"}";});}`;
 }
 
@@ -57,7 +74,7 @@ export function serializeLocaleForWebview(
   const resolved = locale ?? getLocale();
   const dict = loadLocaleDict(extensionPath, resolved);
   return {
-    lang: resolved === "pt-br" ? "pt-BR" : "en",
+    lang: localeToBcp47(resolved),
     i18nJson: JSON.stringify(dict),
   };
 }

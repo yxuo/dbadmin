@@ -1,7 +1,15 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-export type McpLocale = "en" | "pt-br";
+export type McpLocale =
+  | "en"
+  | "pt-br"
+  | "es"
+  | "de"
+  | "fr"
+  | "ru"
+  | "ja"
+  | "zh-cn";
 
 export type LocaleDict = Record<string, string>;
 
@@ -13,8 +21,34 @@ function resolveLocale(raw: string | undefined): McpLocale {
     .trim()
     .toLowerCase()
     .replace(/_/g, "-");
-  if (normalized === "pt-br" || normalized === "pt") {
+  // Any Portuguese UI (pt, pt-pt, pt-br, …) uses the pt-br pack.
+  if (normalized === "pt" || normalized.startsWith("pt-")) {
     return "pt-br";
+  }
+  if (normalized === "es" || normalized.startsWith("es-")) {
+    return "es";
+  }
+  if (normalized === "de" || normalized.startsWith("de-")) {
+    return "de";
+  }
+  if (normalized === "fr" || normalized.startsWith("fr-")) {
+    return "fr";
+  }
+  if (normalized === "ru" || normalized.startsWith("ru-")) {
+    return "ru";
+  }
+  if (normalized === "ja" || normalized.startsWith("ja-")) {
+    return "ja";
+  }
+  if (
+    normalized === "zh-cn" ||
+    normalized === "zh-hans" ||
+    normalized === "zh-sg" ||
+    normalized.startsWith("zh-cn-") ||
+    normalized.startsWith("zh-hans-") ||
+    normalized.startsWith("zh-sg-")
+  ) {
+    return "zh-cn";
   }
   return "en";
 }
@@ -36,14 +70,19 @@ export function initMcpLocale(options?: {
 
   for (const root of roots) {
     const filePath = path.join(root, "locales", `${locale}.json`);
-    const fallback = path.join(root, "locales", "en.json");
+    const fallbackPath = path.join(root, "locales", "en.json");
     try {
+      let fallback: LocaleDict = {};
+      if (fs.existsSync(fallbackPath)) {
+        fallback = JSON.parse(fs.readFileSync(fallbackPath, "utf8")) as LocaleDict;
+      }
       if (fs.existsSync(filePath)) {
-        dict = JSON.parse(fs.readFileSync(filePath, "utf8")) as LocaleDict;
+        const localized = JSON.parse(fs.readFileSync(filePath, "utf8")) as LocaleDict;
+        dict = { ...fallback, ...localized };
         return;
       }
-      if (fs.existsSync(fallback)) {
-        dict = JSON.parse(fs.readFileSync(fallback, "utf8")) as LocaleDict;
+      if (Object.keys(fallback).length > 0) {
+        dict = fallback;
         locale = "en";
         return;
       }
