@@ -2239,6 +2239,7 @@ function createSqlRunnerCodeLensProvider(
         }),
         new vscode.CodeLens(range, {
           title: t("$(play) Run"),
+          tooltip: t("Run"),
           command: "dbadmin.executeSqlFromActiveEditor",
         }),
       ];

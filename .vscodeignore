@@ -2,6 +2,7 @@
 .vscode-test/**
 out/test/**
 src/**
+docs/**
 .gitignore
 *.tsbuildinfo
 local_dev/**
@@ -9,4 +10,4 @@ scripts/**
 .github/**
 .git/**
 *.vsix
-# locales/ and l10n/ must ship in the VSIX (not listed here).
+# locales/, l10n/, and images/ must ship in the VSIX (not listed here).

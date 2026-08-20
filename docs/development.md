@@ -1,106 +1,86 @@
-# Development
+# Development, packaging, and publishing
 
-This guide covers local development, build, packaging, package content validation, and publishing.
+This guide covers local development, VSIX packaging, and publishing to the VS Code Marketplace.
 
-## 1) Prerequisites
+## 1 Prerequisites
 
-- Node.js and npm installed
-- Project dependencies installed
+- Node.js and npm
 - Marketplace publisher account (for publishing)
-- Azure DevOps PAT (for publishing)
+- Azure DevOps PAT with Marketplace **Manage** (or **Publish** — not Full access
 
-## 2) Install dependencies
+Publisher id in this repo: `yxuo`.
+
+## 2 Install and compile
 
 ```bash
 npm install
-```
-
-## 3) Compile the extension
-
-```bash
 npm run compile
 ```
 
-## 4) Package VSIX
+Watch mode: `npm run watch`.
 
-Default command:
-
-```bash
-npx @vscode/vsce package --no-dependencies --out <package-name>.vsix
-```
-
-## 5) Install VSIX locally
-
-Via CLI:
+## 3 Package a VSIX
 
 ```bash
-code --install-extension .\<package-name>.vsix --force
+npx @vscode/vsce package --no-dependencies --out dbadmin-1.0.0.vsix
 ```
 
-Via UI:
-
-1. Open Extensions in VS Code.
-2. Click `...`.
-3. Select `Install from VSIX...`.
-4. Choose the generated VSIX file.
-
-## 6) Verify package contents
-
-To list files included in the VSIX:
+Match the filename to `package.json` `version`. Inspect what goes into the package:
 
 ```bash
 npx @vscode/vsce ls
 ```
 
-If needed, adjust `.vscodeignore` to exclude development artifacts, temporary files, and local-only content.
+If the package is too large, trim `.vscodeignore`.
+The Marketplace does not allow publishing a package larger than 10 MB.
 
-## 7) Publish to the Marketplace
-
-### 7.1 Create a PAT (Azure DevOps)
-
-1. Go to `https://aex.dev.azure.com/me`.
-2. Open `Personal access tokens`.
-3. Create a token with:
-   - Scope: `Custom defined`
-   - Marketplace: `Manage` (and `Publish` if the panel separates permissions)
-4. Do not use `Full access`.
-
-### 7.2 Log in with vsce
+If `vsce` prompts on manifest warnings, you can pipe a confirmation (local automation only):
 
 ```bash
-npx @vscode/vsce login <publisher-id>
+"y" | npx @vscode/vsce package --no-dependencies --out dbadmin-1.0.0.vsix
 ```
 
-### 7.3 Publish
+## 4 Install the VSIX locally
+
+CLI:
 
 ```bash
+code --install-extension .\dbadmin-1.0.0.vsix --force
+```
+
+UI: Extensions → `...` → **Install from VSIX...**
+
+After code changes: compile → package → reinstall with `--force` → **Developer: Reload Window**.
+
+## 5 Publish to the Marketplace
+
+### PAT
+
+1. [Personal access tokens](https://aex.dev.azure.com/me)
+2. Scope: Custom defined → Marketplace: **Manage** (and **Publish** if listed separately)
+
+### Login and publish
+
+```bash
+npx @vscode/vsce login yxuo
 npx @vscode/vsce publish
 ```
 
-or:
+Or pin the version: `npx @vscode/vsce publish 1.0.0`.
 
-```bash
-npx @vscode/vsce publish <version>
-```
+`vsce` runs `vscode:prepublish` (`npm run compile` and uses `package.json` `version`. You cannot republish the same version; bump to `1.0.1` (or later instead.
 
-## 8) Release checklist
+Optional after publish: git tag `v1.0.0` and a GitHub Release with the `.vsix` attached. The Marketplace does not require either.
 
-- Build completed without errors.
-- VSIX generated successfully.
-- Package contents reviewed (`vsce ls`).
-- `README.md` updated for the store page.
-- `CHANGELOG.md` updated for the version.
-- `LICENSE` present.
+## 6 Release checklist
 
-## 8.1) Connection configuration
+- Build completes without errors
+- VSIX generated; contents reviewed (`vsce ls`)
+- `README.md` ready for the store page
+- `CHANGELOG.md` matches the version
+- `LICENSE` present
+- PAT stored only locally or in CI secrets — never in git
 
-- Each connection can define an optional list of databases visible in the sidebar.
-- When the list is set, only those databases appear in the explorer.
-- When the list is empty, all databases available to the connection are shown.
+## Connection configuration
 
-## 9) Security and operations
-
-- Use PATs with minimum scope.
-- Set short expiration and rotate periodically.
-- Never commit PATs to the repository.
-- In CI, store credentials in provider secrets (e.g. GitHub Actions Secrets).
+Each connection can list which databases appear in the sidebar. An empty list shows all databases available to that connection.

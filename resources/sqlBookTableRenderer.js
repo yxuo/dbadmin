@@ -241,6 +241,8 @@ function buildTable(data, context) {
     textContent: "×",
   });
   popover.append(popoverInput, popoverClear);
+  popoverClear.disabled = true;
+  popoverClear.setAttribute("aria-disabled", "true");
   root.ownerDocument.body.appendChild(popover);
 
   const exportMenu = el("div", { className: "dbadmin-it__menu" });
@@ -544,7 +546,14 @@ function buildTable(data, context) {
   win?.addEventListener("resize", onViewportChange);
   scroll.addEventListener("scroll", onViewportChange, { passive: true });
 
+  function syncPopoverClearState() {
+    const hasValue = popoverInput.value.trim().length > 0;
+    popoverClear.disabled = !hasValue;
+    popoverClear.setAttribute("aria-disabled", hasValue ? "false" : "true");
+  }
+
   popoverInput.addEventListener("input", () => {
+    syncPopoverClearState();
     if (openPopoverCol === null) {
       return;
     }
@@ -558,11 +567,12 @@ function buildTable(data, context) {
     }
   });
   popoverClear.addEventListener("click", () => {
-    if (openPopoverCol === null) {
+    if (openPopoverCol === null || popoverClear.disabled) {
       return;
     }
     setColumnFilter(openPopoverCol, "", { from: "popover" });
     popoverInput.value = "";
+    syncPopoverClearState();
     popoverInput.focus();
   });
 
@@ -647,6 +657,7 @@ function buildTable(data, context) {
       `Filtrar ${columns[colIdx]}`,
     ) + "…";
     popoverInput.value = state.columns[colIdx] || "";
+    syncPopoverClearState();
     popover.hidden = false;
     popover.style.visibility = "hidden";
     requestAnimationFrame(() => {
@@ -1423,7 +1434,12 @@ function injectStyles(root) {
       font-size: 14px;
       line-height: 1;
     }
-    .dbadmin-it__popover-clear:hover {
+    .dbadmin-it__popover-clear:disabled {
+      opacity: 0.35;
+      cursor: default;
+      color: color-mix(in srgb, var(--vscode-descriptionForeground) 55%, transparent);
+    }
+    .dbadmin-it__popover-clear:hover:not(:disabled) {
       background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
       color: var(--vscode-foreground);
     }

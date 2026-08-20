@@ -252,7 +252,7 @@ export function createSqlBookRunPerQueryCodeLensProvider(): {
         const range = new vscode.Range(position, position);
         return new vscode.CodeLens(range, {
           title: t("$(play) Run"),
-          tooltip: t("$(play) Run"),
+          tooltip: t("Run"),
           command,
           arguments: [document.uri, statement.sql, statement.start],
         });

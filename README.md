@@ -3,7 +3,7 @@
 DBAdmin brings a **lean, visual, and powerful** database experience into VS Code.  
 Connect, explore, filter, query, and operate PostgreSQL without leaving the editor.
 
-![DBAdmin table view](docs/image/dba%20table.png)
+![DBAdmin table view](images/table.png)
 
 ## Why DBAdmin
 
@@ -31,25 +31,25 @@ Connect, explore, filter, query, and operate PostgreSQL without leaving the edit
 
 Open the DBAdmin view, expand a connection, and jump straight into a table. Right-click for DDL, truncate, delete, and more.
 
-![DBAdmin explorer](docs/image/dba%20treeview.gif)
+![DBAdmin explorer](images/treeview.gif)
 
 ### Table editor
 
 Browse rows, filter by column, paginate, and edit in place.
 
-![DBAdmin table filters](docs/image/dba%20edit.gif)
+![DBAdmin table filters](images/edit.gif)
 
 ### ER diagram
 
 See how the current table relates to its neighbors, then export or jump to another table.
 
-![DBAdmin ER diagram](docs/image/dba%20diagram.png)
+![DBAdmin ER diagram](images/diagram.png)
 
 ### Connection dashboard
 
 Watch traffic, queries, sessions, and transactions for a live connection.
 
-![DBAdmin connection dashboard](docs/image/dba%20dashboard.png)
+![DBAdmin connection dashboard](images/dashboard.png)
 
 ## Installation
 
@@ -62,8 +62,6 @@ Alternatively via VSIX:
 1. Download the `.vsix` from the release.
 2. Run **Extensions: Install from VSIX...**.
 
-For local builds, see [docs/extension.md](docs/extension.md).
-
 ## Requirements
 
 - VS Code 1.85+
@@ -72,7 +70,7 @@ For local builds, see [docs/extension.md](docs/extension.md).
 
 ## Development
 
-See [docs/development.md](docs/development.md) for build, packaging, and release instructions.
+See [docs/development.md](docs/development.md) for local build, VSIX packaging, and Marketplace publishing.
 
 ## Roadmap
 
