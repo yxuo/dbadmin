@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.1.0] - 2026-09-02
+
+### Added
+
+- SQLite support (sql.js / WASM): open `.sqlite` / `.db` files, explore tables/views/triggers, edit rows, run SQL Book, DDL, ER diagram, MCP, file backup and SQL dump
+- Connection form engine selector (PostgreSQL or SQLite)
+- Custom editor and `dbadmin.openDatabaseFile` API for FileAdmin-style open-from-file
+- Marketplace keywords for Postgres and SQLite discovery
+
 ## [1.0.1] - 2026-08-20
 
 ### Fixed

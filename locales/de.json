@@ -73,6 +73,8 @@
   "webview.settings.sidebar.title": "Seitenleiste",
   "webview.settings.sidebar.showFilterLabel": "Filter-Label im Baum anzeigen",
   "webview.settings.sidebar.showFilterLabelDesc": "Zeigt das Filter-Label-Element oben in der Treeview an, wenn ein Filter aktiv ist.",
+  "webview.settings.sidebar.openSqliteInExplorer": "Beim Öffnen einer Datei im Explorer anzeigen",
+  "webview.settings.sidebar.openSqliteInExplorerDesc": "Beim Öffnen einer SQLite-Datei die DBAdmin-Verbindungsleiste fokussieren.",
   "webview.settings.table.title": "Tabelle",
   "webview.settings.table.persistLayout": "Spaltenlayout beibehalten",
   "webview.settings.table.persistLayoutDesc": "Beim Öffnen eines neuen Tabs bleiben die Spaltenlayout-Einstellungen erhalten.",

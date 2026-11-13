@@ -188,5 +188,14 @@
   "Import replaces DBAdmin settings, connections, and table layouts. Continue?": "L’importation remplace les paramètres, connexions et dispositions de table DBAdmin. Continuer ?",
   "Settings exported successfully.": "Paramètres exportés.",
   "Settings imported successfully.": "Paramètres importés.",
-  "Invalid DBAdmin settings file.": "Fichier de paramètres DBAdmin invalide."
+  "Invalid DBAdmin settings file.": "Fichier de paramètres DBAdmin invalide.",
+  "Temporary connections": "Connexions temporaires",
+  "Temporary connection": "Connexion temporaire",
+  "Save connection": "Enregistrer la connexion",
+  "This SQLite database is open in DBAdmin. Use the explorer or pick a table below.": "Cette base SQLite est ouverte dans DBAdmin. Utilisez l’explorateur ou choisissez une table ci-dessous.",
+  "Empty SQLite database.": "Base SQLite vide.",
+  "Open in explorer when opening a file": "Ouvrir dans l’explorateur à l’ouverture d’un fichier",
+  "SQLite connection was not created.": "La connexion SQLite n’a pas été créée.",
+  "This file type is not a supported SQLite database.": "Ce type de fichier n’est pas une base SQLite prise en charge.",
+  "Loading...": "Chargement..."
 }

@@ -17,6 +17,7 @@ export interface McpRuntimeConfig {
   allowWrites: boolean;
   maxRows: number;
   statementTimeoutMs: number;
+  extensionRoot: string;
 }
 
 export function parseBooleanEnv(value: string | undefined): boolean {
@@ -98,6 +99,7 @@ export async function loadMcpRuntimeConfig(): Promise<McpRuntimeConfig> {
       1000,
       120_000,
     ),
+    extensionRoot: String(process.env.DBADMIN_EXTENSION_ROOT || process.cwd()),
   };
 }
 

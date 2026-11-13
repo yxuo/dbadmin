@@ -6,6 +6,7 @@ import {
   ConnectionActivityLog,
 } from "./connectionActivityLog";
 import { ConnectionNodeRef, PostgresConnection } from "./models";
+import { requirePostgresConnection } from "./connectionIdentity";
 import {
   ManagerDashboardSnapshot,
   ManagerStatCounters,
@@ -505,7 +506,7 @@ export class ConnectionManagerPanelManager {
     if (!node || node.type !== "connection") {
       return;
     }
-    this.show(node.connection);
+    this.show(requirePostgresConnection(node.connection));
   }
 }
 

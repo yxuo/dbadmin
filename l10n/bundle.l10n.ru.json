@@ -188,5 +188,14 @@
   "Import replaces DBAdmin settings, connections, and table layouts. Continue?": "Импорт заменит настройки, подключения и макеты таблиц DBAdmin. Продолжить?",
   "Settings exported successfully.": "Настройки успешно экспортированы.",
   "Settings imported successfully.": "Настройки успешно импортированы.",
-  "Invalid DBAdmin settings file.": "Недействительный файл настроек DBAdmin."
+  "Invalid DBAdmin settings file.": "Недействительный файл настроек DBAdmin.",
+  "Temporary connections": "Временные подключения",
+  "Temporary connection": "Временное подключение",
+  "Save connection": "Сохранить подключение",
+  "This SQLite database is open in DBAdmin. Use the explorer or pick a table below.": "Эта база SQLite открыта в DBAdmin. Используйте обозреватель или выберите таблицу ниже.",
+  "Empty SQLite database.": "Пустая база SQLite.",
+  "Open in explorer when opening a file": "Открывать в обозревателе при открытии файла",
+  "SQLite connection was not created.": "Подключение SQLite не создано.",
+  "This file type is not a supported SQLite database.": "Этот тип файла не является поддерживаемой базой SQLite.",
+  "Loading...": "Загрузка..."
 }

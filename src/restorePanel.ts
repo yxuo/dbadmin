@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { getBcp47Locale, t } from "./i18n";
 import { loadLocaleDict, webviewI18nBootstrap } from "./i18n/webviewLocale";
 import { SchemaNodeRef } from "./models";
+import { requirePostgresConnection } from "./connectionIdentity";
 import {
   RestoreOptions,
   runRestoreByMode,
@@ -118,7 +119,7 @@ export class RestorePanelManager {
 
           try {
             await runRestoreByMode(
-              node.connection,
+              requirePostgresConnection(node.connection),
               node.databaseName,
               node.schemaName,
               message.options,
@@ -160,7 +161,7 @@ export class RestorePanelManager {
 
           try {
             await truncateInsertTablesFromScript(
-              node.connection,
+              requirePostgresConnection(node.connection),
               node.databaseName,
               node.schemaName,
               message.filename,
@@ -194,7 +195,7 @@ export class RestorePanelManager {
 
           try {
             await clearSchema(
-              node.connection,
+              requirePostgresConnection(node.connection),
               node.databaseName,
               node.schemaName,
               (line) => panel.webview.postMessage({ type: "line", text: line }),

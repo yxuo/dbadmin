@@ -5,6 +5,7 @@
   "dbadmin.config.persistColumnLayout": "Conserver le masquage/l'ordre/la largeur des colonnes même lorsque les onglets ne sont pas restaurés automatiquement.",
   "dbadmin.config.pgAdminBinPath": "Chemin vers le répertoire des binaires pgAdmin (pg_dump, pg_restore). Laisser vide pour une détection automatique.",
   "dbadmin.config.showFilterLabel": "Afficher l'étiquette de filtre de table en haut de DBAdmin lorsqu'un filtre est actif.",
+  "dbadmin.config.openSqliteInExplorer": "Lors de l'ouverture d'un fichier SQLite, basculer vers l'explorateur de connexions DBAdmin.",
   "dbadmin.config.defaultPageSize": "Nombre d'éléments par page par défaut dans la vue table.",
   "dbadmin.config.managerPollIntervalSeconds": "Intervalle d'actualisation automatique (secondes) pour le panneau Gérer la connexion. Min. 1 s, max. 60 s.",
   "dbadmin.config.managerTimeWindowMinutes": "Fenêtre temporelle pour les graphiques Gérer la connexion, en minutes. 0 = illimité (la série grandit sans supprimer de points).",
@@ -74,8 +75,8 @@
   "dbadmin.command.executeSqlBookStatement": "Exécuter la requête SQL Book",
   "dbadmin.command.executeSqlRunnerStatement": "Exécuter la requête SQL",
   "dbadmin.command.openLastSqlBookResult": "Ouvrir le dernier résultat SQL Book",
-  "dbadmin.notebook.sqlbook": "DBAdmin SQL Book",
-  "dbadmin.notebookRenderer.sqlbookTable": "DBAdmin SQL Book Table",
+  "dbadmin.notebook.sqlbook": "SQL Book",
+  "dbadmin.notebookRenderer.sqlbookTable": "SQL Book table",
   "dbadmin.mcpProvider.label": "DBAdmin",
   "dbadmin.command.exportConfig": "Exporter les paramètres",
   "dbadmin.command.importConfig": "Importer les paramètres"

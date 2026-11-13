@@ -11,6 +11,7 @@ import { getSqlBookRunPerQueryEnabled, setSqlBookRunPerQueryEnabled } from './sq
 const PERSIST_LAYOUT_SETTING = 'dbadmin.persistColumnLayout';
 const PGADMIN_BIN_PATH_SETTING = 'dbadmin.pgAdminBinPath';
 const SHOW_FILTER_LABEL_SETTING = 'dbadmin.showFilterLabel';
+const OPEN_SQLITE_IN_EXPLORER_SETTING = 'dbadmin.openSqliteInExplorer';
 const DEFAULT_PAGE_SIZE_SETTING = 'dbadmin.defaultPageSize';
 const SQLBOOK_INTEGRATED_TABLE_SETTING = 'dbadmin.sqlbookIntegratedTable';
 const MCP_ALLOW_WRITES_SETTING = 'dbadmin.mcpAllowWrites';
@@ -27,6 +28,7 @@ type SettingsWebviewMessage =
         persistColumnLayout: boolean;
         defaultPageSize: number;
         pgAdminBinPath: string;
+        openSqliteInExplorer: boolean;
         sqlbookIntegratedTable: boolean;
         sqlbookSaveIntegratedTable: boolean;
         sqlbookRunPerQuery: boolean;
@@ -118,6 +120,13 @@ export class SettingsPanelManager {
             .update(
               SHOW_FILTER_LABEL_SETTING,
               Boolean(message.settings.showFilterLabel),
+              vscode.ConfigurationTarget.Global
+            ),
+          vscode.workspace
+            .getConfiguration()
+            .update(
+              OPEN_SQLITE_IN_EXPLORER_SETTING,
+              Boolean(message.settings.openSqliteInExplorer),
               vscode.ConfigurationTarget.Global
             ),
           vscode.workspace
@@ -249,6 +258,9 @@ export class SettingsPanelManager {
     const showFilterLabel = vscode.workspace
       .getConfiguration()
       .get<boolean>(SHOW_FILTER_LABEL_SETTING, true);
+    const openSqliteInExplorer = vscode.workspace
+      .getConfiguration()
+      .get<boolean>(OPEN_SQLITE_IN_EXPLORER_SETTING, true);
     const persistColumnLayout = vscode.workspace
       .getConfiguration()
       .get<boolean>(PERSIST_LAYOUT_SETTING, false);
@@ -273,6 +285,7 @@ export class SettingsPanelManager {
     panel.webview.postMessage({
       type: 'settingsState',
       showFilterLabel,
+      openSqliteInExplorer,
       persistColumnLayout,
       defaultPageSize,
       pgAdminBinPath,
@@ -424,6 +437,16 @@ export class SettingsPanelManager {
         </div>
         <label>
           <input id="showFilterLabel" type="checkbox" />
+        </label>
+      </div>
+
+      <div class="item">
+        <div class="meta">
+          <span class="title">${L('webview.settings.sidebar.openSqliteInExplorer', 'Abrir no explorador ao abrir arquivo')}</span>
+          <span class="desc">${L('webview.settings.sidebar.openSqliteInExplorerDesc', 'Ao abrir um arquivo SQLite, foca a barra lateral do DBAdmin.')}</span>
+        </div>
+        <label>
+          <input id="openSqliteInExplorer" type="checkbox" />
         </label>
       </div>
     </div>
@@ -582,6 +605,7 @@ export class SettingsPanelManager {
         : {}),
     });
     const showFilterLabel = document.getElementById('showFilterLabel');
+    const openSqliteInExplorer = document.getElementById('openSqliteInExplorer');
     const persistColumnLayout = document.getElementById('persistColumnLayout');
     const defaultPageSize = document.getElementById('defaultPageSize');
     const pgAdminBinPath = document.getElementById('pgAdminBinPath');
@@ -743,6 +767,7 @@ export class SettingsPanelManager {
     function buildSettingsPayload() {
       return {
         showFilterLabel: Boolean(showFilterLabel.checked),
+        openSqliteInExplorer: Boolean(openSqliteInExplorer.checked),
         persistColumnLayout: Boolean(persistColumnLayout.checked),
         defaultPageSize: clampPageSize(defaultPageSize.value),
         pgAdminBinPath: String(pgAdminBinPath.value || ''),
@@ -755,6 +780,10 @@ export class SettingsPanelManager {
     }
 
     showFilterLabel.addEventListener('change', () => {
+      setDirty(true);
+    });
+
+    openSqliteInExplorer.addEventListener('change', () => {
       setDirty(true);
     });
 
@@ -851,6 +880,7 @@ export class SettingsPanelManager {
       }
 
       showFilterLabel.checked = Boolean(message.showFilterLabel);
+      openSqliteInExplorer.checked = Boolean(message.openSqliteInExplorer);
       persistColumnLayout.checked = Boolean(message.persistColumnLayout);
       defaultPageSize.value = String(message.defaultPageSize ?? 50);
       pgAdminBinPath.value = String(message.pgAdminBinPath || '');

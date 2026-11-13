@@ -2,7 +2,8 @@ import * as vscode from 'vscode';
 import { formatErrorForUi, getBcp47Locale, t } from './i18n';
 import { loadLocaleDict, webviewI18nBootstrap } from './i18n/webviewLocale';
 import { TableSectionItemNodeRef } from './models';
-import { PostgresService } from './postgresService';
+import { DatabaseService } from './engines/databaseService';
+import { EphemeralConnectionLifecycle } from './ephemeralConnectionLifecycle';
 
 type MetadataWebviewMessage =
   | { type: 'saveColumn'; isNullable: boolean; defaultValue: string }
@@ -20,7 +21,8 @@ export class TableMetadataPanelManager {
 
   public constructor(
     private readonly context: vscode.ExtensionContext,
-    private readonly postgresService: PostgresService
+    private readonly postgresService: DatabaseService,
+    private readonly ephemeralLifecycle?: EphemeralConnectionLifecycle,
   ) {}
 
   public async showColumn(node: TableSectionItemNodeRef, options?: ShowMetadataOptions): Promise<void> {
@@ -47,6 +49,7 @@ export class TableMetadataPanelManager {
 
       panel.iconPath = new vscode.ThemeIcon('symbol-field');
       panel.webview.html = this.buildColumnHtml(panel.webview, node, details);
+      this.ephemeralLifecycle?.bindPanel(panel, node.connection.id);
 
       const disposable = panel.webview.onDidReceiveMessage(async (message: MetadataWebviewMessage) => {
         if (message.type === 'saveColumn') {
@@ -74,6 +77,7 @@ export class TableMetadataPanelManager {
 
       panel.onDidDispose(() => {
         disposable.dispose();
+        this.ephemeralLifecycle?.unbindPanel(panel);
       });
       return;
     }
@@ -121,6 +125,9 @@ export class TableMetadataPanelManager {
       this.globalColumnPanel.onDidDispose(() => {
         this.globalColumnMessageDisposable?.dispose();
         this.globalColumnMessageDisposable = undefined;
+        if (this.globalColumnPanel) {
+          this.ephemeralLifecycle?.unbindPanel(this.globalColumnPanel);
+        }
         this.globalColumnPanel = undefined;
         this.globalColumnNode = undefined;
       });
@@ -128,6 +135,7 @@ export class TableMetadataPanelManager {
 
     this.globalColumnNode = node;
     this.globalColumnPanel.title = t('Column: {0}', node.itemName);
+    this.ephemeralLifecycle?.bindPanel(this.globalColumnPanel, node.connection.id);
     this.globalColumnPanel.webview.html = this.buildColumnHtml(this.globalColumnPanel.webview, node, details);
     this.globalColumnPanel.reveal(vscode.ViewColumn.Active, false);
   }
@@ -156,6 +164,10 @@ export class TableMetadataPanelManager {
 
       panel.iconPath = new vscode.ThemeIcon('shield');
       panel.webview.html = this.buildConstraintHtml(panel.webview, node, details);
+      this.ephemeralLifecycle?.bindPanel(panel, node.connection.id);
+      panel.onDidDispose(() => {
+        this.ephemeralLifecycle?.unbindPanel(panel);
+      });
       return;
     }
 
@@ -169,11 +181,15 @@ export class TableMetadataPanelManager {
 
       this.globalConstraintPanel.iconPath = new vscode.ThemeIcon('shield');
       this.globalConstraintPanel.onDidDispose(() => {
+        if (this.globalConstraintPanel) {
+          this.ephemeralLifecycle?.unbindPanel(this.globalConstraintPanel);
+        }
         this.globalConstraintPanel = undefined;
       });
     }
 
     this.globalConstraintPanel.title = t('Constraint: {0}', node.itemName);
+    this.ephemeralLifecycle?.bindPanel(this.globalConstraintPanel, node.connection.id);
     this.globalConstraintPanel.webview.html = this.buildConstraintHtml(
       this.globalConstraintPanel.webview,
       node,

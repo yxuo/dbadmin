@@ -5,6 +5,7 @@ import * as path from 'path';
 import { getBcp47Locale, t } from './i18n';
 import { loadLocaleDict, webviewI18nBootstrap } from './i18n/webviewLocale';
 import { SchemaNodeRef } from './models';
+import { requirePostgresConnection } from './connectionIdentity';
 import { BackupOptions, listRoles, runBackup } from './backupRestoreService';
 
 type BackupWebviewMessage =
@@ -65,7 +66,7 @@ export class BackupPanelManager {
       async (message: BackupWebviewMessage) => {
         if (message.type === 'ready') {
           try {
-            const roles = await listRoles(node.connection);
+            const roles = await listRoles(requirePostgresConnection(node.connection));
             panel.webview.postMessage({ type: 'roles', roles });
           } catch {
             panel.webview.postMessage({ type: 'roles', roles: [] });
@@ -96,7 +97,7 @@ export class BackupPanelManager {
 
           try {
             await runBackup(
-              node.connection,
+              requirePostgresConnection(node.connection),
               node.databaseName,
               node.schemaName,
               message.options,

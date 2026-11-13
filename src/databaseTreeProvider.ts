@@ -6,12 +6,14 @@ import {
   DbObjectKind,
   DbObjectNodeRef,
   FilterControlNodeRef,
+  ConnectionGroupNodeRef,
   ConnectionNodeRef,
   DatabaseNodeRef,
   ExtensionNodeRef,
   ObjectGroupNodeRef,
   PlaceholderNodeRef,
-  PostgresConnection,
+  DbConnection,
+  isSqliteConnection,
   SchemaNodeRef,
   TableSectionKind,
   TableSectionItemNodeRef,
@@ -19,7 +21,11 @@ import {
   TreeNodeRef,
 } from './models';
 import { t } from './i18n';
-import { PostgresService, comparePostgresSchemaNames } from './postgresService';
+import { comparePostgresSchemaNames } from './postgresService';
+import { DatabaseService } from './engines/databaseService';
+import { SQLITE_SCHEMA } from './engines/types';
+import { connectionLabel, connectionTooltip, sqliteDatabaseName } from './connectionIdentity';
+import { log } from './output';
 
 type SnapshotLoadStatus = 'created' | 'loading' | 'ready' | 'error';
 
@@ -42,7 +48,7 @@ interface DatabaseSnapshot {
 }
 
 interface ConnectionSnapshot {
-  connection: PostgresConnection;
+  connection: DbConnection;
   status: SnapshotLoadStatus;
   databaseByName: Map<string, DatabaseSnapshot>;
   errorMessage?: string;
@@ -64,7 +70,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
 
   public constructor(
     private readonly store: ConnectionStore,
-    private readonly postgresService: PostgresService,
+    private readonly databaseService: DatabaseService,
     private readonly extensionPath: string
   ) {}
 
@@ -107,11 +113,11 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
     this.refresh();
   }
 
-  public reloadConnection(connection: PostgresConnection): void {
+  public reloadConnection(connection: DbConnection): void {
     this.startConnectionLoad(connection, this.metadataLoadSeq);
   }
 
-  public reloadDatabase(connection: PostgresConnection, databaseName: string): void {
+  public reloadDatabase(connection: DbConnection, databaseName: string): void {
     const snapshot = this.connectionSnapshots.get(connection.id);
     if (!snapshot) {
       return;
@@ -128,7 +134,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
     void this.loadDatabaseIncremental(connection, databaseName, this.metadataLoadSeq, generation);
   }
 
-  public reloadSchema(connection: PostgresConnection, databaseName: string, schemaName: string): void {
+  public reloadSchema(connection: DbConnection, databaseName: string, schemaName: string): void {
     const snapshot = this.connectionSnapshots.get(connection.id);
     if (!snapshot) {
       return;
@@ -226,7 +232,14 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
         } satisfies FilterControlNodeRef);
       }
 
-      if (connections.length === 0) {
+      const saved = connections.filter(
+        (connection) => !(isSqliteConnection(connection) && connection.ephemeral),
+      );
+      const ephemeral = connections.filter(
+        (connection) => isSqliteConnection(connection) && Boolean(connection.ephemeral),
+      );
+
+      if (saved.length === 0 && ephemeral.length === 0) {
         rootNodes.push(
           {
             type: 'placeholder',
@@ -237,16 +250,33 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
         return rootNodes;
       }
 
-      return [
+      const nodes: TreeNodeRef[] = [
         ...rootNodes,
-        ...(connections.map((connection) => ({
+        ...(saved.map((connection) => ({
           type: 'connection',
           connection,
         })) satisfies ConnectionNodeRef[]),
       ];
+      if (ephemeral.length > 0) {
+        nodes.push({
+          type: 'connectionGroup',
+          kind: 'ephemeral',
+        } satisfies ConnectionGroupNodeRef);
+      }
+      return nodes;
     }
 
     try {
+      if (element.type === 'connectionGroup') {
+        const connections = await this.store.listConnections();
+        return connections
+          .filter((connection) => isSqliteConnection(connection) && Boolean(connection.ephemeral))
+          .map((connection) => ({
+            type: 'connection',
+            connection,
+          })) satisfies ConnectionNodeRef[];
+      }
+
       if (element.type === 'connection') {
         this.ensureConnectionSnapshotLoaded(element.connection);
         const snapshot = this.connectionSnapshots.get(element.connection.id);
@@ -257,6 +287,10 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
               message: t('Preparing snapshot...'),
             } satisfies PlaceholderNodeRef,
           ];
+        }
+
+        if (isSqliteConnection(element.connection)) {
+          return this.sqliteConnectionChildren(element.connection, snapshot);
         }
 
         const configuredVisibleDatabases = this.getConfiguredVisibleDatabasesSet(element.connection);
@@ -565,7 +599,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
       }
 
       if (element.type === 'tableSection' && element.section === 'columns') {
-        const columns = await this.postgresService.listTableColumnsDetailed(
+        const columns = await this.databaseService.listTableColumnsDetailed(
           element.connection,
           element.databaseName,
           element.schemaName,
@@ -594,7 +628,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
       }
 
       if (element.type === 'tableSection' && element.section === 'constraints') {
-        const constraints = await this.postgresService.listTableConstraints(
+        const constraints = await this.databaseService.listTableConstraints(
           element.connection,
           element.databaseName,
           element.schemaName,
@@ -656,20 +690,27 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
       return item;
     }
 
+    if (element.type === 'connectionGroup') {
+      const item = new vscode.TreeItem(
+        t('Temporary connections'),
+        vscode.TreeItemCollapsibleState.Expanded,
+      );
+      item.contextValue = 'connectionGroup:ephemeral';
+      item.iconPath = new vscode.ThemeIcon('history');
+      item.tooltip = t('Temporary connections');
+      return item;
+    }
+
     if (element.type === 'connection') {
       const item = new vscode.TreeItem(element.connection.nickname, vscode.TreeItemCollapsibleState.Collapsed);
-      item.contextValue = 'connection';
-      item.tooltip = `${element.connection.user}@${element.connection.host}:${element.connection.port}/${element.connection.database}`;
-      item.description = `${element.connection.host}:${element.connection.port}`;
-
-      item.iconPath = {
-        light: vscode.Uri.file(
-          path.join(this.extensionPath, 'resources', 'icons', 'light', 'postgres.svg')
-        ),
-        dark: vscode.Uri.file(
-          path.join(this.extensionPath, 'resources', 'icons', 'dark', 'postgres.svg')
-        ),
-      };
+      const ephemeral =
+        isSqliteConnection(element.connection) && Boolean(element.connection.ephemeral);
+      item.contextValue = ephemeral
+        ? `connection:${element.connection.engine}:ephemeral`
+        : `connection:${element.connection.engine}`;
+      item.tooltip = connectionTooltip(element.connection);
+      item.description = connectionLabel(element.connection);
+      item.iconPath = this.connectionIcon(element.connection);
 
       const snapshot = this.connectionSnapshots.get(element.connection.id);
       if (snapshot?.status === 'loading' || snapshot?.status === 'created') {
@@ -785,7 +826,17 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
       return undefined;
     }
 
+    if (element.type === 'connectionGroup') {
+      return undefined;
+    }
+
     if (element.type === 'connection') {
+      if (isSqliteConnection(element.connection) && element.connection.ephemeral) {
+        return {
+          type: 'connectionGroup',
+          kind: 'ephemeral',
+        } satisfies ConnectionGroupNodeRef;
+      }
       return undefined;
     }
 
@@ -814,6 +865,12 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
     }
 
     if (element.type === 'objectGroup') {
+      if (isSqliteConnection(element.connection)) {
+        return {
+          type: 'connection',
+          connection: element.connection,
+        } satisfies ConnectionNodeRef;
+      }
       return {
         type: 'schema',
         connection: element.connection,
@@ -966,7 +1023,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
   }
 
   private async tableSections(table: DbObjectNodeRef): Promise<TableSectionNodeRef[]> {
-    const counts = await this.postgresService.getTableSectionCounts(
+    const counts = await this.databaseService.getTableSectionCounts(
       table.connection,
       table.databaseName,
       table.schemaName,
@@ -977,10 +1034,14 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
       { section: 'columns', count: counts.columns },
       { section: 'constraints', count: counts.constraints },
       { section: 'indexes', count: counts.indexes },
-      { section: 'rls', count: counts.rls },
-      { section: 'rules', count: counts.rules },
-      { section: 'triggers', count: counts.triggers },
     ];
+    if (!isSqliteConnection(table.connection)) {
+      sections.push(
+        { section: 'rls', count: counts.rls },
+        { section: 'rules', count: counts.rules },
+      );
+    }
+    sections.push({ section: 'triggers', count: counts.triggers });
 
     return sections.map(({ section, count }) => ({
       type: 'tableSection',
@@ -1001,7 +1062,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
     return this.connectionSnapshots.get(connectionId)?.databaseByName.get(databaseName)?.schemaByName.get(schemaName);
   }
 
-  private ensureConnectionSnapshotLoaded(connection: PostgresConnection): void {
+  private ensureConnectionSnapshotLoaded(connection: DbConnection): void {
     const existingSnapshot = this.connectionSnapshots.get(connection.id);
     const hasActiveLoad = (this.connectionLoadGeneration.get(connection.id) ?? 0) > 0;
     if (existingSnapshot?.status === 'ready' || hasActiveLoad) {
@@ -1020,7 +1081,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
   }
 
   private startConnectionLoad(
-    connection: PostgresConnection,
+    connection: DbConnection,
     expectedSeq: number
   ): void {
     const nextGeneration = (this.connectionLoadGeneration.get(connection.id) ?? 0) + 1;
@@ -1043,11 +1104,11 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
   }
 
   private async loadConnectionIncrementalWithRetries(
-    connection: PostgresConnection,
+    connection: DbConnection,
     expectedSeq: number,
     generation: number
   ): Promise<void> {
-    const retryDelaysMs = [5000, 10000, 60000];
+    const retryDelaysMs = isSqliteConnection(connection) ? [] : [5000, 10000, 60000];
     let lastError: unknown;
 
     for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
@@ -1102,7 +1163,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
   }
 
   private async loadConnectionIncremental(
-    connection: PostgresConnection,
+    connection: DbConnection,
     expectedSeq: number,
     generation: number,
     attempt: number
@@ -1119,7 +1180,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
 
     this.logConnectionEvent(connection, 'executando teste de conexão');
     const version = await this.withTimeout(
-      this.postgresService.testConnection(connection),
+      this.databaseService.testConnection(connection),
       this.connectionProbeTimeoutMs,
       'test connection'
     );
@@ -1134,7 +1195,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
 
     this.logConnectionEvent(connection, 'listando bancos');
     const listedDatabaseNames = await this.withTimeout(
-      this.postgresService.listDatabases(connection),
+      this.databaseService.listDatabases(connection),
       this.databaseLoadTimeoutMs,
       'list databases'
     );
@@ -1187,7 +1248,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
   }
 
   private async loadDatabaseIncremental(
-    connection: PostgresConnection,
+    connection: DbConnection,
     databaseName: string,
     expectedSeq: number,
     generation: number
@@ -1208,8 +1269,8 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
 
     try {
       const [schemaNames, extensionNames] = await Promise.all([
-        this.postgresService.listSchemas(connection, databaseName),
-        this.postgresService.listExtensions(connection, databaseName),
+        this.databaseService.listSchemas(connection, databaseName),
+        this.databaseService.listExtensions(connection, databaseName),
       ]);
 
       if (!this.isLoadCurrent(connection.id, expectedSeq, generation)) {
@@ -1265,7 +1326,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
   }
 
   private async loadSchemaIncremental(
-    connection: PostgresConnection,
+    connection: DbConnection,
     databaseName: string,
     schemaName: string,
     expectedSeq: number,
@@ -1302,42 +1363,42 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
     };
 
     const tasks: Promise<void>[] = [
-      this.postgresService.listTables(connection, databaseName, schemaName)
+      this.databaseService.listTables(connection, databaseName, schemaName)
         .then((items) => safeUpdate((target) => {
           target.tableNames = [...items].sort((a, b) => a.localeCompare(b));
         }))
         .catch((error) => {
           registerFailure(t('Tables'), error);
         }),
-      this.postgresService.listViews(connection, databaseName, schemaName)
+      this.databaseService.listViews(connection, databaseName, schemaName)
         .then((items) => safeUpdate((target) => {
           target.viewNames = [...items].sort((a, b) => a.localeCompare(b));
         }))
         .catch((error) => {
           registerFailure('Views', error);
         }),
-      this.postgresService.listFunctions(connection, databaseName, schemaName)
+      this.databaseService.listFunctions(connection, databaseName, schemaName)
         .then((items) => safeUpdate((target) => {
           target.functionNames = [...items].sort((a, b) => a.localeCompare(b));
         }))
         .catch((error) => {
           registerFailure('Functions', error);
         }),
-      this.postgresService.listProcedures(connection, databaseName, schemaName)
+      this.databaseService.listProcedures(connection, databaseName, schemaName)
         .then((items) => safeUpdate((target) => {
           target.procedureNames = [...items].sort((a, b) => a.localeCompare(b));
         }))
         .catch((error) => {
           registerFailure('Procedures', error);
         }),
-      this.postgresService.listTriggers(connection, databaseName, schemaName)
+      this.databaseService.listTriggers(connection, databaseName, schemaName)
         .then((items) => safeUpdate((target) => {
           target.triggerNames = [...items].sort((a, b) => a.localeCompare(b));
         }))
         .catch((error) => {
           registerFailure('Triggers', error);
         }),
-      this.postgresService.listTableEstimatedCounts(connection, databaseName, schemaName)
+      this.databaseService.listTableEstimatedCounts(connection, databaseName, schemaName)
         .then((items) => safeUpdate((target) => {
           target.tableCountByName = new Map(items.map((item) => [item.tableName, item.count]));
         }))
@@ -1364,7 +1425,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
     this.refresh();
   }
 
-  private ensureConnectionSnapshot(connection: PostgresConnection): ConnectionSnapshot {
+  private ensureConnectionSnapshot(connection: DbConnection): ConnectionSnapshot {
     const existing = this.connectionSnapshots.get(connection.id);
     if (existing) {
       existing.connection = connection;
@@ -1452,12 +1513,77 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<TreeNodeRef
     return error instanceof Error ? error.message : t('Unexpected error.');
   }
 
-  private logConnectionEvent(connection: PostgresConnection, message: string): void {
-    // console.log(`[dbadmin][tree][${connection.nickname}][${connection.host}:${connection.port}/${connection.database}] ${message}`);
+  private logConnectionEvent(connection: DbConnection, message: string): void {
+    log(`[tree][${connection.nickname}] ${message}`);
   }
 
-  private getConfiguredVisibleDatabasesSet(connection: PostgresConnection): Set<string> | undefined {
-    if (!Array.isArray(connection.visibleDatabases)) {
+  private connectionIcon(connection: DbConnection): { light: vscode.Uri; dark: vscode.Uri } {
+    const fileName = isSqliteConnection(connection) ? 'sqlite.svg' : 'postgres.svg';
+    return {
+      light: vscode.Uri.file(
+        path.join(this.extensionPath, 'resources', 'icons', 'light', fileName),
+      ),
+      dark: vscode.Uri.file(
+        path.join(this.extensionPath, 'resources', 'icons', 'dark', fileName),
+      ),
+    };
+  }
+
+  private sqliteConnectionChildren(
+    connection: DbConnection,
+    snapshot: ConnectionSnapshot,
+  ): TreeNodeRef[] {
+    if (!isSqliteConnection(connection)) {
+      return [];
+    }
+    const databaseName = sqliteDatabaseName(connection);
+    const schema = this.getSchemaSnapshot(connection.id, databaseName, SQLITE_SCHEMA);
+    if (snapshot.status === 'error' && !schema) {
+      return [
+        {
+          type: 'placeholder',
+          message: snapshot.errorMessage ?? t('Connection error'),
+        } satisfies PlaceholderNodeRef,
+      ];
+    }
+    if (!schema) {
+      return [
+        {
+          type: 'placeholder',
+          message: t('Loading schema objects...'),
+        } satisfies PlaceholderNodeRef,
+      ];
+    }
+    return [
+      {
+        type: 'objectGroup',
+        connection,
+        databaseName,
+        schemaName: SQLITE_SCHEMA,
+        kind: 'table',
+        count: schema.tableNames.length,
+      },
+      {
+        type: 'objectGroup',
+        connection,
+        databaseName,
+        schemaName: SQLITE_SCHEMA,
+        kind: 'view',
+        count: schema.viewNames.length,
+      },
+      {
+        type: 'objectGroup',
+        connection,
+        databaseName,
+        schemaName: SQLITE_SCHEMA,
+        kind: 'trigger',
+        count: schema.triggerNames.length,
+      },
+    ] satisfies ObjectGroupNodeRef[];
+  }
+
+  private getConfiguredVisibleDatabasesSet(connection: DbConnection): Set<string> | undefined {
+    if (isSqliteConnection(connection) || !Array.isArray(connection.visibleDatabases)) {
       return undefined;
     }
 

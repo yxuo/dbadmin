@@ -1,11 +1,11 @@
 import * as vscode from "vscode";
 import { getBcp47Locale, t } from "./i18n";
 import { loadLocaleDict, webviewI18nBootstrap } from "./i18n/webviewLocale";
-import { PostgresConnection } from "./models";
+import { DbConnection } from "./models";
 import { SqlQueryResult } from "./postgresService";
 
 export interface QueryResultViewModel {
-  connection: PostgresConnection;
+  connection: DbConnection;
   databaseName: string;
   schemaName?: string;
   sql: string;

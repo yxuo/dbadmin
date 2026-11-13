@@ -73,6 +73,8 @@
   "webview.settings.sidebar.title": "Barra lateral",
   "webview.settings.sidebar.showFilterLabel": "Mostrar etiqueta de filtro en el árbol",
   "webview.settings.sidebar.showFilterLabelDesc": "Muestra el elemento de etiqueta de filtro en la parte superior del treeview cuando hay un filtro activo.",
+  "webview.settings.sidebar.openSqliteInExplorer": "Abrir en el explorador al abrir un archivo",
+  "webview.settings.sidebar.openSqliteInExplorerDesc": "Al abrir un archivo SQLite, enfoca la barra lateral de conexiones de DBAdmin.",
   "webview.settings.table.title": "Tabla",
   "webview.settings.table.persistLayout": "Persistir diseño de columnas",
   "webview.settings.table.persistLayoutDesc": "Al abrir una nueva pestaña, se conservan los ajustes de diseño de columnas.",

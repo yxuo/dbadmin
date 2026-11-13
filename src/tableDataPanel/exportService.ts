@@ -1,9 +1,10 @@
 import { DbObjectNodeRef } from "../models";
 import { PostgresService } from "../postgresService";
+import { DatabaseService } from "../engines/databaseService";
 import { TableState } from "./types";
 
 export async function fetchAllRowsForExport(
-  postgresService: PostgresService,
+  postgresService: DatabaseService,
   node: DbObjectNodeRef,
   state: TableState,
 ): Promise<{ columns: string[]; rows: Array<Record<string, unknown>> }> {

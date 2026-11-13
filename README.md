@@ -1,7 +1,7 @@
-# DBAdmin — PostgreSQL with a modern UI in VS Code
+# DBAdmin — PostgreSQL and SQLite with a modern UI in VS Code
 
 DBAdmin brings a **lean, visual, and powerful** database experience into VS Code.  
-Connect, explore, filter, query, and operate PostgreSQL without leaving the editor.
+Connect, explore, filter, query, and operate PostgreSQL and SQLite without leaving the editor.
 
 ![DBAdmin table view](images/table.png)
 
@@ -13,8 +13,9 @@ Connect, explore, filter, query, and operate PostgreSQL without leaving the edit
 
 ## Main features
 
-- **Tree explorer**: connections → databases → schemas → tables, views, functions, procedures, triggers, and extensions.
-- **Connection management**: create, edit, and remove connections with global persistence; optional database allowlists per connection.
+- **Tree explorer**: PostgreSQL connections → databases → schemas → tables, views, functions, procedures, triggers, and extensions. SQLite connections flatten to tables, views, and triggers.
+- **Open SQLite files**: click a `.sqlite` / `.db` file (or run **Open SQLite database file**) to browse it in the same table editor. Optionally keep the file in the explorer.
+- **Connection management**: create, edit, and remove PostgreSQL and SQLite connections with global persistence; optional database allowlists for PostgreSQL.
 - **Table view**: pagination, column filters, in-place editing, FK navigation, copy/paste, and smooth navigation.
 - **Table DDL**: show the full `CREATE TABLE` script (columns, defaults, constraints, indexes, foreign keys); create or drop tables from the tree or table menu.
 - **Metadata panels**: browse columns and constraints under each table; edit column nullable/default values.
@@ -64,8 +65,8 @@ Alternatively via VSIX:
 
 ## Requirements
 
-- VS Code 1.85+
-- Access to a PostgreSQL server
+- VS Code 1.95+
+- Access to a PostgreSQL server and/or local SQLite files
 - `pg_dump` and `pg_restore` for pgAdmin-style backup features (optional; DBAdmin can also dump schemas natively)
 
 ## Development
@@ -74,11 +75,13 @@ See [docs/development.md](docs/development.md) for local build, VSIX packaging, 
 
 ## Roadmap
 
-**1.0 — PostgreSQL foundation (now).** Explorer, table editor, ER diagram, connection dashboard, table DDL, SQL Book, backup/restore, and MCP — all inside VS Code.
+**1.1 — SQLite files.** Open `.sqlite` / `.db` in the same explorer and table editor, with SQL Book, DDL, ER, MCP, and file backup.
+
+**1.0 — PostgreSQL foundation.** Explorer, table editor, ER diagram, connection dashboard, table DDL, SQL Book, backup/restore, and MCP — all inside VS Code.
 
 **Next:**
 
-- **Universal database manager** — expand beyond PostgreSQL to MySQL/MariaDB, SQLite, SQL Server, and other engines, reusing the same explorer, grid, and query experience.
+- **More engines** — MySQL/MariaDB, SQL Server, and others on the same explorer, grid, and query experience.
 - **Standalone Electron app** — the same UI outside VS Code for teams that want a dedicated database client.
 
 The editor stays the home for the core workflow. New database engines land one at a time on top of the PostgreSQL foundation shipped in 1.0.

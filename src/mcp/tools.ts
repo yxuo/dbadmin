@@ -2,8 +2,11 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { ConnectionStore } from "../connectionStore";
 import { formatMcpError, mcpT } from "../i18n/mcpLocale";
-import { PostgresConnection } from "../models";
-import { PostgresService, SqlQueryResult } from "../postgresService";
+import { DbConnection, isSqliteConnection } from "../models";
+import { DatabaseService } from "../engines/databaseService";
+import { SqlQueryResult } from "../postgresService";
+import { connectionDatabaseName } from "../connectionIdentity";
+import { SQLITE_SCHEMA } from "../engines/types";
 import { McpRuntimeConfig } from "./config";
 import { assertSqlAllowed, truncateRows } from "./safety";
 
@@ -36,9 +39,19 @@ function errorResult(error: unknown) {
   };
 }
 
-function publicConnection(connection: PostgresConnection) {
+function publicConnection(connection: DbConnection) {
+  if (isSqliteConnection(connection)) {
+    return {
+      id: connection.id,
+      engine: connection.engine,
+      nickname: connection.nickname,
+      filePath: connection.filePath,
+      readOnly: Boolean(connection.readOnly),
+    };
+  }
   return {
     id: connection.id,
+    engine: connection.engine,
     nickname: connection.nickname,
     host: connection.host,
     port: connection.port,
@@ -52,7 +65,7 @@ function publicConnection(connection: PostgresConnection) {
 async function resolveConnection(
   store: ConnectionStore,
   input: { connectionId?: string; nickname?: string },
-): Promise<PostgresConnection> {
+): Promise<DbConnection> {
   const connections = await store.listConnections();
   const connectionId = String(input.connectionId || "").trim();
   const nickname = String(input.nickname || "").trim().toLowerCase();
@@ -85,8 +98,19 @@ async function resolveConnection(
   throw new Error(mcpT("mcp.error.needConnectionRef"));
 }
 
-function resolveDatabase(connection: PostgresConnection, database?: string): string {
-  const name = String(database || "").trim() || connection.database;
+function resolveSchema(connection: DbConnection, schema?: string): string {
+  const name = String(schema || "").trim();
+  if (name) {
+    return name;
+  }
+  if (isSqliteConnection(connection)) {
+    return SQLITE_SCHEMA;
+  }
+  throw new Error(mcpT("mcp.error.schemaRequired"));
+}
+
+function resolveDatabase(connection: DbConnection, database?: string): string {
+  const name = String(database || "").trim() || connectionDatabaseName(connection);
   if (!name) {
     throw new Error(mcpT("mcp.error.databaseRequired"));
   }
@@ -121,7 +145,7 @@ function summarizeQuery(result: SqlQueryResult, maxRows: number) {
 export function registerDbAdminTools(
   server: McpServer,
   store: ConnectionStore,
-  postgres: PostgresService,
+  postgres: DatabaseService,
   config: McpRuntimeConfig,
 ): void {
   const connectionRefShape = {
@@ -218,7 +242,7 @@ export function registerDbAdminTools(
       inputSchema: {
         ...connectionRefShape,
         ...databaseShape,
-        schema: z.string().describe(mcpT("mcp.param.schema")),
+        schema: z.string().optional().describe(mcpT("mcp.param.schema")),
       },
       annotations: readOnlyAnnotations,
     },
@@ -226,10 +250,7 @@ export function registerDbAdminTools(
       try {
         const connection = await resolveConnection(store, input);
         const database = resolveDatabase(connection, input.database);
-        const schema = String(input.schema || "").trim();
-        if (!schema) {
-          throw new Error(mcpT("mcp.error.schemaRequired"));
-        }
+        const schema = resolveSchema(connection, input.schema);
         const tables = await postgres.listTables(connection, database, schema);
         return textResult({
           connection: publicConnection(connection),
@@ -251,7 +272,7 @@ export function registerDbAdminTools(
       inputSchema: {
         ...connectionRefShape,
         ...databaseShape,
-        schema: z.string().describe(mcpT("mcp.param.schema")),
+        schema: z.string().optional().describe(mcpT("mcp.param.schema")),
         table: z.string().describe(mcpT("mcp.param.table")),
       },
       annotations: readOnlyAnnotations,
@@ -260,11 +281,8 @@ export function registerDbAdminTools(
       try {
         const connection = await resolveConnection(store, input);
         const database = resolveDatabase(connection, input.database);
-        const schema = String(input.schema || "").trim();
+        const schema = resolveSchema(connection, input.schema);
         const table = String(input.table || "").trim();
-        if (!schema) {
-          throw new Error(mcpT("mcp.error.schemaRequired"));
-        }
         if (!table) {
           throw new Error(mcpT("mcp.error.tableRequired"));
         }

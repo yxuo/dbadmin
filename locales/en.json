@@ -73,6 +73,8 @@
   "webview.settings.sidebar.title": "Sidebar",
   "webview.settings.sidebar.showFilterLabel": "Show filter label in the tree",
   "webview.settings.sidebar.showFilterLabelDesc": "Shows the filter label item at the top of the treeview when a filter is active.",
+  "webview.settings.sidebar.openSqliteInExplorer": "Open in explorer when opening a file",
+  "webview.settings.sidebar.openSqliteInExplorerDesc": "When opening a SQLite file, focus the DBAdmin connections sidebar.",
   "webview.settings.table.title": "Table",
   "webview.settings.table.persistLayout": "Persist column layout",
   "webview.settings.table.persistLayoutDesc": "When opening a new tab, column layout settings are kept.",
