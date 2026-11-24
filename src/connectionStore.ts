@@ -164,7 +164,7 @@ export class ConnectionStore {
       }
     }
     this.ephemeral.clear();
-    await this.writeFile({ version: 2, connections: sanitized });
+    await this.writeFile({ version: 1, connections: sanitized });
   }
 
   public async deleteConnection(id: string): Promise<void> {
@@ -303,7 +303,7 @@ export class ConnectionStore {
   }
 
   private emptyFile(): ConnectionsFile {
-    return { version: 2, connections: [] };
+    return { version: 1, connections: [] };
   }
 
   private enqueueIo<T>(operation: () => Promise<T>): Promise<T> {
@@ -351,8 +351,8 @@ export class ConnectionStore {
       const connections = parsed.connections.map((item) =>
         this.sanitizeConnection(this.migrateConnection(item)),
       );
-      const data: ConnectionsFile = { version: 2, connections };
-      if (parsed.version !== 2) {
+      const data: ConnectionsFile = { version: 1, connections };
+      if (parsed.version !== 1) {
         await this.writeFileExclusive(data);
       }
       return data;
@@ -383,7 +383,7 @@ export class ConnectionStore {
   private async writeFileExclusive(data: ConnectionsFile): Promise<void> {
     const storagePath = await this.ensureStorageDir();
     const payload = JSON.stringify(
-      { version: 2, connections: data.connections },
+      { version: 1, connections: data.connections },
       null,
       2,
     );

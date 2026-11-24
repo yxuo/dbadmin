@@ -25,7 +25,7 @@ Connect, explore, filter, query, and operate PostgreSQL and SQLite without leavi
 - **Data export**: CSV and JSON from the table view or query results.
 - **SQL Book & SQL runner**: interactive query execution with grid results; optional inline table that can persist in the `.sqlbook` file; run statements from `.sql` files with connection context.
 - **Connection dashboard**: watch traffic, queries, sessions, and transactions for a live connection.
-- **Backup and restore**: native schema dump or integration with `pg_dump` and `pg_restore`.
+- **Backup and restore**: native schema dump or integration with `pg_dump` and `pg_restore`, including PostgreSQL backups created through DBeaver. DBeaver backups can also be converted to DBAdmin-compatible SQL using INSERT statements.
 - **MCP**: AI tools can list connections, inspect schemas, and run SQL using saved DBAdmin credentials.
 
 ### Explorer
@@ -68,6 +68,7 @@ Alternatively via VSIX:
 - VS Code 1.95+
 - Access to a PostgreSQL server and/or local SQLite files
 - `pg_dump` and `pg_restore` for pgAdmin-style backup features (optional; DBAdmin can also dump schemas natively)
+- DBeaver backups that use PostgreSQL native tools require `pg_restore` for Custom, Tar, and Directory formats. SQL exports are routed through the DBAdmin SQL restore path.
 
 ## Development
 
@@ -75,13 +76,6 @@ See [docs/development.md](docs/development.md) for local build, VSIX packaging, 
 
 ## Roadmap
 
-**1.1 — SQLite files.** Open `.sqlite` / `.db` in the same explorer and table editor, with SQL Book, DDL, ER, MCP, and file backup.
-
-**1.0 — PostgreSQL foundation.** Explorer, table editor, ER diagram, connection dashboard, table DDL, SQL Book, backup/restore, and MCP — all inside VS Code.
-
-**Next:**
-
 - **More engines** — MySQL/MariaDB, SQL Server, and others on the same explorer, grid, and query experience.
-- **Standalone Electron app** — the same UI outside VS Code for teams that want a dedicated database client.
+- **Standalone app** — the same UI outside VS Code for teams that want a dedicated database client.
 
-The editor stays the home for the core workflow. New database engines land one at a time on top of the PostgreSQL foundation shipped in 1.0.

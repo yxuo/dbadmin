@@ -1,4 +1,6 @@
 import * as fs from "fs/promises";
+import * as os from "os";
+import * as path from "path";
 import { Client } from "pg";
 import { t } from "./i18n";
 import { PostgresConnection } from "./models";
@@ -8,12 +10,104 @@ import {
   listRoles,
   runDump,
   runRestore,
+  runRestoreCompatible,
+  runRestoreToSql,
+  listRestoreToc,
 } from "./pgAdminService";
+import {
+  applyIgnoredDbeaverDataEntries,
+  classifyDbeaverBackup,
+  DbeaverBackupFormat,
+} from "./dbeaverBackupService";
 
 export { listRoles };
 
+export async function analyzeDbeaverData(
+  schemaName: string,
+  options: DbeaverRestoreOptions,
+  onLine: (line: string) => void,
+  signal?: AbortSignal,
+): Promise<Record<string, number>> {
+  const detected = await classifyDbeaverBackup(options.filename);
+  let filename = options.filename;
+  let temporaryFilename: string | undefined;
+
+  try {
+    if (detected.format !== "plain") {
+      temporaryFilename = path.join(
+        os.tmpdir(),
+        `dbadmin-dbeaver-analysis-${Date.now()}-${Math.random().toString(16).slice(2)}.sql`,
+      );
+      onLine("[DBeaver] Extraindo somente os dados para contar registros...");
+      await runRestoreToSql(
+        schemaName,
+        {
+          filename: options.filename,
+          format: detected.format as "custom" | "tar" | "directory",
+          mode: "pgadmin",
+          jobs: 1,
+          roleName: options.roleName,
+          onlyData: true,
+          onlySchema: false,
+          sections: ["data"],
+          includeCreateDatabase: false,
+          includeIfExists: false,
+          cleanBeforeRestore: false,
+          singleTransaction: false,
+          enableRowSecurity: false,
+          noDataForFailedTables: false,
+          disableTriggers: false,
+          useSetSessionAuthorization: false,
+          exitOnError: false,
+          dropSchema: false,
+          noPrivileges: options.noPrivileges,
+          noOwner: options.noOwner,
+          verbose: false,
+        },
+        temporaryFilename,
+        onLine,
+        signal,
+      );
+      filename = temporaryFilename;
+    }
+
+    const sql = await fs.readFile(filename, "utf8");
+    const counts: Record<string, number> = {};
+    let copyTable: string | undefined;
+    for (const line of sql.split(/\r?\n/)) {
+      if (copyTable) {
+        if (line.trim() === "\\.") {
+          copyTable = undefined;
+        } else {
+          const key = copyTable.toLowerCase();
+          counts[key] = (counts[key] ?? 0) + 1;
+        }
+        continue;
+      }
+      const copyMatch = line.match(
+        /^\s*COPY\s+((?:"[^"]+"|[a-zA-Z_][\w$]*)(?:\.(?:"[^"]+"|[a-zA-Z_][\w$]*))?)\s*(?:\([^)]*\))?\s+FROM\s+stdin\s*;/i,
+      );
+      if (copyMatch) {
+        copyTable = copyMatch[1];
+        continue;
+      }
+      const match = line.match(/^\s*INSERT\s+INTO\s+((?:"[^"]+"|[a-zA-Z_][\w$]*)(?:\.(?:"[^"]+"|[a-zA-Z_][\w$]*))?)/i);
+      if (match) {
+        const tableName = match[1];
+        const key = tableName.toLowerCase();
+        counts[key] = (counts[key] ?? 0) + 1;
+      }
+    }
+    return counts;
+  } finally {
+    if (temporaryFilename) {
+      await fs.rm(temporaryFilename, { force: true });
+    }
+  }
+}
+
 export type BackupProviderMode = "pgadmin" | "dbadmin";
-export type RestoreProviderMode = "pgadmin" | "dbadmin";
+export type RestoreProviderMode = "pgadmin" | "dbadmin" | "dbeaver";
 
 export type BackupOptions =
   | (PgAdminBackupOptions & { mode?: "pgadmin" })
@@ -21,7 +115,8 @@ export type BackupOptions =
 
 export type RestoreOptions =
   | (PgAdminRestoreOptions & { mode?: "pgadmin" })
-  | DbAdminRestoreOptions;
+  | DbAdminRestoreOptions
+  | DbeaverRestoreOptions;
 
 export interface DbAdminBackupOptions {
   mode: "dbadmin";
@@ -41,6 +136,40 @@ export interface DbAdminRestoreOptions {
   cleanBeforeRestore: boolean;
   clearTablesBeforeRestore: boolean;
   verbose: boolean;
+}
+
+export interface DbeaverRestoreOptions {
+  mode: "dbeaver";
+  filename: string;
+  format: "auto" | Exclude<DbeaverBackupFormat, "unknown">;
+  jobs: number;
+  roleName: string;
+  sections: Array<"pre-data" | "data" | "post-data">;
+  onlyData: boolean;
+  onlySchema: boolean;
+  includeIfExists: boolean;
+  cleanBeforeRestore: boolean;
+  singleTransaction: boolean;
+  disableTriggers: boolean;
+  noPrivileges: boolean;
+  noOwner: boolean;
+  exitOnError: boolean;
+  verbose: boolean;
+  ignoredDataIds?: string[];
+}
+
+export interface DbeaverConversionOptions {
+  mode: "dbeaver";
+  filename: string;
+  outputFilename: string;
+  format: "auto" | Exclude<DbeaverBackupFormat, "unknown" | "plain">;
+  sections: Array<"pre-data" | "data" | "post-data">;
+  onlyData: boolean;
+  onlySchema: boolean;
+  includeIfExists: boolean;
+  disableTriggers: boolean;
+  verbose: boolean;
+  ignoredDataIds?: string[];
 }
 
 export async function runBackup(
@@ -94,13 +223,228 @@ export async function runRestoreByMode(
     return;
   }
 
-  await runRestore(
+  if ((options as DbeaverRestoreOptions).mode === "dbeaver") {
+    await runDbeaverRestore(
+      connection,
+      databaseName,
+      schemaName,
+      options as DbeaverRestoreOptions,
+      onLine,
+      signal,
+    );
+    return;
+  }
+
+  await runRestoreCompatible(
     connection,
     databaseName,
     schemaName,
     options as PgAdminRestoreOptions,
     onLine,
+    signal,
   );
+}
+
+export async function convertDbeaverBackupToSql(
+  schemaName: string,
+  options: DbeaverConversionOptions,
+  onLine: (line: string) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const detected = await classifyDbeaverBackup(options.filename);
+  if (
+    detected.format === "unknown" ||
+    detected.format === "plain"
+  ) {
+    throw new Error(
+      detected.format === "plain"
+        ? "O arquivo já é SQL puro; use-o diretamente ou escolha outro arquivo DBeaver."
+        : detected.detail,
+    );
+  }
+  if (options.format !== "auto" && options.format !== detected.format) {
+    throw new Error(
+      `O formato selecionado (${options.format}) não corresponde ao formato detectado (${detected.format}).`,
+    );
+  }
+
+  onLine(`[DBeaver] ${detected.detail}`);
+  onLine("[DBeaver] Gerando SQL com INSERTs compatíveis com o DBAdmin...");
+  let listFilename: string | undefined;
+  try {
+    if (options.ignoredDataIds && options.ignoredDataIds.length > 0) {
+      const toc = await listRestoreToc(options.filename);
+      listFilename = path.join(
+        os.tmpdir(),
+        `dbadmin-dbeaver-convert-${Date.now()}-${Math.random().toString(16).slice(2)}.list`,
+      );
+      await fs.writeFile(
+        listFilename,
+        applyIgnoredDbeaverDataEntries(toc, options.ignoredDataIds),
+        "utf8",
+      );
+      onLine(
+        `[DBeaver] ${options.ignoredDataIds.length} tabela(s) sem dados serão ignoradas na conversão.`,
+      );
+    }
+
+    await runRestoreToSql(
+      schemaName,
+      {
+        filename: options.filename,
+        format: detected.format,
+        jobs: 1,
+        roleName: "",
+        sections: options.sections,
+        onlyData: options.onlyData,
+        onlySchema: options.onlySchema,
+        includeCreateDatabase: false,
+        includeIfExists: options.includeIfExists,
+        cleanBeforeRestore: false,
+        singleTransaction: false,
+        enableRowSecurity: false,
+        noDataForFailedTables: false,
+        disableTriggers: options.disableTriggers,
+        useSetSessionAuthorization: false,
+        exitOnError: true,
+        dropSchema: false,
+        noPrivileges: true,
+        noOwner: true,
+        verbose: options.verbose,
+        listFilename,
+      },
+      options.outputFilename,
+      onLine,
+      signal,
+    );
+  } finally {
+    if (listFilename) {
+      await fs.rm(listFilename, { force: true });
+    }
+  }
+
+  const generated = await fs.readFile(options.outputFilename, "utf8");
+  if (/^\s*COPY\b/im.test(generated)) {
+    throw new Error(
+      "O SQL gerado ainda contém COPY; a conversão não é segura para o executor DBAdmin.",
+    );
+  }
+  const normalized = generated
+    .split(/\r?\n/)
+    .filter(
+      (line) =>
+        !/^\s*SET\s+transaction_timeout\s*=\s*0\s*;\s*$/i.test(line) &&
+        !/^\s*\\/.test(line),
+    )
+    .join("\n");
+  if (/^\s*\\/m.test(normalized)) {
+    throw new Error(
+      "O SQL gerado ainda contém comandos de console do psql.",
+    );
+  }
+  await fs.writeFile(options.outputFilename, normalized, "utf8");
+  onLine(`[DBeaver] SQL DBAdmin gerado em ${options.outputFilename}.`);
+}
+
+async function runDbeaverRestore(
+  connection: PostgresConnection,
+  databaseName: string,
+  schemaName: string,
+  options: DbeaverRestoreOptions,
+  onLine: (line: string) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const detected = await classifyDbeaverBackup(options.filename);
+  if (detected.format === "unknown") {
+    throw new Error(detected.detail);
+  }
+
+  if (options.format !== "auto" && options.format !== detected.format) {
+    throw new Error(
+      `O formato selecionado (${options.format}) não corresponde ao formato detectado (${detected.format}).`,
+    );
+  }
+
+  onLine(`[DBeaver] ${detected.detail}`);
+  if (detected.format === "plain") {
+    await runDbAdminRestore(
+      connection,
+      databaseName,
+      schemaName,
+      {
+        mode: "dbadmin",
+        filename: options.filename,
+        roleName: options.roleName,
+        cleanBeforeRestore: options.cleanBeforeRestore,
+        clearTablesBeforeRestore: false,
+        verbose: options.verbose,
+      },
+      onLine,
+      signal,
+    );
+    return;
+  }
+
+  if (options.cleanBeforeRestore) {
+    onLine(
+      `[DBeaver] Limpando o schema "${schemaName}" antes do pg_restore...`,
+    );
+    await clearSchema(connection, databaseName, schemaName, onLine);
+  }
+
+  let listFilename: string | undefined;
+  try {
+    if (options.ignoredDataIds && options.ignoredDataIds.length > 0) {
+      const toc = await listRestoreToc(options.filename);
+      listFilename = path.join(
+        os.tmpdir(),
+        `dbadmin-dbeaver-${Date.now()}-${Math.random().toString(16).slice(2)}.list`,
+      );
+      await fs.writeFile(
+        listFilename,
+        applyIgnoredDbeaverDataEntries(toc, options.ignoredDataIds),
+        "utf8",
+      );
+      onLine(
+        `[DBeaver] ${options.ignoredDataIds.length} tabela(s) sem dados serão ignoradas.`,
+      );
+    }
+
+    await runRestoreCompatible(
+      connection,
+      databaseName,
+      schemaName,
+      {
+        filename: options.filename,
+        format: detected.format,
+        jobs: options.jobs,
+        roleName: options.roleName,
+        onlyData: options.onlyData,
+        onlySchema: options.onlySchema,
+        sections: options.sections,
+        includeCreateDatabase: false,
+        includeIfExists: options.includeIfExists,
+        cleanBeforeRestore: false,
+        singleTransaction: options.singleTransaction,
+        enableRowSecurity: false,
+        noDataForFailedTables: false,
+        disableTriggers: options.disableTriggers,
+        useSetSessionAuthorization: false,
+        exitOnError: options.exitOnError,
+        dropSchema: false,
+        noPrivileges: options.noPrivileges,
+        noOwner: options.noOwner,
+        verbose: options.verbose,
+        listFilename,
+      },
+      onLine,
+      signal,
+    );
+  } finally {
+    if (listFilename) {
+      await fs.rm(listFilename, { force: true });
+    }
+  }
 }
 
 export async function clearSchema(

@@ -987,7 +987,8 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "lint": "echo \"No lint configured\"",
-    "test": "echo \"No tests configured\"",
+    "test": "npm run compile && node --test tests/*.test.js",
+    "test:converter": "npm run compile && node --test tests/dbeaverBackupService.test.js",
     "mcp": "node ./out/mcp/server.js"
   },
   "bin": {

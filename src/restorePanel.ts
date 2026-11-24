@@ -5,18 +5,29 @@ import { SchemaNodeRef } from "./models";
 import { requirePostgresConnection } from "./connectionIdentity";
 import {
   RestoreOptions,
+  DbeaverConversionOptions,
+  convertDbeaverBackupToSql,
   runRestoreByMode,
   truncateInsertTablesFromScript,
   clearSchema,
 } from "./backupRestoreService";
+import {
+  classifyDbeaverBackup,
+  parseDbeaverDataEntries,
+} from "./dbeaverBackupService";
+import { listRestoreToc } from "./pgAdminService";
 
 type RestoreWebviewMessage =
   | { type: "ready" }
   | { type: "execute"; options: RestoreOptions }
   | { type: "browse" }
+  | { type: "browseConvertOutput" }
+  | { type: "classify"; filename: string }
+  | { type: "loadDbeaverToc"; filename: string }
+  | { type: "convert"; options: DbeaverConversionOptions }
   | { type: "clearTables"; filename: string }
   | { type: "clearSchema" }
-  | { type: "rememberFilename"; provider: "dbadmin" | "pgadmin"; path: string }
+  | { type: "rememberFilename"; provider: "dbadmin" | "pgadmin" | "dbeaver"; path: string }
   | { type: "abort" }
   | { type: "cancel" };
 
@@ -55,6 +66,7 @@ export class RestorePanelManager {
     const lastFilenames = this.context.workspaceState.get<{
       dbadmin?: string;
       pgadmin?: string;
+      dbeaver?: string;
     }>(RESTORE_LAST_FILENAMES_KEY, {});
 
     const disposition = panel.webview.onDidReceiveMessage(
@@ -64,6 +76,7 @@ export class RestorePanelManager {
             type: "restoreLastFilenames",
             dbadmin: lastFilenames.dbadmin ?? "",
             pgadmin: lastFilenames.pgadmin ?? "",
+            dbeaver: lastFilenames.dbeaver ?? "",
           });
           return;
         }
@@ -73,15 +86,19 @@ export class RestorePanelManager {
           const currentPath =
             message.provider === "dbadmin"
               ? lastFilenames.dbadmin
-              : lastFilenames.pgadmin;
+              : message.provider === "pgadmin"
+                ? lastFilenames.pgadmin
+                : lastFilenames.dbeaver;
           if (currentPath === nextPath) {
             return;
           }
 
           if (message.provider === "dbadmin") {
             lastFilenames.dbadmin = nextPath;
-          } else {
+          } else if (message.provider === "pgadmin") {
             lastFilenames.pgadmin = nextPath;
+          } else {
+            lastFilenames.dbeaver = nextPath;
           }
 
           await this.context.workspaceState.update(
@@ -94,6 +111,8 @@ export class RestorePanelManager {
         if (message.type === "browse") {
           const uris = await vscode.window.showOpenDialog({
             title: t("Select backup file"),
+            canSelectFiles: true,
+            canSelectFolders: true,
             canSelectMany: false,
             filters: {
               [t("PostgreSQL backup")]: ["backup", "dump", "tar", "sql"],
@@ -105,6 +124,86 @@ export class RestorePanelManager {
               type: "browseResult",
               path: uris[0].fsPath,
             });
+          }
+          return;
+        }
+
+        if (message.type === "browseConvertOutput") {
+          const uri = await vscode.window.showSaveDialog({
+            title: t("Save SQL file"),
+            filters: { SQL: ["sql"], [t("All files")]: ["*"] },
+          });
+          if (uri) {
+            panel.webview.postMessage({
+              type: "convertOutputBrowseResult",
+              path: uri.fsPath,
+            });
+          }
+          return;
+        }
+
+        if (message.type === "classify") {
+          try {
+            const classification = await classifyDbeaverBackup(message.filename);
+            panel.webview.postMessage({
+              type: "dbeaverClassification",
+              format: classification.format,
+              detail: classification.detail,
+            });
+          } catch (error) {
+            panel.webview.postMessage({
+              type: "dbeaverClassification",
+              format: "unknown",
+              detail: error instanceof Error ? error.message : String(error),
+            });
+          }
+          return;
+        }
+
+        if (message.type === "loadDbeaverToc") {
+          try {
+            const toc = await listRestoreToc(message.filename);
+            panel.webview.postMessage({
+              type: "dbeaverToc",
+              entries: parseDbeaverDataEntries(toc),
+            });
+          } catch (error) {
+            panel.webview.postMessage({
+              type: "dbeaverTocError",
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+          return;
+        }
+
+        if (message.type === "convert") {
+          if (running) {
+            return;
+          }
+          running = true;
+          abortController = new AbortController();
+          panel.webview.postMessage({ type: "started" });
+          try {
+            await convertDbeaverBackupToSql(
+              node.schemaName,
+              message.options,
+              (line) => panel.webview.postMessage({ type: "line", text: line }),
+              abortController.signal,
+            );
+            panel.webview.postMessage({
+              type: "done",
+              success: true,
+              label: t("DBeaver SQL generated successfully."),
+            });
+          } catch (error) {
+            panel.webview.postMessage({
+              type: "done",
+              success: false,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          } finally {
+            running = false;
+            abortController = undefined;
           }
           return;
         }
@@ -337,6 +436,8 @@ function buildRestoreHtml(
     }
     .provider-pane { display: none; }
     .provider-pane.active { display: block; }
+    .dbeaver-subpane { display: none; }
+    .dbeaver-subpane.active { display: block; }
     .tab-pane { display: none; }
     .tab-pane.active { display: block; }
     .field { margin-bottom: 12px; }
@@ -354,11 +455,68 @@ function buildRestoreHtml(
       overflow: hidden;
       background-clip: padding-box;
     }
+    .dbeaver-table-tools input[type=text] {
+      width: 100%;
+      margin: 8px 0;
+      height: 28px;
+      padding: 4px 8px;
+      background: var(--vscode-input-background);
+      color: var(--vscode-input-foreground);
+      border: 1px solid var(--vscode-input-border, transparent);
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: inherit;
+      background-clip: padding-box;
+    }
+    .dbeaver-table-tools input[type=text]::placeholder {
+      color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground));
+      opacity: 1;
+    }
+    .dbeaver-table-tools { display: flex; gap: 8px; align-items: center; }
+    .dbeaver-table-tools input[type=text] { flex: 1; }
+    .dbeaver-table-tools select {
+      width: auto;
+      min-width: 110px;
+      height: 28px;
+      padding: 4px 8px;
+      background: var(--vscode-input-background);
+      color: var(--vscode-input-foreground);
+      border: 1px solid var(--vscode-input-border, transparent);
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: inherit;
+      background-clip: padding-box;
+    }
+    .dbeaver-select-all {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin: 0;
+      cursor: pointer;
+    }
     .field.row { display: flex; gap: 8px; align-items: flex-end; }
     .field.row > :first-child { flex: 1; }
     .check-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
     .check-row label { margin: 0; }
     .section-title { font-weight: 600; margin: 14px 0 6px; color: var(--vscode-descriptionForeground); text-transform: uppercase; font-size: 11px; }
+    .dbeaver-card {
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 5px;
+      padding: 10px;
+      margin: 12px 0;
+    }
+    .dbeaver-data-tables {
+      max-height: 220px;
+      overflow-y: auto;
+      border: 1px solid var(--vscode-input-border, transparent);
+      padding: 6px;
+    }
+    .dbeaver-data-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 4px 0;
+    }
     .footer {
       padding: 10px 16px;
       border-top: 1px solid var(--vscode-panel-border);
@@ -423,6 +581,7 @@ function buildRestoreHtml(
     <div class="provider-tabs" role="tablist">
       <button type="button" class="tab provider-tab active" data-provider="dbadmin" role="tab" aria-selected="true">DbAdmin</button>
       <button type="button" class="tab provider-tab" data-provider="pgadmin" role="tab" aria-selected="false">PgAdmin</button>
+      <button type="button" class="tab provider-tab" data-provider="dbeaver" role="tab" aria-selected="false">DBeaver</button>
     </div>
   </div>
 
@@ -534,6 +693,115 @@ function buildRestoreHtml(
       <div class="status">${L('webview.restore.clearTablesNote', 'Detecta tabelas com INSERT no SQL e executa TRUNCATE ... CASCADE nelas.')}</div>
     </div>
 
+    <div class="provider-pane" id="provider-dbeaver">
+      <div class="provider-tabs dbeaver-subtabs" role="tablist">
+        <button type="button" class="tab dbeaver-subtab active" data-dbeaver-tab="general" role="tab" aria-selected="true">${L('webview.restore.dbeaverGeneralTab', 'Geral')}</button>
+        <button type="button" class="tab dbeaver-subtab" data-dbeaver-tab="conversion" role="tab" aria-selected="false">${L('webview.restore.dbeaverConversionTab', 'Conversão')}</button>
+      </div>
+      <div class="dbeaver-subpane active" id="dbeaver-subpane-general">
+      <div class="field row">
+        <div>
+          <label for="dbeaverFilename">${L('webview.restore.backupFile', 'Arquivo de backup')}</label>
+          <input id="dbeaverFilename" type="text" placeholder="${L('webview.restore.backupPlaceholder', 'Caminho do arquivo de backup...')}" />
+        </div>
+        <button id="dbeaverBrowseBtn" class="secondary" style="white-space:nowrap;flex-shrink:0;">${L('webview.common.browse', 'Procurar')}</button>
+      </div>
+      <div class="field">
+        <label for="dbeaverFormat">${L('webview.restore.dbeaverFormat', 'Formato')}</label>
+        <select id="dbeaverFormat">
+          <option value="auto" selected>${L('webview.restore.dbeaverAuto', 'Automático')}</option>
+          <option value="custom">Custom</option>
+          <option value="tar">Tar</option>
+          <option value="directory">Directory</option>
+          <option value="plain">SQL puro</option>
+        </select>
+      </div>
+      <div id="dbeaverDetected" class="status">${L('webview.restore.dbeaverDetectionNote', 'O formato será detectado ao iniciar a restauração.')}</div>
+      <div class="dbeaver-card">
+        <div class="section-title">${L('webview.restore.dbeaverDataTitle', 'Dados das tabelas')}</div>
+        <div class="status">${L('webview.restore.dbeaverDataNote', 'Desmarque tabelas para restaurar a estrutura sem os dados.')}</div>
+        <button id="dbeaverLoadTocBtn" class="secondary" type="button">${L('webview.restore.dbeaverLoadToc', 'Carregar tabelas do dump')}</button>
+        <div class="dbeaver-table-tools">
+          <label class="dbeaver-select-all">
+            <input id="dbeaverSelectAll" type="checkbox" checked />
+            <span>${L('webview.restore.dbeaverSelectAll', 'Tudo')}</span>
+          </label>
+          <input id="dbeaverTableSearch" type="text" placeholder="${L('webview.restore.dbeaverTableSearch', 'Pesquisar tabela...')}" />
+          <select id="dbeaverTableSort" aria-label="${L('webview.restore.dbeaverTableSort', 'Ordenar tabelas')}">
+            <option value="name">${L('webview.restore.dbeaverSortName', 'Nome')}</option>
+            <option value="toc">${L('webview.restore.dbeaverSortToc', 'TOC')}</option>
+          </select>
+        </div>
+        <div id="dbeaverDataTables" class="dbeaver-data-tables"></div>
+      </div>
+      <div class="field">
+        <label for="dbeaverJobs">${L('webview.restore.jobs', 'Número de jobs paralelos')}</label>
+        <input id="dbeaverJobs" type="number" value="1" min="1" max="64" style="width:100px;" />
+      </div>
+      <div class="field">
+        <label for="dbeaverRoleName">${L('webview.backup.role', 'Role (opcional)')}</label>
+        <input id="dbeaverRoleName" type="text" placeholder="${L('webview.restore.rolePlaceholder', 'Nome da role')}" />
+      </div>
+      <div class="section-title">${L('webview.backup.sections', 'Seções')}</div>
+      <div class="check-row"><input type="checkbox" id="dbeaverSecPreData" checked /><label for="dbeaverSecPreData">Pre-data</label></div>
+      <div class="check-row"><input type="checkbox" id="dbeaverSecData" checked /><label for="dbeaverSecData">Data</label></div>
+      <div class="check-row"><input type="checkbox" id="dbeaverSecPostData" checked /><label for="dbeaverSecPostData">Post-data</label></div>
+      <div class="section-title">${L('webview.backup.objectType', 'Tipo de objeto')}</div>
+      <div class="check-row"><input type="checkbox" id="dbeaverOnlyData" /><label for="dbeaverOnlyData">${L('webview.backup.onlyData', 'Somente dados')}</label></div>
+      <div class="check-row"><input type="checkbox" id="dbeaverOnlySchema" /><label for="dbeaverOnlySchema">${L('webview.backup.onlySchema', 'Somente schema')}</label></div>
+      <div class="section-title">${L('webview.common.options', 'Opções')}</div>
+      <div class="check-row"><input type="checkbox" id="dbeaverClean" /><label for="dbeaverClean">${L('webview.restore.cleanBefore', 'Limpar antes de restaurar')}</label></div>
+      <div class="check-row"><input type="checkbox" id="dbeaverIfExists" /><label for="dbeaverIfExists">${L('webview.restore.includeIfExists', 'Incluir IF EXISTS')}</label></div>
+      <div class="check-row"><input type="checkbox" id="dbeaverDisableTriggers" /><label for="dbeaverDisableTriggers">${L('webview.restore.triggers', 'Triggers')}</label></div>
+      <div class="check-row"><input type="checkbox" id="dbeaverNoPrivileges" /><label for="dbeaverNoPrivileges">${L('webview.restore.noPrivileges', 'Sem privilégios (no acl)')}</label></div>
+      <div class="check-row"><input type="checkbox" id="dbeaverNoOwner" /><label for="dbeaverNoOwner">${L('webview.restore.noOwner', 'Sem owner')}</label></div>
+      <div class="check-row"><input type="checkbox" id="dbeaverExitOnError" /><label for="dbeaverExitOnError">${L('webview.restore.exitOnError', 'Abortar em caso de erro')}</label></div>
+      <div class="check-row"><input type="checkbox" id="dbeaverVerbose" /><label for="dbeaverVerbose">${L('webview.backup.verbose', 'Verbose')}</label></div>
+      </div>
+      <div class="dbeaver-subpane" id="dbeaver-subpane-conversion">
+      <div class="field row">
+        <div>
+          <label for="dbeaverFilenameConversion">${L('webview.restore.backupFile', 'Arquivo de entrada')}</label>
+          <input id="dbeaverFilenameConversion" type="text" placeholder="${L('webview.restore.backupPlaceholder', 'Caminho do arquivo de backup...')}" />
+        </div>
+      </div>
+      <div class="field row">
+        <div>
+          <label for="dbeaverOutputFilename">${L('webview.restore.dbeaverOutputFile', 'SQL DBAdmin de saída')}</label>
+          <input id="dbeaverOutputFilename" type="text" placeholder="${L('webview.restore.dbeaverOutputPlaceholder', 'Caminho do arquivo .sql...')}" />
+        </div>
+        <button id="dbeaverOutputBrowseBtn" class="secondary" style="white-space:nowrap;flex-shrink:0;">${L('webview.common.saveAs', 'Salvar como')}</button>
+      </div>
+      <div class="dbeaver-card">
+        <div class="section-title">${L('webview.restore.dbeaverDataTitle', 'Dados das tabelas')}</div>
+        <div class="status">${L('webview.restore.dbeaverConversionDataNote', 'Desmarque as tabelas cujos dados não devem ser convertidos.')}</div>
+        <button id="dbeaverConversionLoadTocBtn" class="secondary" type="button">${L('webview.restore.dbeaverLoadToc', 'Carregar tabelas do dump')}</button>
+        <div class="dbeaver-table-tools">
+          <label class="dbeaver-select-all">
+            <input id="dbeaverConversionSelectAll" type="checkbox" checked />
+            <span>${L('webview.restore.dbeaverSelectAll', 'Tudo')}</span>
+          </label>
+          <input id="dbeaverConversionTableSearch" type="text" placeholder="${L('webview.restore.dbeaverTableSearch', 'Pesquisar tabela...')}" />
+          <select id="dbeaverConversionTableSort" aria-label="${L('webview.restore.dbeaverTableSort', 'Ordenar tabelas')}">
+            <option value="name">${L('webview.restore.dbeaverSortName', 'Nome')}</option>
+            <option value="toc">${L('webview.restore.dbeaverSortToc', 'TOC')}</option>
+          </select>
+        </div>
+        <div id="dbeaverConversionDataTables" class="dbeaver-data-tables"></div>
+      </div>
+      <div class="dbeaver-card">
+        <div class="section-title">${L('webview.restore.dbeaverConvertTitle', 'Conversão')}</div>
+        <div class="status">${L('webview.restore.dbeaverConvertNote', 'Gera um SQL normalizado para a aba DBAdmin.')}</div>
+        <div class="status">${L('webview.restore.dbeaverConvertTabNote', 'Converta o dump para SQL sem executar o restore nesta tela.')}</div>
+        <div class="section-title">${L('webview.backup.sections', 'Seções')}</div>
+        <div class="check-row"><input type="checkbox" id="dbeaverConversionSecPreData" checked /><label for="dbeaverConversionSecPreData">Pre-data</label></div>
+        <div class="check-row"><input type="checkbox" id="dbeaverConversionSecData" checked /><label for="dbeaverConversionSecData">Data</label></div>
+        <div class="check-row"><input type="checkbox" id="dbeaverConversionSecPostData" checked /><label for="dbeaverConversionSecPostData">Post-data</label></div>
+      </div>
+      <button id="dbeaverConvertBtn" class="secondary" type="button">${L('webview.restore.dbeaverConvert', 'Converter para SQL DBAdmin')}</button>
+      </div>
+    </div>
+
     <div id="outputBox" class="output"></div>
   </div>
 
@@ -546,11 +814,83 @@ function buildRestoreHtml(
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     let activeProvider = 'dbadmin';
+    let activeDbeaverTab = 'general';
     let isRunning = false;
+    let dbeaverDataEntries = [];
+    const dbeaverIgnoredDataIds = new Set();
     const dbFilenameEl = document.getElementById('dbFilename');
     const pgFilenameEl = document.getElementById('filename');
+    const dbeaverFilenameEl = document.getElementById('dbeaverFilename');
+    const dbeaverFilenameConversionEl = document.getElementById('dbeaverFilenameConversion');
+    const dbeaverOutputFilenameEl = document.getElementById('dbeaverOutputFilename');
     const clearTablesBtn = document.getElementById('clearTablesBtn');
     const clearSchemaBtn = document.getElementById('clearSchemaBtn');
+
+    function defaultDbeaverOutputFilename(inputFilename) {
+      const input = String(inputFilename || '').trim();
+      if (!input) return '';
+      const separatorIndex = Math.max(input.lastIndexOf('/'), input.lastIndexOf('\\\\'));
+      const directory = separatorIndex >= 0 ? input.slice(0, separatorIndex + 1) : '';
+      const basename = input.slice(separatorIndex + 1);
+      const dotIndex = basename.lastIndexOf('.');
+      const stem = dotIndex > 0 ? basename.slice(0, dotIndex) : basename;
+      return directory + stem + '-dbadmin.sql';
+    }
+    let automaticDbeaverOutputFilename = '';
+    function updateDbeaverOutputFilename(inputFilename) {
+      const next = defaultDbeaverOutputFilename(inputFilename);
+      if (!dbeaverOutputFilenameEl.value || dbeaverOutputFilenameEl.value === automaticDbeaverOutputFilename) {
+        dbeaverOutputFilenameEl.value = next;
+      }
+      automaticDbeaverOutputFilename = next;
+    }
+
+    function renderDbeaverDataEntries(rootId, searchId, sortId, selectAllId) {
+      const root = document.getElementById(rootId);
+      const query = String(document.getElementById(searchId).value || '').toLowerCase();
+      const sort = document.getElementById(sortId).value;
+      const visibleEntries = dbeaverDataEntries
+        .filter((entry) => String(entry.tableName).toLowerCase().includes(query))
+        .sort((left, right) => {
+          if (sort === 'toc') {
+            return (Number(right.operationCount) || 0) - (Number(left.operationCount) || 0);
+          }
+          return String(left.tableName).localeCompare(String(right.tableName));
+        });
+      const selectAll = document.getElementById(selectAllId);
+      const selectedCount = visibleEntries.filter(
+        (entry) => !dbeaverIgnoredDataIds.has(String(entry.id)),
+      ).length;
+      selectAll.checked = visibleEntries.length === 0 || selectedCount === visibleEntries.length;
+      selectAll.indeterminate = selectedCount > 0 && selectedCount < visibleEntries.length;
+      root.textContent = '';
+      visibleEntries
+        .forEach((entry) => {
+          const row = document.createElement('label');
+          row.className = 'dbeaver-data-row';
+          const checkbox = document.createElement('input');
+          checkbox.type = 'checkbox';
+          checkbox.checked = !dbeaverIgnoredDataIds.has(String(entry.id));
+          checkbox.addEventListener('change', () => {
+            if (checkbox.checked) {
+              dbeaverIgnoredDataIds.delete(String(entry.id));
+            } else {
+              dbeaverIgnoredDataIds.add(String(entry.id));
+            }
+            renderDbeaverDataEntries(rootId, searchId, sortId, selectAllId);
+          });
+          const text = document.createElement('span');
+          text.textContent = String(entry.tableName) + ' — ' +
+            String(entry.operationCount || 1) + ' TOC';
+          row.appendChild(checkbox);
+          row.appendChild(text);
+          root.appendChild(row);
+        });
+    }
+    function renderAllDbeaverDataEntries() {
+      renderDbeaverDataEntries('dbeaverDataTables', 'dbeaverTableSearch', 'dbeaverTableSort', 'dbeaverSelectAll');
+      renderDbeaverDataEntries('dbeaverConversionDataTables', 'dbeaverConversionTableSearch', 'dbeaverConversionTableSort', 'dbeaverConversionSelectAll');
+    }
 
     const rememberFilename = (provider, path) => {
       vscode.postMessage({
@@ -562,6 +902,18 @@ function buildRestoreHtml(
 
     dbFilenameEl.addEventListener('change', () => rememberFilename('dbadmin', dbFilenameEl.value));
     pgFilenameEl.addEventListener('change', () => rememberFilename('pgadmin', pgFilenameEl.value));
+    dbeaverFilenameEl.addEventListener('change', () => rememberFilename('dbeaver', dbeaverFilenameEl.value));
+    dbeaverFilenameConversionEl.addEventListener('input', () => {
+      dbeaverFilenameEl.value = dbeaverFilenameConversionEl.value;
+      updateDbeaverOutputFilename(dbeaverFilenameConversionEl.value);
+    });
+    dbeaverFilenameEl.addEventListener('input', () => {
+      dbeaverFilenameConversionEl.value = dbeaverFilenameEl.value;
+      updateDbeaverOutputFilename(dbeaverFilenameEl.value);
+    });
+    dbeaverFilenameEl.addEventListener('change', () => {
+      vscode.postMessage({ type: 'classify', filename: dbeaverFilenameEl.value });
+    });
 
     function setActiveProvider(provider) {
       if (!provider) {
@@ -576,7 +928,28 @@ function buildRestoreHtml(
       document.querySelectorAll('.provider-pane').forEach((p) => {
         p.classList.toggle('active', p.id === 'provider-' + provider);
       });
+      updateDbeaverActions();
     }
+
+    function updateDbeaverActions() {
+      const isDbeaverConversion = activeProvider === 'dbeaver' && activeDbeaverTab === 'conversion';
+      document.getElementById('executeBtn').style.display = isDbeaverConversion ? 'none' : '';
+    }
+
+    document.querySelectorAll('.dbeaver-subtab').forEach((tab) => {
+      tab.addEventListener('click', () => {
+        activeDbeaverTab = tab.dataset.dbeaverTab || 'general';
+        document.querySelectorAll('.dbeaver-subtab').forEach((item) => {
+          const selected = item === tab;
+          item.classList.toggle('active', selected);
+          item.setAttribute('aria-selected', selected ? 'true' : 'false');
+        });
+        document.querySelectorAll('.dbeaver-subpane').forEach((pane) => {
+          pane.classList.toggle('active', pane.id === 'dbeaver-subpane-' + activeDbeaverTab);
+        });
+        updateDbeaverActions();
+      });
+    });
 
     const restoreHeader = document.getElementById('restore-header');
     if (restoreHeader) {
@@ -627,9 +1000,84 @@ function buildRestoreHtml(
       vscode.postMessage({ type: 'browse' });
     });
 
-    document.getElementById('cancelBtn').addEventListener('click', () => {
+    document.getElementById('dbeaverBrowseBtn').addEventListener('click', () => {
+      vscode.postMessage({ type: 'browse' });
+    });
+
+    document.getElementById('dbeaverLoadTocBtn').addEventListener('click', () => {
+      if (!dbeaverFilenameEl.value.trim()) {
+        document.getElementById('statusMsg').textContent = t('webview.restore.needBackupFile', 'Informe o arquivo de backup.');
+        document.getElementById('statusMsg').className = 'status error';
+        return;
+      }
+      vscode.postMessage({ type: 'loadDbeaverToc', filename: dbeaverFilenameEl.value });
+    });
+    document.getElementById('dbeaverConversionLoadTocBtn').addEventListener('click', () => {
+      if (!dbeaverFilenameConversionEl.value.trim()) {
+        document.getElementById('statusMsg').textContent = t('webview.restore.needBackupFile', 'Informe o arquivo de backup.');
+        document.getElementById('statusMsg').className = 'status error';
+        return;
+      }
+      vscode.postMessage({ type: 'loadDbeaverToc', filename: dbeaverFilenameConversionEl.value });
+    });
+    document.getElementById('dbeaverTableSearch').addEventListener('input', renderAllDbeaverDataEntries);
+    document.getElementById('dbeaverTableSort').addEventListener('change', renderAllDbeaverDataEntries);
+    document.getElementById('dbeaverConversionTableSearch').addEventListener('input', renderAllDbeaverDataEntries);
+    document.getElementById('dbeaverConversionTableSort').addEventListener('change', renderAllDbeaverDataEntries);
+    function updateDbeaverSelection(event, searchId) {
+      const checked = event.target.checked;
+      const query = String(document.getElementById(searchId).value || '').toLowerCase();
+      if (checked) {
+        dbeaverDataEntries
+          .filter((entry) => String(entry.tableName).toLowerCase().includes(query))
+          .forEach((entry) => dbeaverIgnoredDataIds.delete(String(entry.id)));
+      } else {
+        dbeaverDataEntries
+          .filter((entry) => String(entry.tableName).toLowerCase().includes(query))
+          .forEach((entry) => dbeaverIgnoredDataIds.add(String(entry.id)));
+      }
+      renderAllDbeaverDataEntries();
+    }
+    document.getElementById('dbeaverSelectAll').addEventListener('change', (event) => updateDbeaverSelection(event, 'dbeaverTableSearch'));
+    document.getElementById('dbeaverConversionSelectAll').addEventListener('change', (event) => updateDbeaverSelection(event, 'dbeaverConversionTableSearch'));
+
+    document.getElementById('dbeaverOutputBrowseBtn').addEventListener('click', () => {
+      vscode.postMessage({ type: 'browseConvertOutput' });
+    });
+
+    document.getElementById('dbeaverConvertBtn').addEventListener('click', () => {
+      const sections = [];
+      if (document.getElementById('dbeaverConversionSecPreData').checked) sections.push('pre-data');
+      if (document.getElementById('dbeaverConversionSecData').checked) sections.push('data');
+      if (document.getElementById('dbeaverConversionSecPostData').checked) sections.push('post-data');
+      const options = {
+        mode: 'dbeaver',
+        format: document.getElementById('dbeaverFormat').value,
+        filename: dbeaverFilenameEl.value,
+        outputFilename: dbeaverOutputFilenameEl.value,
+        sections,
+        onlyData: document.getElementById('dbeaverOnlyData').checked,
+        onlySchema: document.getElementById('dbeaverOnlySchema').checked,
+        includeIfExists: document.getElementById('dbeaverIfExists').checked,
+        disableTriggers: document.getElementById('dbeaverDisableTriggers').checked,
+        verbose: document.getElementById('dbeaverVerbose').checked,
+        ignoredDataIds: Array.from(dbeaverIgnoredDataIds),
+      };
+      if (!options.filename.trim() || !options.outputFilename.trim()) {
+        document.getElementById('statusMsg').textContent = t('webview.restore.dbeaverNeedOutput', 'Informe o backup e o arquivo SQL de saída.');
+        document.getElementById('statusMsg').className = 'status error';
+        return;
+      }
+      vscode.postMessage({ type: 'convert', options });
+    });
+
+    document.getElementById('cancelBtn').addEventListener('click', (event) => {
       if (isRunning) {
+        event.preventDefault();
         vscode.postMessage({ type: 'abort' });
+        document.getElementById('statusMsg').textContent =
+          t('webview.restore.abortRequested', 'Abortando restauração...');
+        document.getElementById('statusMsg').className = 'status';
       } else {
         vscode.postMessage({ type: 'cancel' });
       }
@@ -668,6 +1116,40 @@ function buildRestoreHtml(
           return;
         }
 
+        vscode.postMessage({ type: 'execute', options });
+        return;
+      }
+
+      if (activeProvider === 'dbeaver') {
+        const sections = [];
+        if (document.getElementById('dbeaverSecPreData').checked) sections.push('pre-data');
+        if (document.getElementById('dbeaverSecData').checked) sections.push('data');
+        if (document.getElementById('dbeaverSecPostData').checked) sections.push('post-data');
+        const options = {
+          mode: 'dbeaver',
+          format: document.getElementById('dbeaverFormat').value,
+          filename: dbeaverFilenameEl.value,
+          jobs: parseInt(document.getElementById('dbeaverJobs').value, 10) || 1,
+          roleName: document.getElementById('dbeaverRoleName').value,
+          sections,
+          onlyData: document.getElementById('dbeaverOnlyData').checked,
+          onlySchema: document.getElementById('dbeaverOnlySchema').checked,
+          includeIfExists: document.getElementById('dbeaverIfExists').checked,
+          cleanBeforeRestore: document.getElementById('dbeaverClean').checked,
+          singleTransaction: false,
+          disableTriggers: document.getElementById('dbeaverDisableTriggers').checked,
+          noPrivileges: document.getElementById('dbeaverNoPrivileges').checked,
+          noOwner: document.getElementById('dbeaverNoOwner').checked,
+          exitOnError: document.getElementById('dbeaverExitOnError').checked,
+          verbose: document.getElementById('dbeaverVerbose').checked,
+          ignoredDataIds: Array.from(dbeaverIgnoredDataIds),
+        };
+        rememberFilename('dbeaver', options.filename);
+        if (!options.filename.trim()) {
+          document.getElementById('statusMsg').textContent = t('webview.restore.needBackupFile', 'Informe o arquivo de backup.');
+          document.getElementById('statusMsg').className = 'status error';
+          return;
+        }
         vscode.postMessage({ type: 'execute', options });
         return;
       }
@@ -719,9 +1201,15 @@ function buildRestoreHtml(
         if (activeProvider === 'dbadmin') {
           dbFilenameEl.value = msg.path;
           rememberFilename('dbadmin', msg.path);
-        } else {
+        } else if (activeProvider === 'pgadmin') {
           pgFilenameEl.value = msg.path;
           rememberFilename('pgadmin', msg.path);
+        } else {
+          dbeaverFilenameEl.value = msg.path;
+          dbeaverFilenameConversionEl.value = msg.path;
+          updateDbeaverOutputFilename(msg.path);
+          rememberFilename('dbeaver', msg.path);
+          vscode.postMessage({ type: 'classify', filename: msg.path });
         }
         return;
       }
@@ -733,6 +1221,39 @@ function buildRestoreHtml(
         if (!pgFilenameEl.value && msg.pgadmin) {
           pgFilenameEl.value = msg.pgadmin;
         }
+        if (!dbeaverFilenameEl.value && msg.dbeaver) {
+          dbeaverFilenameEl.value = msg.dbeaver;
+          dbeaverFilenameConversionEl.value = msg.dbeaver;
+          updateDbeaverOutputFilename(msg.dbeaver);
+          vscode.postMessage({ type: 'classify', filename: msg.dbeaver });
+        }
+        return;
+      }
+
+      if (msg.type === 'dbeaverClassification') {
+        document.getElementById('dbeaverDetected').textContent =
+          msg.format + ': ' + msg.detail;
+        return;
+      }
+
+      if (msg.type === 'dbeaverToc') {
+        dbeaverDataEntries = Array.isArray(msg.entries) ? msg.entries : [];
+        dbeaverIgnoredDataIds.clear();
+        renderAllDbeaverDataEntries();
+        document.getElementById('statusMsg').textContent =
+          dbeaverDataEntries.length + ' tabela(s) encontradas.';
+        document.getElementById('statusMsg').className = 'status';
+        return;
+      }
+
+      if (msg.type === 'dbeaverTocError') {
+        document.getElementById('statusMsg').textContent = msg.error || t('webview.common.unknownFailure', 'Falha desconhecida.');
+        document.getElementById('statusMsg').className = 'status error';
+        return;
+      }
+
+      if (msg.type === 'convertOutputBrowseResult') {
+        dbeaverOutputFilenameEl.value = msg.path;
         return;
       }
 

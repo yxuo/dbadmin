@@ -1,13 +1,22 @@
 # Changelog
 
-## [1.1.0] - 2026-09-02
+## [1.1.0] - 2026-11-24
 
 ### Added
 
-- SQLite support (sql.js / WASM): open `.sqlite` / `.db` files, explore tables/views/triggers, edit rows, run SQL Book, DDL, ER diagram, MCP, file backup and SQL dump
+- SQLite support using sql.js/WASM: open `.sqlite`, `.sqlite3`, `.db`, and `.db3` files; browse tables, views, and triggers; edit rows; and use SQL Book, DDL, ER diagrams, exports, MCP, and SQL dumps
+- Native VS Code custom editor for SQLite files and an **Open SQLite database file** command
+- Option to add an opened SQLite file to the DBAdmin explorer and switch to the explorer automatically
 - Connection form engine selector (PostgreSQL or SQLite)
-- Custom editor and `dbadmin.openDatabaseFile` API for FileAdmin-style open-from-file
+- SQLite-specific file backup and SQL dump actions in the explorer
+- SQLite labels and messages in the bundled locales
 - Marketplace keywords for Postgres and SQLite discovery
+
+### Changed
+
+- Marketplace description and README now present DBAdmin as a PostgreSQL and SQLite manager
+- The minimum supported VS Code version is now 1.95
+- Existing explorer, table, SQL Book, metadata, export, diagram, and MCP flows now operate through the database engine abstraction
 
 ## [1.0.1] - 2026-08-20
 
