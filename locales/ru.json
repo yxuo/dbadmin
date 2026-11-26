@@ -73,6 +73,8 @@
   "webview.settings.sidebar.title": "Боковая панель",
   "webview.settings.sidebar.showFilterLabel": "Показывать метку фильтра в дереве",
   "webview.settings.sidebar.showFilterLabelDesc": "Показывает элемент метки фильтра в верхней части treeview, когда фильтр активен.",
+  "webview.settings.sidebar.openSqliteInExplorer": "Открывать в обозревателе при открытии файла",
+  "webview.settings.sidebar.openSqliteInExplorerDesc": "При открытии файла SQLite фокусировать боковую панель подключений DBAdmin.",
   "webview.settings.table.title": "Таблица",
   "webview.settings.table.persistLayout": "Сохранять расположение столбцов",
   "webview.settings.table.persistLayoutDesc": "При открытии новой вкладки настройки расположения столбцов сохраняются.",

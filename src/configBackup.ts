@@ -3,7 +3,7 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import { ConnectionStore } from "./connectionStore";
 import { t } from "./i18n";
-import { ConnectionsFile, PostgresConnection } from "./models";
+import { ConnectionsFile, DbConnection } from "./models";
 import {
   getSqlBookIntegratedTableEnabled,
   setSqlBookIntegratedTableEnabled,
@@ -140,13 +140,13 @@ function parseBackup(raw: unknown): DbAdminConfigBackup {
   const settings = isRecord(raw.settings) ? raw.settings : {};
   const connectionsRaw = isRecord(raw.connections) ? raw.connections : {};
   if (
-    connectionsRaw.version !== 1 ||
+    (connectionsRaw.version !== 1 && connectionsRaw.version !== 2) ||
     !Array.isArray(connectionsRaw.connections)
   ) {
     throw new Error("Invalid DBAdmin settings file.");
   }
 
-  const connections = (connectionsRaw.connections as PostgresConnection[]).map(
+  const connections = (connectionsRaw.connections as DbConnection[]).map(
     (item) => {
       if (!item || typeof item !== "object") {
         throw new Error("Invalid DBAdmin settings file.");

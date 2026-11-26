@@ -7,6 +7,7 @@ local_dev/**
 .github/**
 .git/**
 .gitignore
+.reasonix/**
 .cursor/**
 agent-transcripts/**
 *.vsix
@@ -52,3 +53,11 @@ node_modules/@vscode/codicons/dist/metadata.json
 node_modules/@vscode/codicons/preview.png
 node_modules/@vscode/codicons/.fantasticonrc.js
 node_modules/@vscode/codicons/svgo.config.js
+
+# SQLite uses only the Node WASM loader; the WASM binary is copied to resources.
+node_modules/sql.js/dist/*.zip
+node_modules/sql.js/dist/sql-asm*
+node_modules/sql.js/dist/worker.sql-*
+node_modules/sql.js/dist/*-debug*
+node_modules/sql.js/dist/*-browser*
+node_modules/sql.js/dist/sql-wasm.wasm

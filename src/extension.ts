@@ -10,12 +10,26 @@ import {
   DatabaseNodeRef,
   DbObjectNodeRef,
   ObjectGroupNodeRef,
-  PostgresConnection,
+  DbConnection,
+  isPostgresConnection,
+  isSqliteConnection,
   SchemaNodeRef,
   TableSectionItemNodeRef,
   TreeNodeRef,
 } from "./models";
 import { PostgresService } from "./postgresService";
+import { DatabaseService } from "./engines/databaseService";
+import { SqliteEngine } from "./engines/sqliteEngine";
+import {
+  connectionDatabaseName,
+  connectionLabel,
+  requirePostgresConnection,
+  sqlRunnerContextFromConnection,
+} from "./connectionIdentity";
+import { initDbAdminOutput } from "./output";
+import { createDbAdminApi, openDatabaseFile } from "./fileAdmin";
+import { SqliteCustomEditorProvider } from "./sqliteEditor";
+import { EphemeralConnectionLifecycle } from "./ephemeralConnectionLifecycle";
 import { TableDataPanelManager } from "./tableDataPanel";
 import { buildExportContent } from "./tableDataPanel/exportService";
 import { SettingsPanelManager } from "./settingsPanel";
@@ -24,7 +38,7 @@ import { BackupPanelManager } from "./backupPanel";
 import { ConnectionActivityLog } from "./connectionActivityLog";
 import { ConnectionManagerPanelManager } from "./connectionManagerPanel";
 import { RestorePanelManager } from "./restorePanel";
-import { buildTableDdlScript, clearSchema } from "./backupRestoreService";
+import { clearSchema } from "./backupRestoreService";
 import { TableMetadataPanelManager } from "./tableMetadataPanel";
 import { SqlBookSerializer, SqlBookController } from "./sqlBookNotebook";
 import { ensureSqlbookFileIconAssociations } from "./fileIconAssociations";
@@ -56,6 +70,7 @@ interface SqlRunnerContext {
   connectionName?: string;
   connectionHost?: string;
   connectionPort?: number;
+  connectionFilePath?: string;
   databaseName?: string;
   schemaName?: string;
 }
@@ -71,10 +86,32 @@ interface SqlSchemaRelation {
   type: "table" | "view";
 }
 
-export function activate(context: vscode.ExtensionContext): void {
+let ephemeralDocs: EphemeralConnectionLifecycle | undefined;
+
+export async function activate(context: vscode.ExtensionContext) {
+  initDbAdminOutput(context);
   const store = new ConnectionStore(context.globalStorageUri.fsPath);
+  await store.ensureInitialized();
   const postgresService = new PostgresService();
-  const tablePanels = new TableDataPanelManager(context, postgresService);
+  const sqliteEngine = new SqliteEngine(context.extensionPath);
+  const databaseService = new DatabaseService(postgresService, sqliteEngine);
+  const treeProvider = new DatabaseTreeProvider(
+    store,
+    databaseService,
+    context.extensionPath,
+  );
+  const ephemeralLifecycle = new EphemeralConnectionLifecycle(
+    store,
+    treeProvider,
+    (filePath) => sqliteEngine.closeFile(filePath),
+  );
+  context.subscriptions.push(ephemeralLifecycle);
+  ephemeralDocs = ephemeralLifecycle;
+  const tablePanels = new TableDataPanelManager(
+    context,
+    databaseService,
+    ephemeralLifecycle,
+  );
   const sqlDiagnostics = new SqlDiagnostics(context);
   context.subscriptions.push(sqlDiagnostics);
   const settingsPanel = new SettingsPanelManager(context, () =>
@@ -101,12 +138,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const activityLog = new ConnectionActivityLog();
   const mcpRegistration = setupDbAdminMcp(context);
   context.subscriptions.push(mcpRegistration);
-  postgresService.setActivityLog(activityLog);
-  const treeProvider = new DatabaseTreeProvider(
-    store,
-    postgresService,
-    context.extensionPath,
-  );
+  databaseService.setActivityLog(activityLog);
   const sqlBookRunPerQueryLenses = createSqlBookRunPerQueryCodeLensProvider();
 
   const toggleSqlBookIntegratedTable = async (): Promise<void> => {
@@ -172,7 +204,8 @@ export function activate(context: vscode.ExtensionContext): void {
   });
   const metadataPanels = new TableMetadataPanelManager(
     context,
-    postgresService,
+    databaseService,
+    ephemeralLifecycle,
   );
   const expandedTreeItems = new Set<string>();
 
@@ -186,6 +219,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const treeItemKey = (item: TreeNodeRef): string => {
     switch (item.type) {
+      case 'connectionGroup':
+        return `connectionGroup:${item.kind}`;
       case 'connection':
         return `connection:${item.connection.id}`;
       case 'database':
@@ -485,7 +520,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.languages.registerCompletionItemProvider(
       { language: "sql" },
-      createSqlRunnerCompletionItemProvider(store, postgresService),
+      createSqlRunnerCompletionItemProvider(store, databaseService),
       ".",
       " ",
       ",",
@@ -646,7 +681,7 @@ export function activate(context: vscode.ExtensionContext): void {
           const ran = await executeSqlFromEditorDocument(
             activeEditor.document,
             store,
-            postgresService,
+            databaseService,
             tablePanels,
             sqlDiagnostics,
           );
@@ -677,7 +712,7 @@ export function activate(context: vscode.ExtensionContext): void {
           const ran = await executeSqlFromEditorDocument(
             document,
             store,
-            postgresService,
+            databaseService,
             tablePanels,
             sqlDiagnostics,
             {
@@ -717,7 +752,7 @@ export function activate(context: vscode.ExtensionContext): void {
           const picked = await vscode.window.showQuickPick(
             allConnections.map((connection) => ({
               label: connection.nickname,
-              description: `${connection.user}@${connection.host}:${connection.port}/${connection.database}`,
+              description: connectionLabel(connection),
               connection,
             })),
             { placeHolder: t("Select connection") },
@@ -727,7 +762,7 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
           }
 
-          const databases = await postgresService.listDatabases(
+          const databases = await databaseService.listDatabases(
             picked.connection,
           );
           if (databases.length === 0) {
@@ -745,7 +780,7 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
           }
 
-          const schemas = await postgresService.listSchemas(
+          const schemas = await databaseService.listSchemas(
             picked.connection,
             pickedDatabase,
           );
@@ -774,8 +809,15 @@ export function activate(context: vscode.ExtensionContext): void {
           await rewriteSqlRunnerHeader(document, {
             ...parsed.context,
             connectionId: picked.connection.id,
-            connectionHost: picked.connection.host,
-            connectionPort: picked.connection.port,
+            connectionHost: isPostgresConnection(picked.connection)
+              ? picked.connection.host
+              : undefined,
+            connectionPort: isPostgresConnection(picked.connection)
+              ? picked.connection.port
+              : undefined,
+            connectionFilePath: isSqliteConnection(picked.connection)
+              ? picked.connection.filePath
+              : undefined,
             databaseName: pickedDatabase,
             schemaName: pickedSchema.schemaName,
           });
@@ -821,7 +863,7 @@ export function activate(context: vscode.ExtensionContext): void {
       try {
         const payload = await showConnectionForm(
           context,
-          postgresService,
+          databaseService,
           "create",
         );
         if (!payload) {
@@ -840,7 +882,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand(
       "dbadmin.editConnection",
-      async (node?: { connection?: PostgresConnection }) => {
+      async (node?: { connection?: DbConnection }) => {
         try {
           const target = await resolveConnectionFromNodeOrPicker(
             store,
@@ -849,10 +891,13 @@ export function activate(context: vscode.ExtensionContext): void {
           if (!target) {
             return;
           }
+          if (isSqliteConnection(target) && target.ephemeral) {
+            return;
+          }
 
           const payload = await showConnectionForm(
             context,
-            postgresService,
+            databaseService,
             "edit",
             target,
           );
@@ -879,7 +924,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand(
       "dbadmin.openConnectionManager",
-      async (node?: ConnectionNodeRef | { connection?: PostgresConnection }) => {
+      async (node?: ConnectionNodeRef | { connection?: DbConnection }) => {
         try {
           const connection =
             node && "type" in node && node.type === "connection"
@@ -888,6 +933,13 @@ export function activate(context: vscode.ExtensionContext): void {
                 ? node.connection
                 : await resolveConnectionFromNodeOrPicker(store);
           if (!connection) {
+            return;
+          }
+          if (!isPostgresConnection(connection)) {
+            const stats = await databaseService.getSqliteDashboard(connection);
+            void vscode.window.showInformationMessage(
+              `${stats.version} — ${stats.filePath} (${stats.fileSizeBytes} bytes, ${stats.tableCount} tables)`,
+            );
             return;
           }
           connectionManagerPanels.show(connection);
@@ -901,7 +953,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand(
       "dbadmin.deleteConnection",
-      async (node?: { connection?: PostgresConnection }) => {
+      async (node?: { connection?: DbConnection }) => {
         try {
           const target = await resolveConnectionFromNodeOrPicker(
             store,
@@ -1075,7 +1127,7 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
           }
 
-          await postgresService.truncateTable(
+          await databaseService.truncateTable(
             node.connection,
             node.databaseName,
             node.schemaName,
@@ -1102,7 +1154,7 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
           }
 
-          await showTableDdlForNode(node);
+          await showTableDdlForNode(node, databaseService);
         } catch (error) {
           showError(error);
         }
@@ -1119,18 +1171,18 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
           }
 
-          const initialSql = buildCreateTableTemplate(node.schemaName);
+          const initialSql = isSqliteConnection(node.connection)
+            ? `CREATE TABLE "new_table" (\n  id INTEGER PRIMARY KEY AUTOINCREMENT\n);`
+            : buildCreateTableTemplate(node.schemaName);
           await openSqlRunnerEditor(
             t("Create table in {0}", node.schemaName),
             initialSql,
             t("Edit the table SQL and run with Ctrl+Enter or CodeLens."),
             {
-              connectionId: node.connection.id,
-              connectionName: node.connection.nickname,
-              connectionHost: node.connection.host,
-              connectionPort: node.connection.port,
-              databaseName: node.databaseName,
-              schemaName: node.schemaName,
+              ...sqlRunnerContextFromConnection(node.connection, {
+                databaseName: node.databaseName,
+                schemaName: node.schemaName,
+              }),
             },
           );
         } catch (error) {
@@ -1160,7 +1212,7 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
           }
 
-          await postgresService.dropTable(
+          await databaseService.dropTable(
             node.connection,
             node.databaseName,
             node.schemaName,
@@ -1230,7 +1282,7 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
           }
 
-          await postgresService.createDatabase(connection, name.trim());
+          await databaseService.createDatabase(connection, name.trim());
           await treeProvider.reloadAllMetadata();
           vscode.window.showInformationMessage(
             t('Database "{0}" created successfully.', name.trim()),
@@ -1266,7 +1318,7 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
           }
 
-          await postgresService.createSchema(
+          await databaseService.createSchema(
             node.connection,
             node.databaseName,
             schemaName.trim(),
@@ -1303,7 +1355,7 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
           }
 
-          await postgresService.renameDatabase(
+          await databaseService.renameDatabase(
             node.connection,
             node.databaseName,
             newName.trim(),
@@ -1329,7 +1381,7 @@ export function activate(context: vscode.ExtensionContext): void {
           }
 
           const existingNames = new Set(
-            await postgresService.listDatabases(node.connection),
+            await databaseService.listDatabases(node.connection),
           );
           const suggestedName = `${node.databaseName}_copy`;
 
@@ -1356,7 +1408,7 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
           }
 
-          await postgresService.duplicateDatabase(
+          await databaseService.duplicateDatabase(
             node.connection,
             node.databaseName,
             newName.trim(),
@@ -1392,7 +1444,7 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
           }
 
-          await postgresService.dropDatabase(
+          await databaseService.dropDatabase(
             node.connection,
             node.databaseName,
           );
@@ -1459,7 +1511,7 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
           }
 
-          await postgresService.dropSchema(
+          await databaseService.dropSchema(
             node.connection,
             node.databaseName,
             node.schemaName,
@@ -1496,7 +1548,7 @@ export function activate(context: vscode.ExtensionContext): void {
           }
 
           await clearSchema(
-            node.connection,
+            requirePostgresConnection(node.connection),
             node.databaseName,
             node.schemaName,
             () => {},
@@ -1531,12 +1583,10 @@ export function activate(context: vscode.ExtensionContext): void {
             initialSql,
             t("Edit the function SQL and run with Ctrl+Enter or CodeLens."),
             {
-              connectionId: node.connection.id,
-              connectionName: node.connection.nickname,
-              connectionHost: node.connection.host,
-              connectionPort: node.connection.port,
-              databaseName: node.databaseName,
-              schemaName: node.schemaName,
+              ...sqlRunnerContextFromConnection(node.connection, {
+                databaseName: node.databaseName,
+                schemaName: node.schemaName,
+              }),
             },
           );
         } catch (error) {
@@ -1555,7 +1605,7 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
           }
 
-          const definition = await postgresService.getFunctionDefinition(
+          const definition = await databaseService.getFunctionDefinition(
             node.connection,
             node.databaseName,
             node.schemaName,
@@ -1567,12 +1617,10 @@ export function activate(context: vscode.ExtensionContext): void {
             ensureSqlEndsWithSemicolon(definition),
             t("Edit the definition and run with Ctrl+Enter or CodeLens."),
             {
-              connectionId: node.connection.id,
-              connectionName: node.connection.nickname,
-              connectionHost: node.connection.host,
-              connectionPort: node.connection.port,
-              databaseName: node.databaseName,
-              schemaName: node.schemaName,
+              ...sqlRunnerContextFromConnection(node.connection, {
+                databaseName: node.databaseName,
+                schemaName: node.schemaName,
+              }),
             },
           );
         } catch (error) {
@@ -1602,7 +1650,7 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
           }
 
-          await postgresService.dropFunction(
+          await databaseService.dropFunction(
             node.connection,
             node.databaseName,
             node.schemaName,
@@ -1638,12 +1686,10 @@ export function activate(context: vscode.ExtensionContext): void {
             initialSql,
             t("Edit the procedure SQL and run with Ctrl+Enter or CodeLens."),
             {
-              connectionId: node.connection.id,
-              connectionName: node.connection.nickname,
-              connectionHost: node.connection.host,
-              connectionPort: node.connection.port,
-              databaseName: node.databaseName,
-              schemaName: node.schemaName,
+              ...sqlRunnerContextFromConnection(node.connection, {
+                databaseName: node.databaseName,
+                schemaName: node.schemaName,
+              }),
             },
           );
         } catch (error) {
@@ -1662,7 +1708,7 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
           }
 
-          const definition = await postgresService.getProcedureDefinition(
+          const definition = await databaseService.getProcedureDefinition(
             node.connection,
             node.databaseName,
             node.schemaName,
@@ -1674,12 +1720,10 @@ export function activate(context: vscode.ExtensionContext): void {
             ensureSqlEndsWithSemicolon(definition),
             t("Edit the definition and run with Ctrl+Enter or CodeLens."),
             {
-              connectionId: node.connection.id,
-              connectionName: node.connection.nickname,
-              connectionHost: node.connection.host,
-              connectionPort: node.connection.port,
-              databaseName: node.databaseName,
-              schemaName: node.schemaName,
+              ...sqlRunnerContextFromConnection(node.connection, {
+                databaseName: node.databaseName,
+                schemaName: node.schemaName,
+              }),
             },
           );
         } catch (error) {
@@ -1709,7 +1753,7 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
           }
 
-          await postgresService.dropProcedure(
+          await databaseService.dropProcedure(
             node.connection,
             node.databaseName,
             node.schemaName,
@@ -1741,12 +1785,10 @@ export function activate(context: vscode.ExtensionContext): void {
             initialSql,
             t("Edit the trigger SQL and run with Ctrl+Enter or CodeLens."),
             {
-              connectionId: node.connection.id,
-              connectionName: node.connection.nickname,
-              connectionHost: node.connection.host,
-              connectionPort: node.connection.port,
-              databaseName: node.databaseName,
-              schemaName: node.schemaName,
+              ...sqlRunnerContextFromConnection(node.connection, {
+                databaseName: node.databaseName,
+                schemaName: node.schemaName,
+              }),
             },
           );
         } catch (error) {
@@ -1765,7 +1807,7 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
           }
 
-          const trigger = await postgresService.getTriggerDefinition(
+          const trigger = await databaseService.getTriggerDefinition(
             node.connection,
             node.databaseName,
             node.schemaName,
@@ -1782,12 +1824,10 @@ export function activate(context: vscode.ExtensionContext): void {
             initialSql,
             t("Edit the trigger SQL and run with Ctrl+Enter or CodeLens."),
             {
-              connectionId: node.connection.id,
-              connectionName: node.connection.nickname,
-              connectionHost: node.connection.host,
-              connectionPort: node.connection.port,
-              databaseName: node.databaseName,
-              schemaName: node.schemaName,
+              ...sqlRunnerContextFromConnection(node.connection, {
+                databaseName: node.databaseName,
+                schemaName: node.schemaName,
+              }),
             },
           );
         } catch (error) {
@@ -1817,7 +1857,7 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
           }
 
-          await postgresService.dropTrigger(
+          await databaseService.dropTrigger(
             node.connection,
             node.databaseName,
             node.schemaName,
@@ -1921,7 +1961,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const sqlBookController = new SqlBookController(
     store,
-    postgresService,
+    databaseService,
     async (payload) => {
       if (
         getSqlBookIntegratedTableEnabled() &&
@@ -1939,7 +1979,7 @@ export function activate(context: vscode.ExtensionContext): void {
         source: "sqlBook",
         title: `SQL Book: ${payload.connection.nickname}`,
         onRefresh: async () => {
-          return postgresService.querySql(
+          return databaseService.querySql(
             payload.connection,
             payload.databaseName,
             payload.sql,
@@ -2021,6 +2061,110 @@ export function activate(context: vscode.ExtensionContext): void {
   if (legacyState !== undefined) {
     void context.workspaceState.update("integratedTableMode", undefined);
   }
+
+  const openFile = async (
+    uri: vscode.Uri,
+    options?: { persistConnection?: boolean },
+  ): Promise<void> => {
+    await openDatabaseFile(uri, {
+      store,
+      treeProvider,
+      tablePanels,
+      persistConnection: options?.persistConnection,
+    });
+  };
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "dbadmin.openDatabaseFile",
+      async (uri?: vscode.Uri) => {
+        try {
+          const target =
+            uri ??
+            (
+              await vscode.window.showOpenDialog({
+                canSelectFiles: true,
+                canSelectMany: false,
+                filters: { SQLite: ["sqlite", "sqlite3", "db", "db3"] },
+              })
+            )?.[0];
+          if (!target) {
+            return;
+          }
+          await vscode.commands.executeCommand(
+            "vscode.openWith",
+            target,
+            "dbadmin.sqliteEditor",
+          );
+        } catch (error) {
+          showError(error);
+        }
+      },
+    ),
+    vscode.window.registerCustomEditorProvider(
+      "dbadmin.sqliteEditor",
+      new SqliteCustomEditorProvider(
+        context,
+        store,
+        databaseService,
+        treeProvider,
+        tablePanels,
+        ephemeralLifecycle,
+      ),
+      {
+        webviewOptions: { retainContextWhenHidden: true },
+        supportsMultipleEditorsPerDocument: false,
+      },
+    ),
+    vscode.commands.registerCommand(
+      "dbadmin.backupSqlite",
+      async (node?: ConnectionNodeRef) => {
+        try {
+          const connection = node?.connection;
+          if (!connection || !isSqliteConnection(connection)) {
+            return;
+          }
+          const dest = await vscode.window.showSaveDialog({
+            defaultUri: vscode.Uri.file(`${connection.filePath}.bak`),
+          });
+          if (!dest) {
+            return;
+          }
+          await vscode.workspace.fs.copy(
+            vscode.Uri.file(connection.filePath),
+            dest,
+            { overwrite: true },
+          );
+          vscode.window.showInformationMessage(t("Backup created successfully."));
+        } catch (error) {
+          showError(error);
+        }
+      },
+    ),
+    vscode.commands.registerCommand(
+      "dbadmin.dumpSqlite",
+      async (node?: ConnectionNodeRef) => {
+        try {
+          const connection = node?.connection;
+          if (!connection || !isSqliteConnection(connection)) {
+            return;
+          }
+          const dump = await databaseService.dumpSqlite(connection, true);
+          const document = await vscode.workspace.openTextDocument({
+            language: "sql",
+            content: dump,
+          });
+          await vscode.window.showTextDocument(document, { preview: false });
+          ephemeralDocs?.bindDocument(document, connection.id);
+        } catch (error) {
+          showError(error);
+        }
+      },
+    ),
+  );
+
+  treeProvider.initializeMetadataCache();
+  return createDbAdminApi({ openDatabaseFile: openFile });
 }
 
 export function deactivate(): void {}
@@ -2055,8 +2199,8 @@ async function exportSqlBookIntegratedTable(message: {
 
 async function resolveConnectionFromNodeOrPicker(
   store: ConnectionStore,
-  selectedFromTree?: PostgresConnection,
-): Promise<PostgresConnection | undefined> {
+  selectedFromTree?: DbConnection,
+): Promise<DbConnection | undefined> {
   if (selectedFromTree) {
     return selectedFromTree;
   }
@@ -2070,7 +2214,7 @@ async function resolveConnectionFromNodeOrPicker(
   const selected = await vscode.window.showQuickPick(
     all.map((connection) => ({
       label: connection.nickname,
-      description: `${connection.user}@${connection.host}:${connection.port}/${connection.database}`,
+      description: connectionLabel(connection),
       connection,
     })),
     {
@@ -2085,8 +2229,11 @@ function showError(error: unknown): void {
   vscode.window.showErrorMessage(formatErrorForUi(error));
 }
 
-async function showTableDdlForNode(node: DbObjectNodeRef): Promise<void> {
-  const ddl = await buildTableDdlScript(
+async function showTableDdlForNode(
+  node: DbObjectNodeRef,
+  databaseService: DatabaseService,
+): Promise<void> {
+  const ddl = await databaseService.buildTableDdl(
     node.connection,
     node.databaseName,
     node.schemaName,
@@ -2098,12 +2245,10 @@ async function showTableDdlForNode(node: DbObjectNodeRef): Promise<void> {
     ddl,
     t("Review or copy the DDL. Run with Ctrl+Enter to execute changes."),
     {
-      connectionId: node.connection.id,
-      connectionName: node.connection.nickname,
-      connectionHost: node.connection.host,
-      connectionPort: node.connection.port,
+    ...sqlRunnerContextFromConnection(node.connection, {
       databaseName: node.databaseName,
       schemaName: node.schemaName,
+    }),
     },
   );
 }
@@ -2125,6 +2270,9 @@ async function openSqlRunnerEditor(
     preserveFocus: false,
     viewColumn: vscode.ViewColumn.Active,
   });
+  if (runnerContext.connectionId) {
+    ephemeralDocs?.bindDocument(document, runnerContext.connectionId);
+  }
 
   void vscode.window.setStatusBarMessage(`${title}. ${guidanceMessage}`, 4500);
 }
@@ -2266,7 +2414,7 @@ function createSqlRunnerCodeLensProvider(
 
 function createSqlRunnerCompletionItemProvider(
   store: ConnectionStore,
-  postgresService: PostgresService,
+  databaseService: DatabaseService,
 ): vscode.CompletionItemProvider {
   const cacheTtlMs = 15_000;
   const cache = new Map<string, { expiresAt: number; value: unknown }>();
@@ -2287,15 +2435,15 @@ function createSqlRunnerCompletionItemProvider(
   };
 
   const loadSchemas = async (
-    connection: PostgresConnection,
+    connection: DbConnection,
     databaseName: string,
   ): Promise<string[]> =>
     getCached(`schemas:${connection.id}:${databaseName}`, () =>
-      postgresService.listSchemas(connection, databaseName),
+      databaseService.listSchemas(connection, databaseName),
     );
 
   const loadRelations = async (
-    connection: PostgresConnection,
+    connection: DbConnection,
     databaseName: string,
     schemaName: string,
   ): Promise<SqlSchemaRelation[]> =>
@@ -2303,8 +2451,8 @@ function createSqlRunnerCompletionItemProvider(
       `relations:${connection.id}:${databaseName}:${schemaName}`,
       async () => {
         const [tables, views] = await Promise.all([
-          postgresService.listTables(connection, databaseName, schemaName),
-          postgresService.listViews(connection, databaseName, schemaName),
+          databaseService.listTables(connection, databaseName, schemaName),
+          databaseService.listViews(connection, databaseName, schemaName),
         ]);
 
         return [
@@ -2315,7 +2463,7 @@ function createSqlRunnerCompletionItemProvider(
     );
 
   const loadColumns = async (
-    connection: PostgresConnection,
+    connection: DbConnection,
     databaseName: string,
     schemaName: string,
     tableName: string,
@@ -2323,7 +2471,7 @@ function createSqlRunnerCompletionItemProvider(
     getCached(
       `columns:${connection.id}:${databaseName}:${schemaName}:${tableName}`,
       () =>
-        postgresService.listTableColumnsDetailed(
+        databaseService.listTableColumnsDetailed(
           connection,
           databaseName,
           schemaName,
@@ -2750,7 +2898,7 @@ async function resolveSqlRunnerDocument(
 async function executeSqlFromEditorDocument(
   document: vscode.TextDocument,
   store: ConnectionStore,
-  postgresService: PostgresService,
+  databaseService: DatabaseService,
   tablePanels: TableDataPanelManager,
   sqlDiagnostics: SqlDiagnostics,
   options?: { sql?: string; documentOffset?: number },
@@ -2781,17 +2929,18 @@ async function executeSqlFromEditorDocument(
   }
 
   const databaseName =
-    parsed.context.databaseName?.trim() || connection.database;
+    parsed.context.databaseName?.trim() || connectionDatabaseName(connection);
   const schemaName = parsed.context.schemaName?.trim();
-  const schemaPrefix = schemaName
-    ? `SET search_path TO ${quoteIdentifier(schemaName)}, public;\n`
-    : "";
+  const schemaPrefix =
+    schemaName && isPostgresConnection(connection)
+      ? `SET search_path TO ${quoteIdentifier(schemaName)}, public;\n`
+      : "";
 
   const executableSql = `${schemaPrefix}${sql}`;
   sqlDiagnostics.clear(document.uri);
   let result;
   try {
-    result = await postgresService.querySql(
+    result = await databaseService.querySql(
       connection,
       databaseName,
       executableSql,
@@ -2818,7 +2967,7 @@ async function executeSqlFromEditorDocument(
     source: "sqlRunner",
     title: t("SQL result: {0}", connection.nickname),
     onRefresh: async () => {
-      return postgresService.querySql(
+      return databaseService.querySql(
         connection,
         databaseName,
         executableSql,
@@ -2830,9 +2979,9 @@ async function executeSqlFromEditorDocument(
 }
 
 function resolveConnectionFromHeaderContext(
-  allConnections: PostgresConnection[],
+  allConnections: DbConnection[],
   context: SqlRunnerContext,
-): PostgresConnection | undefined {
+): DbConnection | undefined {
   const byId = String(context.connectionId || "").trim();
   if (byId) {
     const foundById = allConnections.find(

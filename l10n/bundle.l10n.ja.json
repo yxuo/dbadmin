@@ -188,5 +188,14 @@
   "Import replaces DBAdmin settings, connections, and table layouts. Continue?": "インポートすると DBAdmin の設定、接続、テーブルレイアウトが置き換えられます。続行しますか？",
   "Settings exported successfully.": "設定をエクスポートしました。",
   "Settings imported successfully.": "設定をインポートしました。",
-  "Invalid DBAdmin settings file.": "無効な DBAdmin 設定ファイルです。"
+  "Invalid DBAdmin settings file.": "無効な DBAdmin 設定ファイルです。",
+  "Temporary connections": "一時接続",
+  "Temporary connection": "一時接続",
+  "Save connection": "接続を保存",
+  "This SQLite database is open in DBAdmin. Use the explorer or pick a table below.": "この SQLite データベースは DBAdmin で開いています。エクスプローラーを使うか、下のテーブルを選んでください。",
+  "Empty SQLite database.": "空の SQLite データベースです。",
+  "Open in explorer when opening a file": "ファイルを開いたときにエクスプローラーを開く",
+  "SQLite connection was not created.": "SQLite 接続が作成されませんでした。",
+  "This file type is not a supported SQLite database.": "このファイル形式はサポートされている SQLite データベースではありません。",
+  "Loading...": "読み込み中..."
 }

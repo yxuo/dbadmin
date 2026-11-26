@@ -73,6 +73,8 @@
   "webview.settings.sidebar.title": "サイドバー",
   "webview.settings.sidebar.showFilterLabel": "ツリーにフィルターラベルを表示",
   "webview.settings.sidebar.showFilterLabelDesc": "フィルターが有効なとき、ツリービュー上部にフィルターラベル項目を表示します。",
+  "webview.settings.sidebar.openSqliteInExplorer": "ファイルを開いたときにエクスプローラーを開く",
+  "webview.settings.sidebar.openSqliteInExplorerDesc": "SQLite ファイルを開いたとき、DBAdmin の接続サイドバーにフォーカスします。",
   "webview.settings.table.title": "テーブル",
   "webview.settings.table.persistLayout": "列レイアウトを保持",
   "webview.settings.table.persistLayoutDesc": "新しいタブを開くとき、列レイアウト設定が保持されます。",

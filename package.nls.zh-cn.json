@@ -5,6 +5,7 @@
   "dbadmin.config.persistColumnLayout": "即使未自动恢复标签页，也保留列的隐藏/顺序/宽度设置。",
   "dbadmin.config.pgAdminBinPath": "pgAdmin 二进制目录路径（pg_dump、pg_restore）。留空则自动检测。",
   "dbadmin.config.showFilterLabel": "当筛选器处于活动状态时，在 DBAdmin 顶部显示表筛选标签。",
+  "dbadmin.config.openSqliteInExplorer": "打开 SQLite 文件时，切换到 DBAdmin 连接资源管理器。",
   "dbadmin.config.defaultPageSize": "表视图中每页默认显示的项目数。",
   "dbadmin.config.managerPollIntervalSeconds": "管理连接面板的自动刷新间隔（秒）。最小 1 秒，最大 60 秒。",
   "dbadmin.config.managerTimeWindowMinutes": "管理连接图表的时间窗口（分钟）。0 = 无限制（序列持续增长，不丢弃数据点）。",
@@ -74,8 +75,8 @@
   "dbadmin.command.executeSqlBookStatement": "运行 SQL Book 查询",
   "dbadmin.command.executeSqlRunnerStatement": "运行 SQL 查询",
   "dbadmin.command.openLastSqlBookResult": "打开上次 SQL Book 结果",
-  "dbadmin.notebook.sqlbook": "DBAdmin SQL Book",
-  "dbadmin.notebookRenderer.sqlbookTable": "DBAdmin SQL Book Table",
+  "dbadmin.notebook.sqlbook": "SQL Book",
+  "dbadmin.notebookRenderer.sqlbookTable": "SQL Book table",
   "dbadmin.mcpProvider.label": "DBAdmin",
   "dbadmin.command.exportConfig": "导出设置",
   "dbadmin.command.importConfig": "导入设置"

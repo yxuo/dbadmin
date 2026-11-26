@@ -5,6 +5,7 @@
   "dbadmin.config.persistColumnLayout": "Сохранять скрытие, порядок и ширину столбцов, даже если вкладки не восстанавливаются автоматически.",
   "dbadmin.config.pgAdminBinPath": "Путь к каталогу бинарных файлов pgAdmin (pg_dump, pg_restore). Оставьте пустым для автоматического определения.",
   "dbadmin.config.showFilterLabel": "Показывать метку фильтра таблиц в верхней части DBAdmin, когда фильтр активен.",
+  "dbadmin.config.openSqliteInExplorer": "При открытии файла SQLite переключаться на обозреватель подключений DBAdmin.",
   "dbadmin.config.defaultPageSize": "Количество элементов на странице по умолчанию в представлении таблицы.",
   "dbadmin.config.managerPollIntervalSeconds": "Интервал автообновления (в секундах) панели «Управление подключением». Мин. 1 с, макс. 60 с.",
   "dbadmin.config.managerTimeWindowMinutes": "Временной интервал для диаграмм «Управление подключением», в минутах. 0 = без ограничений (серия растёт без удаления точек).",
@@ -74,8 +75,8 @@
   "dbadmin.command.executeSqlBookStatement": "Выполнить запрос SQL Book",
   "dbadmin.command.executeSqlRunnerStatement": "Выполнить SQL-запрос",
   "dbadmin.command.openLastSqlBookResult": "Открыть последний результат SQL Book",
-  "dbadmin.notebook.sqlbook": "DBAdmin SQL Book",
-  "dbadmin.notebookRenderer.sqlbookTable": "DBAdmin SQL Book Table",
+  "dbadmin.notebook.sqlbook": "SQL Book",
+  "dbadmin.notebookRenderer.sqlbookTable": "SQL Book table",
   "dbadmin.mcpProvider.label": "DBAdmin",
   "dbadmin.command.exportConfig": "Экспортировать настройки",
   "dbadmin.command.importConfig": "Импортировать настройки"

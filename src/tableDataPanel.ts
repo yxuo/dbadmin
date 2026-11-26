@@ -2,13 +2,15 @@ import * as fs from "fs";
 import * as vscode from "vscode";
 import { getBcp47Locale, t } from "./i18n";
 import { loadLocaleDict, webviewI18nBootstrap } from "./i18n/webviewLocale";
-import { DbObjectNodeRef, PostgresConnection } from "./models";
+import { DbObjectNodeRef, DbConnection } from "./models";
 import {
   DiagramDataResult,
-  PostgresService,
   SqlQueryResult,
   TableColumnMeta,
 } from "./postgresService";
+import { DatabaseService } from "./engines/databaseService";
+import { EphemeralConnectionLifecycle } from "./ephemeralConnectionLifecycle";
+import { connectionLabel } from "./connectionIdentity";
 import { ConnectionStore } from "./connectionStore";
 import {
   buildCodeEditorMarkup,
@@ -61,7 +63,7 @@ import {
 } from "./sqlBookIntegratedTable";
 
 export interface OpenQueryResultInput {
-  connection: PostgresConnection;
+  connection: DbConnection;
   databaseName: string;
   schemaName?: string;
   sql: string;
@@ -89,7 +91,8 @@ export class TableDataPanelManager {
 
   public constructor(
     private readonly context: vscode.ExtensionContext,
-    private readonly postgresService: PostgresService,
+    private readonly postgresService: DatabaseService,
+    private readonly ephemeralLifecycle?: EphemeralConnectionLifecycle,
   ) {
     cleanupStaleNativePreviewTempFiles();
     this.nativePreviewSaveDisposable = vscode.workspace.onDidSaveTextDocument(
@@ -121,6 +124,7 @@ export class TableDataPanelManager {
       const reused = this.panelRegistry.getReusedPanel(key);
       if (reused) {
         this.panelRegistry.setNode(reused, input.node);
+        this.ephemeralLifecycle?.bindPanel(reused, input.node.connection.id);
         this.panelRegistry.setState(reused, this.cloneTableState(initialState));
         if (initialLayout) {
           this.panelRegistry.setLayout(reused, initialLayout);
@@ -207,6 +211,7 @@ export class TableDataPanelManager {
     },
   ): void {
     this.panelRegistry.setNode(panel, input.node);
+    this.ephemeralLifecycle?.bindPanel(panel, input.node.connection.id);
     this.panelRegistry.setIsNewTab(panel, input.newTab);
     this.panelRegistry.setState(panel, this.cloneTableState(input.initialState));
     if (input.layout) {
@@ -643,6 +648,7 @@ export class TableDataPanelManager {
     panel.onDidDispose(() => {
       disposable.dispose();
       void this.closeAndClearNativePreviewState(panel);
+      this.ephemeralLifecycle?.unbindPanel(panel);
       const wasReusable = !this.panelRegistry.isNewTab(panel);
       this.panelRegistry.clearPanel(panel);
       if (wasReusable) {
@@ -792,6 +798,7 @@ export class TableDataPanelManager {
       panel.onDidDispose(() => {
         disposable.dispose();
         void this.closeAndClearNativePreviewState(panel!);
+        this.ephemeralLifecycle?.unbindPanel(panel!);
         this.queryResultPanel = undefined;
       });
 
@@ -803,6 +810,7 @@ export class TableDataPanelManager {
       input,
       state: this.cloneTableState(initialState),
     });
+    this.ephemeralLifecycle?.bindPanel(panel, input.connection.id);
 
     panel.title = input.title || t("SQL result: {0}", input.connection.nickname);
     panel.reveal(vscode.ViewColumn.Active, false);
@@ -838,9 +846,7 @@ export class TableDataPanelManager {
         input.title ||
         `${input.databaseName} / ${input.schemaName || "public"}.query_result`,
       connectionName:
-        input.connection.nickname?.trim() ||
-        input.connection.database?.trim() ||
-        input.connection.host,
+        input.connection.nickname?.trim() || connectionLabel(input.connection),
       databaseName: input.databaseName,
       schemaName: input.schemaName || "public",
       result: {
@@ -917,9 +923,7 @@ export class TableDataPanelManager {
           type: "data",
           title: `${node.databaseName} / ${node.schemaName}.${node.objectName}`,
           connectionName:
-            node.connection.nickname?.trim() ||
-            node.connection.database?.trim() ||
-            node.connection.host,
+            node.connection.nickname?.trim() || connectionLabel(node.connection),
           databaseName: node.databaseName,
           schemaName: node.schemaName,
           tableName: node.objectName,

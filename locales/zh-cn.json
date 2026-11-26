@@ -73,6 +73,8 @@
   "webview.settings.sidebar.title": "侧边栏",
   "webview.settings.sidebar.showFilterLabel": "在树中显示筛选标签",
   "webview.settings.sidebar.showFilterLabelDesc": "当筛选器处于活动状态时，在树视图顶部显示筛选标签项。",
+  "webview.settings.sidebar.openSqliteInExplorer": "打开文件时在资源管理器中打开",
+  "webview.settings.sidebar.openSqliteInExplorerDesc": "打开 SQLite 文件时，聚焦 DBAdmin 连接侧边栏。",
   "webview.settings.table.title": "表",
   "webview.settings.table.persistLayout": "持久化列布局",
   "webview.settings.table.persistLayoutDesc": "打开新标签页时，保留列布局设置。",

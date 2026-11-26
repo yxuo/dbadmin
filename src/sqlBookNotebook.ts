@@ -1,8 +1,10 @@
 import * as vscode from 'vscode';
 import { ConnectionStore } from './connectionStore';
 import { loadLocaleDict, LocaleDict } from './i18n/webviewLocale';
-import { PostgresService, SqlQueryResult } from './postgresService';
-import { PostgresConnection } from './models';
+import { DatabaseService } from './engines/databaseService';
+import { SqlQueryResult } from './postgresService';
+import { DbConnection, isPostgresConnection } from './models';
+import { connectionDatabaseName } from './connectionIdentity';
 import { getSqlBookIntegratedTableEnabled } from './sqlBookIntegratedTable';
 import { getSqlBookSaveIntegratedTableEnabled } from './sqlBookSaveIntegratedTable';
 import {
@@ -32,7 +34,7 @@ interface CellRunnerContext {
 }
 
 export interface SqlBookExecutionResult {
-  connection: PostgresConnection;
+  connection: DbConnection;
   databaseName: string;
   schemaName?: string;
   sql: string;
@@ -195,7 +197,7 @@ export class SqlBookController {
 
   constructor(
     private readonly store: ConnectionStore,
-    private readonly postgresService: PostgresService,
+    private readonly postgresService: DatabaseService,
     private readonly onResult?: (payload: SqlBookExecutionResult) => Promise<void> | void,
     private readonly extensionPath?: string,
     private readonly sqlDiagnostics?: SqlDiagnostics,
@@ -272,7 +274,7 @@ export class SqlBookController {
         );
       }
 
-      const databaseName = context.databaseName?.trim() || connection.database;
+      const databaseName = context.databaseName?.trim() || connectionDatabaseName(connection);
       const result = await this.postgresService.querySql(connection, databaseName, sql);
 
       const executionPayload: SqlBookExecutionResult = {
@@ -401,7 +403,7 @@ export class SqlBookController {
 
     await this.onResult({
       connection,
-      databaseName: String(rawPayload.databaseName || connection.database),
+      databaseName: String(rawPayload.databaseName || connectionDatabaseName(connection)),
       schemaName: rawPayload.schemaName,
       sql: String(rawPayload.sql || ""),
       result: {
@@ -460,9 +462,9 @@ function parseActiveContext(value: string): CellRunnerContext {
 }
 
 function resolveConnection(
-  allConnections: PostgresConnection[],
+  allConnections: DbConnection[],
   context: CellRunnerContext
-): PostgresConnection | undefined {
+): DbConnection | undefined {
   const byId = String(context.connectionId || '').trim();
   if (byId) {
     const found = allConnections.find((c) => c.id === byId);
@@ -475,6 +477,7 @@ function resolveConnection(
   if (byHost && context.connectionPort) {
     return allConnections.find(
       (c) =>
+        isPostgresConnection(c) &&
         c.host.toLowerCase() === byHost &&
         c.port === context.connectionPort &&
         (!context.databaseName || c.database === context.databaseName)
@@ -493,7 +496,7 @@ function toSqlBookTablePayload(
   extensionPath?: string,
   context?: {
     sql: string;
-    connection: PostgresConnection;
+    connection: DbConnection;
     databaseName: string;
     schemaName?: string;
   },
@@ -507,8 +510,10 @@ function toSqlBookTablePayload(
   if (context) {
     payload.sql = context.sql;
     payload.connectionId = context.connection.id;
-    payload.connectionHost = context.connection.host;
-    payload.connectionPort = context.connection.port;
+    if (isPostgresConnection(context.connection)) {
+      payload.connectionHost = context.connection.host;
+      payload.connectionPort = context.connection.port;
+    }
     payload.databaseName = context.databaseName;
     payload.schemaName = context.schemaName;
   }

@@ -5,6 +5,10 @@ import * as path from "path";
 import { Client } from "pg";
 import * as vscode from "vscode";
 import { PostgresConnection } from "./models";
+import {
+  buildPgRestoreSqlArgs,
+  normalizePgRestoreSql,
+} from "./dbeaverSqlConverter";
 
 const PGADMIN_BIN_PATH_SETTING = "dbadmin.pgAdminBinPath";
 
@@ -78,6 +82,7 @@ export interface RestoreOptions {
 
   // Opções
   verbose: boolean;
+  listFilename?: string;
 }
 
 export async function listRoles(
@@ -116,14 +121,20 @@ export async function resolveBinPath(binary: string): Promise<string> {
     .get<string>(PGADMIN_BIN_PATH_SETTING, "");
 
   if (configuredPath.trim()) {
-    return path.join(
+    const configuredBinary = path.join(
       configuredPath.trim(),
       os.platform() === "win32" ? `${binary}.exe` : binary,
+    );
+    if (fs.existsSync(configuredBinary)) {
+      return configuredBinary;
+    }
+    throw new Error(
+      `O binário ${binary} não foi encontrado em "${configuredPath.trim()}".`,
     );
   }
 
   // Auto-detect
-  const detected = await detectPgAdminBinPath();
+  const detected = await detectPgAdminBinPath(binary);
   if (detected) {
     return path.join(
       detected,
@@ -135,7 +146,9 @@ export async function resolveBinPath(binary: string): Promise<string> {
   return os.platform() === "win32" ? `${binary}.exe` : binary;
 }
 
-export async function detectPgAdminBinPath(): Promise<string | undefined> {
+export async function detectPgAdminBinPath(
+  binaryName = "pg_dump",
+): Promise<string | undefined> {
   const candidates: string[] = [];
 
   if (os.platform() === "win32") {
@@ -148,7 +161,7 @@ export async function detectPgAdminBinPath(): Promise<string | undefined> {
       if (!base) {
         continue;
       }
-      for (const version of ["", "v8", "v7", "v6"]) {
+      for (const version of ["", "v10", "v9", "v8", "v7", "v6"]) {
         const sub = version
           ? path.join("pgAdmin 4", version, "runtime")
           : path.join("pgAdmin 4", "runtime");
@@ -165,7 +178,8 @@ export async function detectPgAdminBinPath(): Promise<string | undefined> {
     );
   }
 
-  const binary = os.platform() === "win32" ? "pg_dump.exe" : "pg_dump";
+  const binary =
+    os.platform() === "win32" ? `${binaryName}.exe` : binaryName;
   for (const candidate of candidates) {
     try {
       fs.accessSync(path.join(candidate, binary), fs.constants.X_OK);
@@ -208,6 +222,7 @@ export async function runRestore(
   schemaName: string,
   options: RestoreOptions,
   onLine: (line: string) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const pgRestore = await resolveBinPath("pg_restore");
   const args = buildRestoreArgs(connection, databaseName, schemaName, options);
@@ -216,7 +231,193 @@ export async function runRestore(
     args,
     { PGPASSWORD: connection.password },
     onLine,
+    signal,
   );
+}
+
+export async function runRestoreToSql(
+  schemaName: string,
+  options: RestoreOptions,
+  outputFilename: string,
+  onLine: (line: string) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const pgRestore = await resolveBinPath("pg_restore");
+  const args = buildPgRestoreSqlArgs({
+    filename: options.filename,
+    format: options.format,
+    schemaName,
+    outputFilename,
+    sections: options.sections ?? [],
+    onlyData: options.onlyData,
+    onlySchema: options.onlySchema,
+    includeIfExists: options.includeIfExists,
+    disableTriggers: options.disableTriggers,
+    verbose: options.verbose,
+    listFilename: options.listFilename,
+  });
+  await spawnWithStreaming(
+    pgRestore,
+    args,
+    {},
+    onLine,
+    signal,
+  );
+
+  const generatedSql = fs.readFileSync(outputFilename, "utf8");
+  fs.writeFileSync(outputFilename, normalizePgRestoreSql(generatedSql), "utf8");
+}
+
+export async function listRestoreToc(filename: string): Promise<string> {
+  const pgRestore = await resolveBinPath("pg_restore");
+  return new Promise((resolve, reject) => {
+    const proc = childProcess.spawn(pgRestore, ["--list", filename], {
+      env: { ...process.env },
+      windowsHide: true,
+    });
+    let stdout = "";
+    let stderr = "";
+    proc.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    proc.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    proc.on("error", reject);
+    proc.on("close", (code) => {
+      if (code === 0) {
+        resolve(stdout);
+      } else {
+        reject(new Error(stderr.trim() || `pg_restore exited with code ${code}`));
+      }
+    });
+  });
+}
+
+/**
+ * Restores a dump while adapting SQL emitted by newer pg_dump versions to
+ * older PostgreSQL servers. PostgreSQL 17 introduced transaction_timeout;
+ * pg_restore emits SET transaction_timeout even when the target cannot
+ * execute it. In that case, generate a SQL script, remove only that setting,
+ * and execute the script with psql so COPY data remains supported.
+ */
+export async function runRestoreCompatible(
+  connection: PostgresConnection,
+  databaseName: string,
+  schemaName: string,
+  options: RestoreOptions,
+  onLine: (line: string) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const serverVersion = await getServerVersionNumber(
+    connection,
+    databaseName,
+  );
+  if (serverVersion >= 170000) {
+    await runRestore(connection, databaseName, schemaName, options, onLine, signal);
+    return;
+  }
+
+  const pgRestore = await resolveBinPath("pg_restore");
+  const psql = await resolveBinPath("psql");
+  const temporarySql = path.join(
+    os.tmpdir(),
+    `dbadmin-restore-${Date.now()}-${Math.random().toString(16).slice(2)}.sql`,
+  );
+
+  try {
+    onLine(
+      `[DBeaver] PostgreSQL ${serverVersion}: convertendo temporariamente o dump para remover SET transaction_timeout incompatível.`,
+    );
+    const restoreArgs = buildRestoreArgs(
+      connection,
+      databaseName,
+      schemaName,
+      options,
+    ).filter((arg, index, args) => {
+      if (arg === "--dbname" || arg === "--jobs") {
+        return false;
+      }
+      if (index > 0 && (args[index - 1] === "--dbname" || args[index - 1] === "--jobs")) {
+        return false;
+      }
+      return true;
+    });
+    const outputIndex = restoreArgs.length - 1;
+    restoreArgs.splice(outputIndex, 0, "--file", temporarySql);
+
+    await spawnWithStreaming(
+      pgRestore,
+      restoreArgs,
+      { PGPASSWORD: connection.password },
+      onLine,
+      signal,
+    );
+
+    const generatedSql = fs.readFileSync(temporarySql, "utf8");
+    const compatibleSql = generatedSql
+      .split(/\r?\n/)
+      .filter((line) => !/^\s*SET\s+transaction_timeout\s*=\s*0\s*;\s*$/i.test(line))
+      .join("\n");
+    fs.writeFileSync(temporarySql, compatibleSql, "utf8");
+
+    const psqlArgs = [
+      "--host",
+      connection.host,
+      "--port",
+      String(connection.port),
+      "--username",
+      connection.user,
+      "--dbname",
+      databaseName,
+    ];
+    if (options.exitOnError) {
+      psqlArgs.push("--set", "ON_ERROR_STOP=1");
+    }
+    psqlArgs.push("--file", temporarySql);
+
+    await spawnWithStreaming(
+      psql,
+      psqlArgs,
+      {
+        PGPASSWORD: connection.password,
+        PGSSLMODE: connection.ssl ? "require" : "disable",
+      },
+      onLine,
+      signal,
+    );
+  } finally {
+    try {
+      fs.unlinkSync(temporarySql);
+    } catch {
+      // Best effort cleanup.
+    }
+  }
+}
+
+async function getServerVersionNumber(
+  connection: PostgresConnection,
+  databaseName: string,
+): Promise<number> {
+  const client = new Client({
+    host: connection.host,
+    port: connection.port,
+    database: databaseName,
+    user: connection.user,
+    password: connection.password,
+    ssl: connection.ssl ? { rejectUnauthorized: false } : false,
+    connectionTimeoutMillis: 15000,
+  });
+
+  await client.connect();
+  try {
+    const result = await client.query<{ version: string }>(
+      "SELECT current_setting('server_version_num') AS version",
+    );
+    return Number(result.rows[0]?.version ?? 0);
+  } finally {
+    await client.end();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -313,6 +514,10 @@ function buildRestoreArgs(
     options.format,
   ];
 
+  if (options.listFilename) {
+    args.push("--use-list", options.listFilename);
+  }
+
   if (options.jobs > 1) {
     args.push("--jobs", String(options.jobs));
   }
@@ -385,6 +590,7 @@ function spawnWithStreaming(
   args: string[],
   env: Record<string, string>,
   onLine: (line: string) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const proc = childProcess.spawn(bin, args, {
@@ -393,6 +599,14 @@ function spawnWithStreaming(
     });
 
     let buffer = "";
+    const output: string[] = [];
+    let aborted = false;
+
+    const abortListener = (): void => {
+      aborted = true;
+      proc.kill();
+    };
+    signal?.addEventListener("abort", abortListener, { once: true });
 
     const handleData = (chunk: Buffer | string): void => {
       buffer += chunk.toString();
@@ -400,6 +614,7 @@ function spawnWithStreaming(
       buffer = lines.pop() ?? "";
       for (const line of lines) {
         if (line) {
+          output.push(line);
           onLine(line);
         }
       }
@@ -409,18 +624,34 @@ function spawnWithStreaming(
     proc.stderr.on("data", handleData);
 
     proc.on("close", (code) => {
+      signal?.removeEventListener("abort", abortListener);
       if (buffer) {
+        output.push(buffer);
         onLine(buffer);
       }
       if (code === 0) {
         resolve();
+      } else if (aborted || signal?.aborted) {
+        reject(new Error("Restore aborted by user."));
       } else {
-        reject(new Error(`Process exited with code ${code}`));
+        const detail = output.slice(-8).join("\n").trim();
+        reject(
+          new Error(
+            detail
+              ? `Process exited with code ${code}:\n${detail}`
+              : `Process exited with code ${code}`,
+          ),
+        );
       }
     });
 
     proc.on("error", (err) => {
+      signal?.removeEventListener("abort", abortListener);
       reject(err);
     });
+
+    if (signal?.aborted) {
+      abortListener();
+    }
   });
 }

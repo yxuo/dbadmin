@@ -188,5 +188,14 @@
   "Import replaces DBAdmin settings, connections, and table layouts. Continue?": "导入将替换 DBAdmin 的设置、连接和表布局。是否继续？",
   "Settings exported successfully.": "设置已成功导出。",
   "Settings imported successfully.": "设置已成功导入。",
-  "Invalid DBAdmin settings file.": "无效的 DBAdmin 设置文件。"
+  "Invalid DBAdmin settings file.": "无效的 DBAdmin 设置文件。",
+  "Temporary connections": "临时连接",
+  "Temporary connection": "临时连接",
+  "Save connection": "保存连接",
+  "This SQLite database is open in DBAdmin. Use the explorer or pick a table below.": "此 SQLite 数据库已在 DBAdmin 中打开。使用资源管理器或选择下方的表。",
+  "Empty SQLite database.": "空的 SQLite 数据库。",
+  "Open in explorer when opening a file": "打开文件时在资源管理器中打开",
+  "SQLite connection was not created.": "未创建 SQLite 连接。",
+  "This file type is not a supported SQLite database.": "此文件类型不是受支持的 SQLite 数据库。",
+  "Loading...": "正在加载..."
 }

@@ -73,6 +73,8 @@
   "webview.settings.sidebar.title": "Barre latérale",
   "webview.settings.sidebar.showFilterLabel": "Afficher l'étiquette de filtre dans l'arborescence",
   "webview.settings.sidebar.showFilterLabelDesc": "Affiche l'élément d'étiquette de filtre en haut de la treeview lorsqu'un filtre est actif.",
+  "webview.settings.sidebar.openSqliteInExplorer": "Ouvrir dans l'explorateur à l'ouverture d'un fichier",
+  "webview.settings.sidebar.openSqliteInExplorerDesc": "Lors de l'ouverture d'un fichier SQLite, focaliser la barre latérale des connexions DBAdmin.",
   "webview.settings.table.title": "Table",
   "webview.settings.table.persistLayout": "Persister la disposition des colonnes",
   "webview.settings.table.persistLayoutDesc": "Lors de l'ouverture d'un nouvel onglet, les paramètres de disposition des colonnes sont conservés.",

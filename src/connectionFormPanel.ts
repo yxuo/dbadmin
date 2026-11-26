@@ -1,24 +1,29 @@
 import * as vscode from 'vscode';
 import { getBcp47Locale, t } from './i18n';
 import { loadLocaleDict, webviewI18nBootstrap } from './i18n/webviewLocale';
-import { PostgresConnection, PostgresConnectionInput } from './models';
-import { PostgresService } from './postgresService';
+import {
+  DbConnection,
+  isSqliteConnection,
+} from './models';
+import { DatabaseService } from './engines/databaseService';
+import { CreateConnectionInput } from './connectionStore';
 
-export type ConnectionDraft = PostgresConnectionInput;
+export type ConnectionDraft = CreateConnectionInput;
 
 type FormMode = 'create' | 'edit';
 
 type FormMessage =
   | { type: 'ready' }
   | { type: 'cancel' }
+  | { type: 'pickSqliteFile' }
   | { type: 'test'; payload: ConnectionDraft }
   | { type: 'save'; payload: ConnectionDraft };
 
 export async function showConnectionForm(
   context: vscode.ExtensionContext,
-  postgresService: PostgresService,
+  databaseService: DatabaseService,
   mode: FormMode,
-  current?: PostgresConnection
+  current?: DbConnection
 ): Promise<ConnectionDraft | undefined> {
   const panel = vscode.window.createWebviewPanel(
     'database.connectionForm',
@@ -33,16 +38,36 @@ export async function showConnectionForm(
     }
   );
 
-  const initialData: ConnectionDraft = {
-    nickname: current?.nickname ?? '',
-    host: current?.host ?? 'localhost',
-    port: current?.port ?? 5432,
-    database: current?.database ?? 'postgres',
-    visibleDatabases: current?.visibleDatabases ?? [],
-    user: current?.user ?? 'postgres',
-    password: current?.password ?? '',
-    ssl: current?.ssl ?? false,
-  };
+  const initialData = current
+    ? isSqliteConnection(current)
+      ? {
+          engine: 'sqlite' as const,
+          nickname: current.nickname,
+          filePath: current.filePath,
+          readOnly: Boolean(current.readOnly),
+        }
+      : {
+          engine: 'postgres' as const,
+          nickname: current.nickname,
+          host: current.host,
+          port: current.port,
+          database: current.database,
+          visibleDatabases: current.visibleDatabases ?? [],
+          user: current.user,
+          password: current.password,
+          ssl: current.ssl,
+        }
+    : {
+        engine: 'postgres' as const,
+        nickname: '',
+        host: 'localhost',
+        port: 5432,
+        database: 'postgres',
+        visibleDatabases: [] as string[],
+        user: 'postgres',
+        password: '',
+        ssl: false,
+      };
 
   panel.webview.html = getHtml(panel.webview, context.extensionUri, mode, initialData, context.extensionPath);
 
@@ -74,10 +99,40 @@ export async function showConnectionForm(
         return;
       }
 
+      if (message.type === 'pickSqliteFile') {
+        const selected = await vscode.window.showOpenDialog({
+          canSelectFiles: true,
+          canSelectFolders: false,
+          canSelectMany: false,
+          filters: {
+            SQLite: ['sqlite', 'sqlite3', 'db', 'db3'],
+          },
+        });
+        if (selected?.[0]) {
+          panel.webview.postMessage({
+            type: 'sqliteFilePicked',
+            filePath: selected[0].fsPath,
+          });
+        }
+        return;
+      }
+
       if (message.type === 'test') {
         try {
           validateDraft(message.payload);
-          const version = await postgresService.testConnection(message.payload);
+          const version = await databaseService.testConnection(
+            message.payload.engine === 'sqlite'
+              ? {
+                  id: 'test',
+                  engine: 'sqlite',
+                  nickname: message.payload.nickname,
+                  filePath: message.payload.filePath,
+                  readOnly: message.payload.readOnly,
+                  createdAt: new Date().toISOString(),
+                  updatedAt: new Date().toISOString(),
+                }
+              : message.payload,
+          );
           panel.webview.postMessage({
             type: 'testResult',
             ok: true,
@@ -118,6 +173,15 @@ export async function showConnectionForm(
 }
 
 function validateDraft(draft: ConnectionDraft): void {
+  if (draft.engine === 'sqlite') {
+    if (!draft.nickname.trim()) {
+      throw new Error(t('Nickname is required.'));
+    }
+    if (!draft.filePath.trim()) {
+      throw new Error(t('File path is required.'));
+    }
+    return;
+  }
   if (!draft.nickname.trim()) {
     throw new Error(t('Nickname is required.'));
   }
@@ -309,6 +373,18 @@ function getHtml(
     .row span {
       color: var(--vscode-foreground);
     }
+    select {
+      width: 100%;
+      height: var(--control-height);
+      border-radius: var(--control-radius);
+      border: 1px solid var(--vscode-input-border, transparent);
+      background: var(--vscode-input-background);
+      color: var(--vscode-input-foreground);
+      padding: 0 8px;
+    }
+    .hidden {
+      display: none !important;
+    }
     .actions {
       display: flex;
       justify-content: flex-end;
@@ -361,38 +437,51 @@ function getHtml(
       <div class="grid">
         <div class="field full">
           <label for="engine">${L('webview.connection.engine', 'Tipo de banco')}</label>
-          <input id="engine" readonly aria-readonly="true" value="PostgreSQL" />
+          <select id="engine" ${mode === 'edit' ? 'disabled' : ''}>
+            <option value="postgres">PostgreSQL</option>
+            <option value="sqlite">SQLite</option>
+          </select>
         </div>
         <div class="field">
           <label for="nickname">${L('webview.connection.nickname', 'Apelido')}</label>
           <input id="nickname" />
         </div>
-        <div class="field">
+        <div class="field sqlite-only full">
+          <label for="filePath">${L('webview.connection.filePath', 'Arquivo SQLite')}</label>
+          <div class="row" style="gap:8px;">
+            <input id="filePath" style="flex:1;" />
+            <button type="button" id="browseFile">${L('webview.connection.browse', 'Procurar')}</button>
+          </div>
+        </div>
+        <div class="field sqlite-only full">
+          <label class="row" for="readOnly">
+            <input id="readOnly" type="checkbox" />
+            <span>${L('webview.connection.readOnly', 'Somente leitura')}</span>
+          </label>
+        </div>
+        <div class="field pg-only">
           <label for="host">${L('webview.connection.host', 'Host')}</label>
           <input id="host" />
         </div>
-        <div class="field">
-          <label for="port">${L('webview.connection.port', 'Porta')}</label>
+        <div class="field pg-only">
           <input id="port" type="number" min="1" max="65535" />
         </div>
-        <div class="field">
+        <div class="field pg-only">
           <label for="database">${L('webview.connection.database', 'Database')}</label>
           <input id="database" />
         </div>
-        <div class="field full">
-          <label for="visibleDatabases">${L('webview.connection.visibleDatabases', 'Bancos visíveis na sidebar (opcional)')}</label>
+        <div class="field pg-only full">
           <textarea id="visibleDatabases" placeholder="${L('webview.connection.visibleDatabasesPlaceholder', 'Um nome por linha ou separado por vírgula')}"></textarea>
         </div>
-        <div class="field">
+        <div class="field pg-only">
           <label for="user">${L('webview.connection.user', 'Usuário')}</label>
           <input id="user" />
         </div>
-        <div class="field">
+        <div class="field pg-only">
           <label for="password">${L('webview.connection.password', 'Senha')}</label>
           <input id="password" type="password" />
         </div>
-        <div class="field full">
-          <label>${L('webview.connection.ssl', 'SSL')}</label>
+        <div class="field pg-only full">
           <label class="row" for="ssl">
             <input id="ssl" type="checkbox" />
             <span>${L('webview.connection.enableSsl', 'Ativar SSL')}</span>
@@ -417,6 +506,8 @@ function getHtml(
     const fields = {
       engine: document.getElementById('engine'),
       nickname: document.getElementById('nickname'),
+      filePath: document.getElementById('filePath'),
+      readOnly: document.getElementById('readOnly'),
       host: document.getElementById('host'),
       port: document.getElementById('port'),
       database: document.getElementById('database'),
@@ -426,9 +517,22 @@ function getHtml(
       ssl: document.getElementById('ssl'),
     };
 
+    function setEngine(engine) {
+      fields.engine.value = engine === 'sqlite' ? 'sqlite' : 'postgres';
+      document.querySelectorAll('.sqlite-only').forEach((el) => {
+        el.classList.toggle('hidden', fields.engine.value !== 'sqlite');
+      });
+      document.querySelectorAll('.pg-only').forEach((el) => {
+        el.classList.toggle('hidden', fields.engine.value === 'sqlite');
+      });
+    }
+
     function hydrate(data) {
-      fields.engine.value = 'PostgreSQL';
+      const engine = data.engine === 'sqlite' ? 'sqlite' : 'postgres';
+      setEngine(engine);
       fields.nickname.value = data.nickname || '';
+      fields.filePath.value = data.filePath || '';
+      fields.readOnly.checked = !!data.readOnly;
       fields.host.value = data.host || 'localhost';
       fields.port.value = String(data.port || 5432);
       fields.database.value = data.database || 'postgres';
@@ -465,7 +569,16 @@ function getHtml(
     }
 
     function payload() {
+      if (fields.engine.value === 'sqlite') {
+        return {
+          engine: 'sqlite',
+          nickname: fields.nickname.value.trim(),
+          filePath: fields.filePath.value.trim(),
+          readOnly: fields.readOnly.checked,
+        };
+      }
       return {
+        engine: 'postgres',
         nickname: fields.nickname.value.trim(),
         host: fields.host.value.trim(),
         port: Number(fields.port.value),
@@ -481,6 +594,11 @@ function getHtml(
       status.textContent = message || '';
       status.className = 'status' + (kind ? ' ' + kind : '');
     }
+
+    document.getElementById('browseFile').addEventListener('click', () => {
+      vscode.postMessage({ type: 'pickSqliteFile' });
+    });
+    fields.engine.addEventListener('change', () => setEngine(fields.engine.value));
 
     document.getElementById('cancel').addEventListener('click', () => {
       vscode.postMessage({ type: 'cancel' });
@@ -498,6 +616,13 @@ function getHtml(
 
     window.addEventListener('message', (event) => {
       const message = event.data;
+      if (message.type === 'sqliteFilePicked') {
+        fields.filePath.value = message.filePath || '';
+        if (!fields.nickname.value.trim() && message.filePath) {
+          const parts = String(message.filePath).split(/[/\\\\]/);
+          fields.nickname.value = parts[parts.length - 1] || '';
+        }
+      }
       if (message.type === 'hydrate') {
         hydrate(message.payload);
       }
